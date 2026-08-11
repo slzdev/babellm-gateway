@@ -1,5 +1,7 @@
 import { config } from 'dotenv'
-import { Client } from 'pg'
+import { Client, Pool } from 'pg'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { migrate } from 'drizzle-orm/node-postgres/migrator'
 
 export default async function setup() {
   config({ path: '.env.test', override: true })
@@ -8,12 +10,16 @@ export default async function setup() {
 
   const adminUrl = new URL(url.toString())
   adminUrl.pathname = '/postgres'
-  const client = new Client({ connectionString: adminUrl.toString() })
-  await client.connect()
-  const { rowCount } = await client.query(
+  const admin = new Client({ connectionString: adminUrl.toString() })
+  await admin.connect()
+  const { rowCount } = await admin.query(
     'SELECT 1 FROM pg_database WHERE datname = $1',
     [dbName],
   )
-  if (!rowCount) await client.query(`CREATE DATABASE "${dbName}"`)
-  await client.end()
+  if (!rowCount) await admin.query(`CREATE DATABASE "${dbName}"`)
+  await admin.end()
+
+  const pool = new Pool({ connectionString: url.toString() })
+  await migrate(drizzle(pool), { migrationsFolder: './drizzle' })
+  await pool.end()
 }
