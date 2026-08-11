@@ -88,7 +88,7 @@ rm -rf scaffold-tmp
 pnpm add next@16.3.0 react@19.2.8 react-dom@19.2.8 \
   drizzle-orm@0.45.2 pg@8.23.0 zod@4.4.3 openai@7.4.0
 pnpm add -D drizzle-kit@0.31.10 vitest@4.1.10 dotenv@17.2.3 \
-  @types/pg@8.21.0 @types/node@22.15.3 tsx@4.20.6
+  @types/pg@8.21.0 @types/node@22.15.3
 ```
 
 - [ ] **Step 3: Add scripts to `package.json`**
