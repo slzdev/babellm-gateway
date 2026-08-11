@@ -10,6 +10,9 @@ export default defineConfig({
     testTimeout: 20_000,
   },
   resolve: {
-    alias: { '@': path.resolve(import.meta.dirname, 'src') },
+    alias: {
+      '@': path.resolve(import.meta.dirname, 'src'),
+      'server-only': path.resolve(import.meta.dirname, 'node_modules/server-only/empty.js'),
+    },
   },
 })
