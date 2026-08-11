@@ -67,6 +67,22 @@ test('deleting a virtual model cascades to its targets', async () => {
   expect(await db.select().from(routeTargets)).toHaveLength(0)
 })
 
+test('deleting a provider referenced by a route target is rejected', async () => {
+  const [provider] = await db.insert(providers).values({
+    name: 'p', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
+  }).returning()
+  const [model] = await db.insert(virtualModels).values({ name: 'fast' }).returning()
+  await db.insert(routeTargets).values({
+    virtualModelId: model.id, providerId: provider.id, upstreamModel: 'gpt-4o-mini',
+  })
+
+  await expect(
+    db.delete(providers).where(eq(providers.id, provider.id)),
+  ).rejects.toThrow()
+
+  expect(await db.select().from(providers)).toHaveLength(1)
+})
+
 test('an api key can exist without a user, and key_hash is unique', async () => {
   await db.insert(apiKeys).values({ name: 'k1', keyHash: 'h1', keyPrefix: 'sk-bab-aaaa' })
   await expect(
