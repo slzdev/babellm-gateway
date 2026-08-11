@@ -34,7 +34,7 @@ importers:
         specifier: ^4
         version: 4.3.3
       '@types/node':
-        specifier: ^22.15.3
+        specifier: 22.15.3
         version: 22.15.3
       '@types/pg':
         specifier: 8.21.0
@@ -1144,9 +1144,6 @@ packages:
 
   '@types/json5@0.0.29':
     resolution: {integrity: sha512-dRLjCWHYg4oaA77cxO64oO+7JwCwnIzkZPdrrC71jQmQtlhM556pwKo5bUzqvZndkVbeFLIIi+9TC40JNF5hNQ==}
-
-  '@types/node@20.19.43':
-    resolution: {integrity: sha512-6oYBAi5ikg4Pl+kGsoYtawUMBT2zZMCvPNF7pVLnHZfd1zf38DRiWn/gT01RYCdUqkv7Fhr+C9ot4/tb+2sVvA==}
 
   '@types/node@22.15.3':
     resolution: {integrity: sha512-lX7HFZeHf4QG/J7tBZqrCAXwz9J5RD56Y6MpP0eJkka8p+K0RY/yBTW7CYFJ4VGCclxqOLKmiGP5juQc6MKgcw==}
@@ -3800,17 +3797,13 @@ snapshots:
 
   '@types/json5@0.0.29': {}
 
-  '@types/node@20.19.43':
-    dependencies:
-      undici-types: 6.21.0
-
   '@types/node@22.15.3':
     dependencies:
       undici-types: 6.21.0
 
   '@types/pg@8.21.0':
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 22.15.3
       pg-protocol: 1.16.0
       pg-types: 2.2.0
 
