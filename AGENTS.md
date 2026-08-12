@@ -8,6 +8,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
+# UI: prefer shadcn/ui
+
+This project uses shadcn/ui (see `components.json` — `base-nova` style, `neutral` base color, `lucide` icons). **Build UI out of shadcn components wherever possible.**
+
+- Check `src/components/ui/` first — it already holds `alert-dialog`, `badge`, `button`, `dialog`, `dropdown-menu`, `input`, `label`, `select`, `sonner`, `switch`, `table`, `textarea`.
+- If a shadcn component exists for what you need but isn't installed yet, add it with `pnpm dlx shadcn@latest add <component>` rather than hand-rolling it.
+- Compose and extend the shadcn primitives (variants, `cn()`, wrapper components) instead of writing bespoke markup that duplicates them.
+- Only write a custom component when shadcn genuinely has no equivalent — and say so when you do.
+
 # Implementation workflow
 
 Before starting **non-trivial** implementation work, ask the user how to run it. Non-trivial means multi-step or multi-file changes. Skip these questions for one-line fixes, typo/doc tweaks, and read-only investigation — just do those inline on the current branch.
