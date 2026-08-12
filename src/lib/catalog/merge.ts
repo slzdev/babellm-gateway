@@ -28,7 +28,7 @@ export function inferKindFromId(modelId: string): ModelKind {
 }
 
 export function mergeCatalogFields(layers: CatalogLayers, modelId: string): MergeResult {
-  const effective = {} as EffectiveFields
+  const effective: Record<string, unknown> = {}
   const sources: FieldSources = {}
 
   for (const field of VALUE_FIELDS) {
@@ -43,9 +43,7 @@ export function mergeCatalogFields(layers: CatalogLayers, modelId: string): Merg
       }
     }
 
-    // Widening through a record write: every VALUE_FIELDS key is a key of
-    // EffectiveFields, and the value came from the same key of CatalogFields.
-    ;(effective as Record<string, unknown>)[field] = resolved ?? null
+    effective[field] = resolved ?? null
   }
 
   let kind: ModelKind | null = null
@@ -64,5 +62,5 @@ export function mergeCatalogFields(layers: CatalogLayers, modelId: string): Merg
   }
   effective.kind = kind
 
-  return { effective, sources }
+  return { effective: effective as unknown as EffectiveFields, sources }
 }
