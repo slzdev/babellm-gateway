@@ -1,8 +1,11 @@
-import { Button } from '@/components/ui/button'
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table'
+import { PageHeader } from '@/components/admin/page-header'
 import { listUsers } from '@/lib/admin/keys'
 import { requireAdmin } from '@/lib/admin/session'
-import { deleteUserAction } from './actions'
-import { CreateUserForm } from './create-user-form'
+import { CreateUserDialog } from './create-user-form'
+import { UserRowActions } from './user-row-actions'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,39 +14,42 @@ export default async function UsersPage() {
   const users = await listUsers()
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold">Users</h1>
-        <p className="text-sm text-muted-foreground">
-          Labels for attributing API keys. Users do not sign in.
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Users"
+        description="Labels for attributing API keys. Users do not sign in."
+        action={<CreateUserDialog />}
+      />
 
-      <table className="w-full text-sm">
-        <thead className="text-left text-muted-foreground">
-          <tr><th className="py-2">Name</th><th>Email</th><th>Notes</th><th /></tr>
-        </thead>
-        <tbody>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead>Email</TableHead>
+            <TableHead>Notes</TableHead>
+            <TableHead className="w-0" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {users.map((user) => (
-            <tr key={user.id} className="border-t">
-              <td className="py-2 font-medium">{user.name}</td>
-              <td>{user.email ?? '—'}</td>
-              <td className="text-muted-foreground">{user.notes ?? '—'}</td>
-              <td className="text-right">
-                <form action={deleteUserAction}>
-                  <input type="hidden" name="id" value={user.id} />
-                  <Button type="submit" variant="ghost" size="sm">Delete</Button>
-                </form>
-              </td>
-            </tr>
+            <TableRow key={user.id}>
+              <TableCell className="font-medium">{user.name}</TableCell>
+              <TableCell>{user.email ?? '—'}</TableCell>
+              <TableCell className="text-muted-foreground">{user.notes ?? '—'}</TableCell>
+              <TableCell className="text-right">
+                <UserRowActions id={user.id} name={user.name} />
+              </TableCell>
+            </TableRow>
           ))}
           {users.length === 0 ? (
-            <tr><td colSpan={4} className="py-6 text-muted-foreground">No users yet.</td></tr>
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                No users yet.
+              </TableCell>
+            </TableRow>
           ) : null}
-        </tbody>
-      </table>
-
-      <CreateUserForm />
+        </TableBody>
+      </Table>
     </div>
   )
 }
