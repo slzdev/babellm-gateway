@@ -17,7 +17,7 @@
 - **Every module that touches the database or credentials starts with `import 'server-only'`.**
 - **Secrets never reach the browser.** No catalog column may hold a credential.
 - **Tests:** `pnpm test` (vitest, serialized file execution against one real Postgres). DB-backed tests call `resetDb()` from `tests/helpers/db.ts` in `beforeEach`.
-- **Verification before any completion claim:** `pnpm test`, `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm build` must all pass before the final task is called done. Individual tasks run at minimum `pnpm test`.
+- **Verification before any completion claim:** `pnpm test`, `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm build` must all pass before the final task is called done. **Every individual task runs at minimum `pnpm test` AND `pnpm exec tsc --noEmit`** — vitest transpiles without type-checking, so a task can be fully green on tests while leaving the branch uncompilable. Task 2 did exactly that and it survived two reviews before Task 4 caught it.
 - **Commit after every task**, with the test and implementation files in the same commit.
 - **The catalog is advisory.** No task may add a foreign key from `route_targets` to `catalog_models`, and no task may make the gateway request path read the catalog.
 - **Layering (carried from the Phase 1 plan):** the gateway never imports from the dashboard. The reverse is permitted — the dashboard may import gateway primitives. No dashboard code (React, session handling, Server Actions) may be reachable from the streaming path. `src/lib/settings.ts` sits outside `lib/admin` precisely so `lib/catalog` can read it without depending on the dashboard's data layer.
@@ -529,7 +529,10 @@ export function inferKindFromId(modelId: string): ModelKind {
 }
 
 export function mergeCatalogFields(layers: CatalogLayers, modelId: string): MergeResult {
-  const effective = {} as EffectiveFields
+  // Accumulate into a plain record and cast once at the return boundary.
+  // Casting EffectiveFields to an index-signature type mid-loop does not
+  // type-check (TS2352) — it has no index signature.
+  const effective: Record<string, unknown> = {}
   const sources: FieldSources = {}
 
   for (const field of VALUE_FIELDS) {
@@ -544,9 +547,7 @@ export function mergeCatalogFields(layers: CatalogLayers, modelId: string): Merg
       }
     }
 
-    // Widening through a record write: every VALUE_FIELDS key is a key of
-    // EffectiveFields, and the value came from the same key of CatalogFields.
-    ;(effective as Record<string, unknown>)[field] = resolved ?? null
+    effective[field] = resolved ?? null
   }
 
   let kind: ModelKind | null = null
@@ -565,7 +566,7 @@ export function mergeCatalogFields(layers: CatalogLayers, modelId: string): Merg
   }
   effective.kind = kind
 
-  return { effective, sources }
+  return { effective: effective as unknown as EffectiveFields, sources }
 }
 ```
 
