@@ -2,6 +2,10 @@
 
 import { useState } from 'react'
 import { Autocomplete } from '@base-ui/react/autocomplete'
+import {
+  ComboboxCollection, ComboboxContent, ComboboxEmpty, ComboboxGroup, ComboboxInput,
+  ComboboxItem, ComboboxLabel, ComboboxList,
+} from '@/components/ui/combobox'
 import type { PickerGroup, PickerModel } from '@/lib/admin/catalog'
 
 function detail(model: PickerModel) {
@@ -20,14 +24,24 @@ function detail(model: PickerModel) {
 
 /**
  * A combobox, not a select: anything typed is saveable. The catalog is
- * advisory, so an unrecognised value warns rather than blocking.
+ * advisory — a provider that has never synced offers nothing at all — so an
+ * unrecognised value warns rather than blocking.
  *
- * `name`/`id`/`required` live on `Autocomplete.Root`, not `Autocomplete.Input`
- * — the installed API (selectionMode 'none', which is what Autocomplete always
- * uses) has the visible input "own" the form value, and Root forwards its
- * `name` onto that input internally. Setting `name` directly on `Input` isn't
- * part of the documented contract, so the typed-value-always-submits
- * guarantee is wired through Root.
+ * That free-text guarantee is why the root here is `Autocomplete.Root` while
+ * every other part comes from the shadcn combobox. In Base UI 1.7 the two are
+ * one component: `Autocomplete.Root` is the combobox root pinned to
+ * `selectionMode: 'none'`, and Item/Trigger/Input/Popup/List/Group are the
+ * very same exports under both names. Under `selectionMode: 'none'` the
+ * visible input owns the form value, so what the admin typed is what submits;
+ * the shadcn `Combobox` root would submit only a value picked from the list.
+ *
+ * `name`/`required` therefore live on the root, not on `ComboboxInput` — the
+ * root forwards `name` onto that input internally, and setting it directly on
+ * the input isn't part of the documented contract.
+ *
+ * The list filters on what is typed, including a value restored from a saved
+ * target — clearing the field (the ✕ the input grows once it has a value) is
+ * what brings the whole catalog back into view.
  */
 export function ModelCombobox({
   name,
@@ -48,50 +62,42 @@ export function ModelCombobox({
   return (
     <div className="space-y-1">
       <Autocomplete.Root
-        id={id}
         name={name}
         required
         items={groups}
         value={value}
         onValueChange={setValue}
+        openOnInputClick
         itemToStringValue={(item: PickerModel) => item.modelId}
       >
-        <Autocomplete.Input
-          placeholder="gpt-4o-mini"
-          className="h-9 w-56 rounded-md border bg-transparent px-3 text-sm"
-        />
+        <ComboboxInput id={id} placeholder="gpt-4o-mini" showClear className="w-full" />
 
-        <Autocomplete.Portal>
-          <Autocomplete.Positioner sideOffset={4} className="outline-hidden">
-            <Autocomplete.Popup className="max-h-80 w-(--anchor-width) overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
-              <Autocomplete.Empty className="px-2 py-3 text-sm text-muted-foreground">
-                Nothing in the catalog matches — you can still type any model name.
-              </Autocomplete.Empty>
+        <ComboboxContent>
+          <ComboboxEmpty>
+            Nothing in the catalog matches — you can still type any model name.
+          </ComboboxEmpty>
 
-              <Autocomplete.List>
-                {(group: PickerGroup) => (
-                  <Autocomplete.Group key={group.value} items={group.items} className="block pb-1">
-                    <Autocomplete.GroupLabel className="px-2 py-1 text-xs text-muted-foreground select-none">
-                      {group.value}
-                    </Autocomplete.GroupLabel>
-                    <Autocomplete.Collection>
-                      {(model: PickerModel) => (
-                        <Autocomplete.Item
-                          key={model.id}
-                          value={model}
-                          className="flex cursor-default items-baseline justify-between gap-3 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground"
-                        >
-                          <span className="font-mono text-xs">{model.modelId}</span>
-                          <span className="text-xs text-muted-foreground">{detail(model)}</span>
-                        </Autocomplete.Item>
-                      )}
-                    </Autocomplete.Collection>
-                  </Autocomplete.Group>
-                )}
-              </Autocomplete.List>
-            </Autocomplete.Popup>
-          </Autocomplete.Positioner>
-        </Autocomplete.Portal>
+          <ComboboxList>
+            {(group: PickerGroup) => (
+              <ComboboxGroup key={group.value} items={group.items}>
+                <ComboboxLabel>{group.value}</ComboboxLabel>
+                <ComboboxCollection>
+                  {(model: PickerModel) => (
+                    // No item indicator can ever show with nothing "selected",
+                    // so the room the shadcn item leaves for one goes back to
+                    // the row.
+                    <ComboboxItem key={model.id} value={model} className="pr-1.5">
+                      <span className="truncate font-mono text-xs">{model.modelId}</span>
+                      <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                        {detail(model)}
+                      </span>
+                    </ComboboxItem>
+                  )}
+                </ComboboxCollection>
+              </ComboboxGroup>
+            )}
+          </ComboboxList>
+        </ComboboxContent>
       </Autocomplete.Root>
 
       {unrecognised ? (
