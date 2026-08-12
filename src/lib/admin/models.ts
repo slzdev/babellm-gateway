@@ -111,28 +111,62 @@ export async function deleteVirtualModel(id: string): Promise<void> {
   await db.delete(virtualModels).where(eq(virtualModels.id, id))
 }
 
+function validateTargetFields(input: {
+  upstreamModel?: string
+  priority?: number
+  weight?: number
+}) {
+  const patch: { upstreamModel?: string; priority?: number; weight?: number } = {}
+
+  if (input.upstreamModel !== undefined) {
+    const upstreamModel = input.upstreamModel.trim()
+    if (!upstreamModel) throw new Error('An upstream model name is required.')
+    patch.upstreamModel = upstreamModel
+  }
+  if (input.weight !== undefined) {
+    if (!Number.isInteger(input.weight) || input.weight < 1) {
+      throw new Error('Target weight must be a positive integer.')
+    }
+    patch.weight = input.weight
+  }
+  if (input.priority !== undefined) {
+    if (!Number.isInteger(input.priority)) {
+      throw new Error('Target priority must be an integer.')
+    }
+    patch.priority = input.priority
+  }
+
+  return patch
+}
+
 export async function addRouteTarget(input: RouteTargetInput): Promise<RouteTargetRow> {
-  const upstreamModel = input.upstreamModel.trim()
-  if (!upstreamModel) throw new Error('An upstream model name is required.')
-
-  const weight = input.weight ?? 100
-  if (!Number.isInteger(weight) || weight < 1) {
-    throw new Error('Target weight must be a positive integer.')
-  }
-
-  const priority = input.priority ?? 0
-  if (!Number.isInteger(priority)) {
-    throw new Error('Target priority must be an integer.')
-  }
+  const validated = validateTargetFields({
+    upstreamModel: input.upstreamModel,
+    priority: input.priority ?? 0,
+    weight: input.weight ?? 100,
+  })
 
   const [row] = await db.insert(routeTargets).values({
     virtualModelId: input.virtualModelId,
     providerId: input.providerId,
-    upstreamModel,
-    priority,
-    weight,
+    upstreamModel: validated.upstreamModel!,
+    priority: validated.priority!,
+    weight: validated.weight!,
     enabled: input.enabled ?? true,
   }).returning()
+  return row
+}
+
+export async function updateRouteTarget(
+  id: string,
+  input: { upstreamModel?: string; priority?: number; weight?: number; enabled?: boolean },
+): Promise<RouteTargetRow> {
+  const patch: Record<string, unknown> = validateTargetFields(input)
+  if (input.enabled !== undefined) patch.enabled = input.enabled
+
+  const [row] = await db.update(routeTargets).set(patch)
+    .where(eq(routeTargets.id, id)).returning()
+  if (!row) throw new Error('Route target not found.')
   return row
 }
 

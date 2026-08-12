@@ -1,9 +1,11 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import type { PickerGroup } from '@/lib/admin/catalog'
+import { ModelCombobox } from './model-combobox'
 import { addTargetAction, createModelAction, type ActionState } from './actions'
 
 const POLICIES = ['failover', 'weighted', 'round_robin'] as const
@@ -41,13 +43,16 @@ export function CreateModelForm() {
 export function AddTargetForm({
   virtualModelId,
   providers,
+  groupsByProvider,
 }: {
   virtualModelId: string
   providers: Array<{ id: string; name: string }>
+  groupsByProvider: Record<string, PickerGroup[]>
 }) {
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(
     addTargetAction, undefined,
   )
+  const [providerId, setProviderId] = useState(providers[0]?.id ?? '')
 
   return (
     <form action={action} className="flex flex-wrap items-end gap-2 pt-2">
@@ -57,6 +62,8 @@ export function AddTargetForm({
         <select
           id={`provider-${virtualModelId}`}
           name="providerId"
+          value={providerId}
+          onChange={(event) => setProviderId(event.target.value)}
           className="h-9 rounded-md border bg-transparent px-3 text-sm"
         >
           {providers.map((provider) => (
@@ -66,7 +73,11 @@ export function AddTargetForm({
       </div>
       <div className="space-y-1">
         <Label htmlFor={`upstream-${virtualModelId}`} className="text-xs">Upstream model</Label>
-        <Input id={`upstream-${virtualModelId}`} name="upstreamModel" required placeholder="gpt-4o-mini" />
+        <ModelCombobox
+          id={`upstream-${virtualModelId}`}
+          name="upstreamModel"
+          groups={groupsByProvider[providerId] ?? []}
+        />
       </div>
       <div className="space-y-1">
         <Label htmlFor={`priority-${virtualModelId}`} className="text-xs">Priority</Label>

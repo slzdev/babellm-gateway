@@ -1,18 +1,39 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { listPickerModels, targetWarnings, type TargetWarning } from '@/lib/admin/catalog'
 import { listProviders } from '@/lib/admin/providers'
 import { listVirtualModels } from '@/lib/admin/models'
 import { requireAdmin } from '@/lib/admin/session'
 import { deleteModelAction, removeTargetAction } from './actions'
+import { EditTargetForm } from './edit-target-form'
 import { AddTargetForm, CreateModelForm } from './model-form'
 import { PolicySelect } from './policy-select'
 import { TargetEnabledToggle } from './target-enabled-toggle'
 
 export const dynamic = 'force-dynamic'
 
+function TargetWarningBadge({ warning }: { warning: TargetWarning | undefined }) {
+  if (!warning) return null
+  if (warning === 'never_synced') {
+    return <Badge variant="outline" className="ml-2">provider not synced yet</Badge>
+  }
+  if (warning === 'missing') {
+    return <Badge variant="destructive" className="ml-2">retired upstream</Badge>
+  }
+  return <Badge variant="destructive" className="ml-2">not in catalog</Badge>
+}
+
 export default async function ModelsPage() {
   await requireAdmin()
-  const [models, providers] = await Promise.all([listVirtualModels(), listProviders()])
+  const [models, providers, warnings] = await Promise.all([
+    listVirtualModels(), listProviders(), targetWarnings(),
+  ])
+
+  const groupsByProvider = Object.fromEntries(
+    await Promise.all(
+      providers.map(async (provider) => [provider.id, await listPickerModels(provider.id)] as const),
+    ),
+  )
 
   return (
     <div className="space-y-8">
@@ -41,7 +62,14 @@ export default async function ModelsPage() {
               {model.targets.map((target) => (
                 <tr key={target.id} className="border-t">
                   <td className="py-1">{target.providerName}</td>
-                  <td className="font-mono text-xs">{target.upstreamModel}</td>
+                  <td className="font-mono text-xs">
+                    {target.upstreamModel}
+                    <TargetWarningBadge warning={warnings[target.id]} />
+                    <EditTargetForm
+                      target={target}
+                      groups={groupsByProvider[target.providerId] ?? []}
+                    />
+                  </td>
                   <td>{target.priority}</td>
                   <td>{target.weight}</td>
                   <td>
@@ -66,7 +94,13 @@ export default async function ModelsPage() {
             </tbody>
           </table>
 
-          {providers.length > 0 ? <AddTargetForm virtualModelId={model.id} providers={providers} /> : null}
+          {providers.length > 0 ? (
+            <AddTargetForm
+              virtualModelId={model.id}
+              providers={providers}
+              groupsByProvider={groupsByProvider}
+            />
+          ) : null}
         </section>
       ))}
 

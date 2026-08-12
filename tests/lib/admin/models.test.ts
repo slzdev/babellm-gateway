@@ -4,7 +4,7 @@ import { routeTargets, virtualModels } from '@/lib/db/schema'
 import { createProvider } from '@/lib/admin/providers'
 import {
   addRouteTarget, createVirtualModel, deleteVirtualModel,
-  listVirtualModels, removeRouteTarget, setRouteTargetEnabled, updateVirtualModel,
+  listVirtualModels, removeRouteTarget, setRouteTargetEnabled, updateRouteTarget, updateVirtualModel,
 } from '@/lib/admin/models'
 import { resetDb } from '../../helpers/db'
 
@@ -127,4 +127,61 @@ test('accepts a negative priority', async () => {
     virtualModelId: model.id, providerId: p.id, upstreamModel: 'x', priority: -1,
   })
   expect(target.priority).toBe(-1)
+})
+
+test('a route target can be edited in place', async () => {
+  const provider = await createProvider({
+    name: 'p', adapter: 'openai', credentials: { apiKey: 'sk-x' },
+  })
+  const model = await createVirtualModel({ name: 'fast' })
+  const target = await addRouteTarget({
+    virtualModelId: model.id, providerId: provider.id, upstreamModel: 'gpt-4o-mimi',
+  })
+
+  const updated = await updateRouteTarget(target.id, {
+    upstreamModel: 'gpt-4o-mini', priority: 5, weight: 50,
+  })
+
+  expect(updated.upstreamModel).toBe('gpt-4o-mini')
+  expect(updated.priority).toBe(5)
+  expect(updated.weight).toBe(50)
+})
+
+test('editing only one field leaves the others alone', async () => {
+  const provider = await createProvider({
+    name: 'p', adapter: 'openai', credentials: { apiKey: 'sk-x' },
+  })
+  const model = await createVirtualModel({ name: 'fast' })
+  const target = await addRouteTarget({
+    virtualModelId: model.id, providerId: provider.id,
+    upstreamModel: 'gpt-4o', priority: 3, weight: 70,
+  })
+
+  const updated = await updateRouteTarget(target.id, { weight: 90 })
+  expect(updated.upstreamModel).toBe('gpt-4o')
+  expect(updated.priority).toBe(3)
+  expect(updated.weight).toBe(90)
+})
+
+test('an edit is validated the same way an insert is', async () => {
+  const provider = await createProvider({
+    name: 'p', adapter: 'openai', credentials: { apiKey: 'sk-x' },
+  })
+  const model = await createVirtualModel({ name: 'fast' })
+  const target = await addRouteTarget({
+    virtualModelId: model.id, providerId: provider.id, upstreamModel: 'gpt-4o',
+  })
+
+  await expect(updateRouteTarget(target.id, { upstreamModel: '  ' }))
+    .rejects.toThrow(/upstream model name is required/i)
+  await expect(updateRouteTarget(target.id, { weight: 0 }))
+    .rejects.toThrow(/positive integer/i)
+  await expect(updateRouteTarget(target.id, { priority: 1.5 }))
+    .rejects.toThrow(/integer/i)
+})
+
+test('editing a target that does not exist is refused', async () => {
+  await expect(
+    updateRouteTarget('00000000-0000-0000-0000-000000000000', { weight: 10 }),
+  ).rejects.toThrow(/not found/i)
 })

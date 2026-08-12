@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { requireAdmin } from '@/lib/admin/session'
 import {
   addRouteTarget, createVirtualModel, deleteVirtualModel,
-  removeRouteTarget, setRouteTargetEnabled, updateVirtualModel, type RoutingPolicy,
+  removeRouteTarget, setRouteTargetEnabled, updateRouteTarget, updateVirtualModel, type RoutingPolicy,
 } from '@/lib/admin/models'
 
 export interface ActionState {
@@ -48,6 +48,24 @@ export async function addTargetAction(
   }
   revalidatePath('/models')
   return { success: 'Target added.' }
+}
+
+export async function updateTargetAction(
+  _prev: ActionState | undefined,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin()
+  try {
+    await updateRouteTarget(String(formData.get('id')), {
+      upstreamModel: String(formData.get('upstreamModel') ?? ''),
+      priority: Number(formData.get('priority') ?? 0),
+      weight: Number(formData.get('weight') ?? 100),
+    })
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Could not update the target.' }
+  }
+  revalidatePath('/models')
+  return { success: 'Target updated.' }
 }
 
 export async function setPolicyAction(id: string, policy: RoutingPolicy): Promise<void> {
