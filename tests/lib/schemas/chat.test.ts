@@ -117,7 +117,13 @@ test('preserves unknown keys nested inside messages, content parts, tool calls, 
     ],
     stream: true,
     stream_options: { include_usage: true, vendor_flag: true },
-  }) as Record<string, never>
+  }) as unknown as {
+    messages: [
+      { vendor_hint: string; content: Array<Record<string, unknown>> },
+      { tool_calls: Array<{ function: Record<string, unknown> }>; content: null }
+    ]
+    stream_options: Record<string, unknown>
+  }
 
   const [first, second] = parsed.messages
   expect(first.vendor_hint).toBe('x')
@@ -133,7 +139,9 @@ test('preserves an unrecognized content part type', () => {
       role: 'user',
       content: [{ type: 'input_audio', input_audio: { data: 'AAA', format: 'wav' } }],
     }],
-  }) as Record<string, never>
+  }) as unknown as {
+    messages: Array<{ content: Array<Record<string, unknown>> }>
+  }
 
   expect(parsed.messages[0].content[0]).toEqual({
     type: 'input_audio', input_audio: { data: 'AAA', format: 'wav' },
