@@ -8,7 +8,7 @@ import { requireAdmin } from '@/lib/admin/session'
 import { listRegistryNamespaces } from '@/lib/catalog/namespaces'
 import { CreateProviderDialog } from './provider-form'
 import { ProviderRowActions } from './provider-row-actions'
-import { RegistryNamespaceDatalist } from './registry-namespace-field'
+import { RegistryNamespaceProvider } from './registry-namespace-field'
 
 export const dynamic = 'force-dynamic'
 
@@ -61,61 +61,63 @@ export default async function ProvidersPage() {
   ])
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Providers" action={<CreateProviderDialog />} />
+    // Both dialogs draw a namespace field, so the provider wraps the whole page
+    // rather than the table alone.
+    <RegistryNamespaceProvider namespaces={namespaces}>
+      <div className="space-y-6">
+        <PageHeader title="Providers" action={<CreateProviderDialog />} />
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Adapter</TableHead>
-            <TableHead>Credentials</TableHead>
-            <TableHead className="text-right">Targets</TableHead>
-            <TableHead>Models</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="w-0"><span className="sr-only">Actions</span></TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {providers.map((provider) => (
-            <TableRow key={provider.id} className="align-top">
-              <TableCell className="font-medium">{provider.name}</TableCell>
-              <TableCell className="text-muted-foreground">{provider.adapter}</TableCell>
-              <TableCell className="font-mono text-xs text-muted-foreground">
-                {Object.entries(provider.maskedCredentials)
-                  .map(([key, value]) => `${key}=${value}`)
-                  .join(' ')}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">{provider.targetCount}</TableCell>
-              <TableCell className="whitespace-normal">
-                <a href={`/catalog?provider=${provider.id}`} className="underline">
-                  {provider.catalogModelCount}
-                </a>
-                <div className="text-xs text-muted-foreground">
-                  <SyncStatus provider={provider} />
-                </div>
-              </TableCell>
-              <TableCell>
-                <Badge variant={provider.enabled ? 'default' : 'secondary'}>
-                  {provider.enabled ? 'enabled' : 'disabled'}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-right">
-                <ProviderRowActions provider={provider} />
-              </TableCell>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Adapter</TableHead>
+              <TableHead>Credentials</TableHead>
+              <TableHead className="text-right">Targets</TableHead>
+              <TableHead>Models</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="w-0"><span className="sr-only">Actions</span></TableHead>
             </TableRow>
-          ))}
-          {providers.length === 0 ? (
-            <TableRow className="hover:bg-transparent">
-              <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
-                No providers yet.
-              </TableCell>
-            </TableRow>
-          ) : null}
-        </TableBody>
-      </Table>
-
-      <RegistryNamespaceDatalist namespaces={namespaces} />
-    </div>
+          </TableHeader>
+          <TableBody>
+            {providers.map((provider) => (
+              <TableRow key={provider.id} className="align-top">
+                <TableCell className="font-medium">{provider.name}</TableCell>
+                <TableCell className="text-muted-foreground">{provider.adapter}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">
+                  {Object.entries(provider.maskedCredentials)
+                    .map(([key, value]) => `${key}=${value}`)
+                    .join(' ')}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">{provider.targetCount}</TableCell>
+                <TableCell className="whitespace-normal">
+                  <a href={`/catalog?provider=${provider.id}`} className="underline">
+                    {provider.catalogModelCount}
+                  </a>
+                  <div className="text-xs text-muted-foreground">
+                    <SyncStatus provider={provider} />
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge variant={provider.enabled ? 'default' : 'secondary'}>
+                    {provider.enabled ? 'enabled' : 'disabled'}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-right">
+                  <ProviderRowActions provider={provider} />
+                </TableCell>
+              </TableRow>
+            ))}
+            {providers.length === 0 ? (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                  No providers yet.
+                </TableCell>
+              </TableRow>
+            ) : null}
+          </TableBody>
+        </Table>
+      </div>
+    </RegistryNamespaceProvider>
   )
 }
