@@ -19,6 +19,42 @@ for the same reason `phase-1-handoff.md` and `phase-1-5-handoff.md` do.
 
 ## Decide before Phase 3 code
 
+**Abort and timeout are misclassified, and the two labels are inverted.**
+`AbortSignal.timeout` raises a `DOMException` named `TimeoutError`, not
+`AbortError`. The `isAbort` checks in `src/lib/adapters/openai/errors.ts` and
+`src/lib/gateway/errors.ts` both test for `AbortError`, so a gateway timeout
+falls through to `502 upstream_error`. `AbortController.abort()` — a client
+disconnect — *does* produce `AbortError`, so the label is exactly inverted:
+that branch would tag a client hangup as `upstream_timeout`.
+
+Neither case reaches those branches anyway. The OpenAI SDK pre-empts both,
+throwing `APIUserAbortError` (an `APIError` with `status: undefined`) as soon
+as the signal aborts, which matches the `OpenAI.APIError` branch first and
+yields `502`. The net effect is that a hung provider and a user pressing stop
+both log as `status: 502, outcome: "error", lvl: "error"` — anyone alerting on
+`lvl: error` gets paged for ordinary user cancellations. It contradicts spec
+§6's `client_closed` outcome and spec §4's "504 for a timeout".
+`RequestOutcome`'s `client_closed` is therefore unreachable outside the
+post-commit stream path: only `sseResponse`'s `cancel()` ever produces it.
+
+This repo already knows the right answer elsewhere. `src/lib/catalog/sync.ts`
+documents exactly this hazard and matches on all three names. Phase 1.5's
+catalog path got it right; the Phase 2 request path did not.
+
+The fix belongs in `execute`, not the adapters. `attemptContext` builds the
+timeout signal, so it should hand it back and let the loop decide the label
+from `clientSignal.aborted` (→ `client_closed`) versus the timeout signal
+(→ 504), rather than from the error's class name. Doing that before Phase 3
+means one place decides, instead of three `toProviderError` files each
+guessing at a different SDK's abort class.
+
+No test caught this because both tests assert the wrong thing.
+`tests/lib/adapters/openai/errors.test.ts` feeds a synthetic
+`DOMException('aborted', 'AbortError')` the SDK never emits, and
+`tests/lib/gateway/errors.test.ts` only asserts `retryable === true` — the
+fallback's behaviour for every unrecognised error, so that test passes with
+the `isAbort` branch deleted.
+
 **Where provider error classification lives is now answered.** Adapters
 normalise their own failures into a shared `ProviderError { status, code,
 type, retryable }` before the error escapes. The OpenAI adapter does this in
@@ -47,9 +83,20 @@ Two consequences for the Gemini and Bedrock adapters:
 `attemptContext`. Nothing bounds their sum. The worst-case request is now
 `sum(timeoutMs)` over the chain — up to `max_attempts` × 120s — where Phase 1
 capped at one 120s attempt. Three hung providers hold a client for six
-minutes. This is new behaviour introduced by this phase, and it deserves a
-deliberate decision rather than a production discovery. A single deadline
-signal `AbortSignal.any`-ed into every attempt is the small version.
+minutes.
+
+The 360s default worst case is far past every common proxy default (nginx 60s,
+ALB 60s), so in a realistic deployment the client's proxy severs the connection
+at 60s while `execute` — whose `clientSignal` did not fire, because the proxy
+closed the socket and nothing propagated that back — keeps walking the chain
+for another five minutes, burning upstream calls and tokens for a response
+nobody can receive. Each attempt also arms a fresh `AbortSignal.timeout` that
+is never cleared, so those timers stay live for their full duration after the
+attempt they belonged to has settled.
+
+This is new behaviour introduced by this phase, and it deserves a deliberate
+decision rather than a production discovery. A single request-level deadline
+`AbortSignal.any`-ed into every attempt fixes both halves at once.
 
 ## Deferred by decision, not oversight
 
@@ -134,10 +181,6 @@ takes `nextCursor` as an injected dep, so nothing else has to change.
 
 ### Comments that say the wrong thing
 
-- **`tests/gateway/failover.test.ts:105-107` claims the test "uses the real
-  registry"** — it passes an inline fake `createAdapter`. A false comment
-  directly above the code it describes is the exact thing this project's
-  comment rule exists to prevent.
 - **`chat-handler.ts`'s catch block never says why `x-babellm-upstream-model`
   is dropped on errors** while `x-babellm-provider` is kept. The reasoning
   (only the routed error knows which provider was last; there is no single

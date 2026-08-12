@@ -142,8 +142,9 @@ test('a disabled target is never in the chain', async () => {
 
 test('an unimplemented adapter type is skipped rather than failing the model', async () => {
   // A gemini target sitting beside a healthy openai one must not break the
-  // model. Uses the real registry, since the skip depends on createAdapter
-  // actually throwing.
+  // model. The injected createAdapter throws for the gemini target by hand so
+  // the skip stays pinned even after the real registry gains a gemini adapter
+  // and stops throwing; tests/gateway/chat.test.ts covers the registry itself.
   const { apiKey } = await seedTargets({
     targets: [
       { name: 'gem', priority: 0, adapter: 'gemini' },

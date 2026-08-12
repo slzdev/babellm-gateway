@@ -111,7 +111,10 @@ export function sseResponse(
       // nobody. Without this, a client disconnect only stops progress
       // incidentally — via whatever AbortSignal the adapter happens to
       // wire up — rather than as a guaranteed consequence of cancellation.
-      void started.iterator.return?.()
+      void started.iterator.return?.().catch(() => {
+        // The client is already gone; a failed cleanup has no one to report
+        // to and must not become an unhandled rejection that ends the process.
+      })
     },
   })
 

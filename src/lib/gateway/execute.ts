@@ -118,7 +118,12 @@ export async function execute<T>(
       // reason (501 unsupported_operation, rather than an opaque 500).
       const classified = classifyProviderError(err)
       attempts.push(record(index, candidate, Date.now() - startedAt, classified))
-      last = routed(classified, attempts, candidate)
+      // A target the gateway cannot even construct is the weakest possible
+      // explanation for a failed request, so it must never displace a real
+      // upstream error recorded earlier in the chain. Keeping the first one
+      // also keeps the surfaced error stable when the policy reorders the
+      // chain between requests.
+      if (!last) last = routed(classified, attempts, candidate)
       continue
     }
 

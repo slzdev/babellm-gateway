@@ -117,6 +117,22 @@ test('a chain of only unconstructable targets surfaces the construction error', 
   ).rejects.toMatchObject({ status: 501, code: 'unsupported_operation' })
 })
 
+test('an unconstructable target late in the chain does not displace a real upstream error', async () => {
+  // Chain order varies per request under weighted and round_robin, so a
+  // gemini target sitting behind a rate-limited openai one must not turn a
+  // 429 into a 501 that clients will never retry.
+  const run = vi.fn().mockRejectedValue(
+    new ProviderError({ status: 429, code: 'rate_limit_exceeded', message: 'slow down', retryable: true }),
+  )
+  const createAdapter = vi.fn()
+    .mockImplementationOnce(() => stubAdapter)
+    .mockImplementationOnce(() => { throw new UnsupportedOperationError('gemini is not available yet') })
+
+  await expect(
+    execute([candidate('oai'), candidate('gem')], 'req_1', live, { createAdapter }, run),
+  ).rejects.toMatchObject({ status: 429, code: 'rate_limit_exceeded' })
+})
+
 test('an UnsupportedOperationError from the call itself is fatal', async () => {
   // Unlike construction, this one describes the *operation* — another
   // provider would only fail differently.
