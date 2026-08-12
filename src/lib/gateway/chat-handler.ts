@@ -8,6 +8,7 @@ import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
 import { GatewayError, classifyProviderError, errorResponse } from './errors'
 import { newCompletionId, rewriteCompletion } from './identity'
 import { resolveVirtualModel, type Candidate } from './resolve'
+import { sseResponse, startChatStream } from './sse'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 
@@ -99,13 +100,16 @@ export async function handleChatCompletions(
       console.error('[gateway] failed to update last_used_at', err),
     )
 
+    const identity = { id: newCompletionId(), model: body.model }
+
     if (body.stream) {
-      throw new GatewayError({
-        status: 501,
-        type: 'api_error',
-        code: 'streaming_not_implemented',
-        message: 'Streaming is not implemented yet.',
-      })
+      let chunks
+      try {
+        chunks = await startChatStream(adapter.chatStream(body, ctx))
+      } catch (err) {
+        throw upstreamFailure(err)
+      }
+      return sseResponse(chunks, identity, headers)
     }
 
     let completion
@@ -115,10 +119,7 @@ export async function handleChatCompletions(
       throw upstreamFailure(err)
     }
 
-    return Response.json(
-      rewriteCompletion(completion, { id: newCompletionId(), model: body.model }),
-      { headers },
-    )
+    return Response.json(rewriteCompletion(completion, identity), { headers })
   } catch (err) {
     return errorResponse(err, { 'x-request-id': requestId })
   }
