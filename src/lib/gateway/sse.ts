@@ -59,9 +59,10 @@ export function sseResponse(
   // as an unhandled rejection.
   let cancelled = false
 
-  // A cancelled stream reaches both cancel() and the generator's finally, so
-  // the callback needs a first-one-wins guard or a disconnect would log
-  // twice — once as client_closed and once as ok.
+  // An interrupted stream settles twice without this: the catch reports
+  // stream_interrupted, and the finally then runs with cancelled still
+  // false and reports ok on top of it. First one wins, so the outcome that
+  // describes what actually happened is the one that survives.
   let settled = false
   function settle(outcome: StreamOutcome) {
     if (settled) return

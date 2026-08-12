@@ -143,6 +143,10 @@ test('a mid-stream failure logs stream_interrupted at error despite the 200', as
   await drain(res)
 
   expect(lines[0]).toMatchObject({ status: 200, outcome: 'stream_interrupted', lvl: 'error' })
+  // The catch settles stream_interrupted and the finally then calls
+  // settle('ok') with cancelled still false — this is the only path where
+  // the first-one-wins guard is what prevents a second line.
+  expect(lines).toHaveLength(1)
 })
 
 test('a client disconnect logs client_closed exactly once', async () => {
