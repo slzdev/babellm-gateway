@@ -178,7 +178,7 @@ export interface AttemptRecord {
   targetId: string
   provider: string
   model: string
-  status: number | null      // null when the attempt never got a status
+  status: number
   latencyMs: number
   error?: string
 }
@@ -263,12 +263,13 @@ Fields:
 | `outcome` | `ok`, `error`, `client_closed`, or `stream_interrupted`. |
 | `latency_ms` | Wall clock from handler entry to settle. |
 | `ttft_ms` | Streaming only: entry to first chunk. Absent otherwise. |
-| `attempts[].status` | Upstream status, or `null` when the attempt never got one. |
+| `attempts[].status` | Upstream status, or the gateway's classified status when the call never reached one (502 for a connection failure, 504 for a timeout). |
 | `attempts[].error` | The classified `code`, then `: message`. Absent on success. |
 
 `outcome` exists separately from `status` because a stream that dies after its
 first chunk has already sent `200` — the status alone would report it as a
-success.
+success. For the same reason `stream_interrupted` logs at `error` regardless of
+its 200.
 
 `lvl` is `error` for a 5xx, `warn` for a 4xx, `info` otherwise. Upstream error
 text is included, in line with the Phase 1 decision to pass it through verbatim —
