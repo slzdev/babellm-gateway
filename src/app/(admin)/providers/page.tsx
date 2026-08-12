@@ -1,9 +1,11 @@
 import { Badge } from '@/components/ui/badge'
 import { listProviders, type ProviderListItem } from '@/lib/admin/providers'
 import { requireAdmin } from '@/lib/admin/session'
+import { listRegistryNamespaces } from '@/lib/catalog/namespaces'
 import { DeleteProviderButton } from './delete-provider-button'
 import { EditProviderForm } from './edit-provider-form'
 import { ProviderForm } from './provider-form'
+import { RegistryNamespaceDatalist } from './registry-namespace-field'
 import { SyncProviderButton } from './sync-provider-button'
 import { TestProviderButton } from './test-provider-button'
 import { ToggleProviderButton } from './toggle-provider-button'
@@ -53,7 +55,10 @@ function SyncStatus({ provider }: { provider: ProviderListItem }) {
 
 export default async function ProvidersPage() {
   await requireAdmin()
-  const providers = await listProviders()
+  const [providers, namespaces] = await Promise.all([
+    listProviders(),
+    listRegistryNamespaces(),
+  ])
 
   return (
     <div className="space-y-8">
@@ -115,6 +120,7 @@ export default async function ProvidersPage() {
         </tbody>
       </table>
 
+      <RegistryNamespaceDatalist namespaces={namespaces} />
       <ProviderForm />
     </div>
   )

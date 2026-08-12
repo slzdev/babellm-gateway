@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import type { AdapterType } from '@/lib/adapters/credentials'
 import type { ProviderListItem } from '@/lib/admin/providers'
 import { updateProviderAction, type ActionState } from './actions'
+import { RegistryNamespaceField } from './registry-namespace-field'
 
 const CREDENTIAL_FIELDS: Record<AdapterType, string[]> = {
   openai: ['apiKey', 'organization', 'project'],
@@ -40,18 +41,11 @@ export function EditProviderForm({ provider }: { provider: ProviderListItem }) {
               defaultValue={provider.baseUrl ?? ''}
             />
           </div>
-          <div className="space-y-1">
-            <Label htmlFor={`ns-${provider.id}`} className="text-xs">Registry namespace</Label>
-            <Input
-              id={`ns-${provider.id}`}
-              name="registryNamespace"
-              defaultValue={provider.registryNamespace ?? ''}
-              placeholder="groq"
-            />
-            <p className="text-xs text-muted-foreground">
-              models.dev namespace for enriching this provider&apos;s models.
-            </p>
-          </div>
+          <RegistryNamespaceField
+            id={`ns-${provider.id}`}
+            adapter={provider.adapter}
+            defaultValue={provider.registryNamespace}
+          />
         </div>
 
         <fieldset className="space-y-3">

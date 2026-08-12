@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createProviderAction, type ActionState } from './actions'
+import { RegistryNamespaceField } from './registry-namespace-field'
 import type { AdapterType } from '@/lib/adapters/credentials'
 
 const ADAPTERS: AdapterType[] = ['openai', 'openai_compatible', 'gemini', 'bedrock']
@@ -40,6 +41,8 @@ export function ProviderForm() {
             ))}
           </select>
         </div>
+
+        <RegistryNamespaceField id="registryNamespace" adapter={adapter} />
       </div>
 
       {adapter === 'bedrock' ? (

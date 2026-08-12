@@ -6,6 +6,7 @@ import {
   createProvider, deleteProvider, getProviderConfig, testProvider, updateProvider,
 } from '@/lib/admin/providers'
 import { adapterTypes, type AdapterType } from '@/lib/adapters/credentials'
+import { parseRegistryNamespace } from '@/lib/catalog/config'
 import { syncProvider, type SyncResult } from '@/lib/catalog/sync'
 
 export interface ActionState {
@@ -46,6 +47,13 @@ export async function createProviderAction(
   }
   const adapter = rawAdapter as AdapterType
 
+  let namespace: string | null
+  try {
+    namespace = parseRegistryNamespace(String(formData.get('registryNamespace') ?? ''))
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Invalid registry namespace.' }
+  }
+
   let created
   try {
     created = await createProvider({
@@ -53,6 +61,8 @@ export async function createProviderAction(
       adapter,
       baseUrl: (formData.get('baseUrl') as string) || null,
       credentials: credentialsFrom(formData, adapter),
+      // Set at create time so the sync this action fires can already enrich.
+      config: namespace ? { registryNamespace: namespace } : {},
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not create the provider.' }
@@ -136,9 +146,10 @@ export async function updateProviderAction(
   const adapter = rawAdapter as AdapterType
 
   const credentials = credentialsFrom(formData, adapter)
-  const namespace = String(formData.get('registryNamespace') ?? '').trim()
 
   try {
+    const namespace = parseRegistryNamespace(String(formData.get('registryNamespace') ?? ''))
+
     // registryNamespace is the only config key this form edits. Merge it onto
     // the stored config instead of replacing the object outright — {} is
     // truthy, so passing it unconditionally would clobber keys no form
