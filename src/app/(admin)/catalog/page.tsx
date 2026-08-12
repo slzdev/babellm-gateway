@@ -1,6 +1,10 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table'
+import { PageHeader } from '@/components/admin/page-header'
 import { listCatalog, type CatalogListItem } from '@/lib/admin/catalog'
 import { listVirtualModels } from '@/lib/admin/models'
 import { listProviders } from '@/lib/admin/providers'
@@ -8,10 +12,8 @@ import { requireAdmin } from '@/lib/admin/session'
 import { getCatalogSettings } from '@/lib/settings'
 import { loadRegistry } from '@/lib/catalog/registry'
 import { modelKinds, type ModelKind } from '@/lib/catalog/types'
-import {
-  AddManualModelForm, DeleteCatalogModelButton, OverrideForm, RegistrySettingsForm,
-  RouteToModelForm,
-} from './catalog-forms'
+import { AddManualModelDialog, RegistrySettingsForm } from './catalog-forms'
+import { CatalogRowActions } from './catalog-row-actions'
 import { RefreshRegistryButton, SyncAllButton } from './sync-buttons'
 
 export const dynamic = 'force-dynamic'
@@ -67,15 +69,20 @@ export default async function CatalogPage({
     listVirtualModels(),
   ])
 
+  const virtualModelOptions = virtualModels.map((m) => ({ id: m.id, name: m.name }))
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-semibold">Catalog</h1>
-        <div className="ml-auto flex gap-2">
-          <RefreshRegistryButton />
-          <SyncAllButton />
-        </div>
-      </div>
+      <PageHeader
+        title="Catalog"
+        action={
+          <>
+            <RefreshRegistryButton />
+            <SyncAllButton />
+            {providers.length > 0 ? <AddManualModelDialog providers={providers} /> : null}
+          </>
+        }
+      />
 
       <form className="flex flex-wrap items-end gap-2">
         <Input
@@ -106,54 +113,43 @@ export default async function CatalogPage({
         <Button type="submit" size="sm" variant="outline">Filter</Button>
       </form>
 
-      <table className="w-full text-sm">
-        <thead className="text-left text-muted-foreground">
-          <tr>
-            <th className="py-1">Model</th><th>Provider</th><th>Kind</th>
-            <th>Context</th><th>In/out</th><th>Status</th><th />
-          </tr>
-        </thead>
-        <tbody>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Model</TableHead>
+            <TableHead>Provider</TableHead>
+            <TableHead>Kind</TableHead>
+            <TableHead className="text-right">Context</TableHead>
+            <TableHead className="text-right">In/out</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead className="w-0" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {items.map((item) => (
-            <tr key={item.id} className="border-t align-top">
-              <td className="py-2">
-                <details>
-                  <summary className="cursor-pointer font-mono text-xs">{item.modelId}</summary>
-                  <div className="space-y-2 py-2">
-                    <p className="text-xs text-muted-foreground">
-                      {item.canonicalKey
-                        ? `Matched ${item.canonicalKey}`
-                        : 'No registry match — set a registry namespace on the provider, or override the fields below.'}
-                    </p>
-                    <OverrideForm item={item} />
-                    <RouteToModelForm
-                      item={item}
-                      virtualModels={virtualModels.map((m) => ({ id: m.id, name: m.name }))}
-                    />
-                  </div>
-                </details>
-              </td>
-              <td>{item.providerName}</td>
-              <td>{item.kind}</td>
-              <td>{context(item.contextWindow)}</td>
-              <td>{money(item.inputPerMtok)}/{money(item.outputPerMtok)}</td>
-              <td><StatusCell item={item} /></td>
-              <td className="text-right">
-                <DeleteCatalogModelButton id={item.id} />
-              </td>
-            </tr>
+            <TableRow key={item.id} className="align-top">
+              <TableCell><span className="font-mono text-xs">{item.modelId}</span></TableCell>
+              <TableCell>{item.providerName}</TableCell>
+              <TableCell>{item.kind}</TableCell>
+              <TableCell className="text-right tabular-nums">{context(item.contextWindow)}</TableCell>
+              <TableCell className="text-right tabular-nums">
+                {money(item.inputPerMtok)}/{money(item.outputPerMtok)}
+              </TableCell>
+              <TableCell><StatusCell item={item} /></TableCell>
+              <TableCell className="text-right">
+                <CatalogRowActions item={item} virtualModels={virtualModelOptions} />
+              </TableCell>
+            </TableRow>
           ))}
           {items.length === 0 ? (
-            <tr>
-              <td colSpan={7} className="py-3 text-muted-foreground">
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                 Nothing here yet — sync a provider, or add a model by hand.
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ) : null}
-        </tbody>
-      </table>
-
-      {providers.length > 0 ? <AddManualModelForm providers={providers} /> : null}
+        </TableBody>
+      </Table>
 
       <RegistrySettingsForm
         registryEnabled={settings.registryEnabled}

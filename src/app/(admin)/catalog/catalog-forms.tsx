@@ -6,10 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { FormDialog } from '@/components/admin/form-dialog'
 import type { CatalogListItem } from '@/lib/admin/catalog'
 import {
-  addManualModelAction, clearOverrideAction, deleteCatalogModelAction,
-  routeToModelAction, saveRegistrySettingsAction, setOverrideAction, type ActionState,
+  addManualModelAction, clearOverrideAction, routeToModelAction,
+  saveRegistrySettingsAction, setOverrideAction, type ActionState,
 } from './actions'
 
 function Message({ state }: { state: ActionState | undefined }) {
@@ -53,104 +54,136 @@ function ClearOverrideButton({
   )
 }
 
-export function OverrideForm({ item }: { item: CatalogListItem }) {
-  const [state, action, pending] = useActionState<ActionState | undefined, FormData>(
-    setOverrideAction, undefined,
-  )
+export function OverrideDialog({
+  item, open, onOpenChange,
+}: {
+  item: CatalogListItem
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   const overriddenFields = NUMERIC_LABELS.filter(([field]) => field in item.override)
 
   return (
-    <div className="space-y-2 pt-2">
-      <form action={action} className="space-y-3">
-        <input type="hidden" name="id" value={item.id} />
-        <div className="grid gap-3 sm:grid-cols-3">
-          {NUMERIC_LABELS.map(([field, label]) => (
-            <div key={field} className="space-y-1">
-              <Label htmlFor={`${item.id}-${field}`} className="text-xs">{label}</Label>
-              <Input
-                id={`${item.id}-${field}`}
-                name={field}
-                type="number"
-                step="any"
-                min="0"
-                defaultValue={item.override[field] ?? ''}
-                placeholder={item[field] === null ? '—' : String(item[field])}
-              />
-              <p className="text-xs text-muted-foreground">
-                {item.sources[field] ? `now from ${item.sources[field]}` : 'not known'}
-              </p>
-            </div>
-          ))}
-        </div>
-        <Message state={state} />
-        <Button type="submit" size="sm" disabled={pending}>
-          {pending ? 'Saving…' : 'Save override'}
-        </Button>
-      </form>
-      {overriddenFields.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {overriddenFields.map(([field, label]) => (
-            <ClearOverrideButton key={field} id={item.id} field={field} label={label} />
-          ))}
-        </div>
-      ) : null}
-    </div>
+    <FormDialog<ActionState>
+      open={open}
+      onOpenChange={onOpenChange}
+      className="sm:max-w-2xl"
+      title={`Override ${item.modelId}`}
+      description={
+        item.canonicalKey
+          ? `Matched ${item.canonicalKey}. Overrides always win and survive re-syncs.`
+          : 'No registry match — set a registry namespace on the provider, or fill these in by hand.'
+      }
+      action={setOverrideAction}
+      submitLabel="Save override"
+      successMessage="Override saved."
+      extra={
+        overriddenFields.length > 0 ? (
+          <div className="flex flex-wrap gap-2 border-t pt-3">
+            {overriddenFields.map(([field, label]) => (
+              <ClearOverrideButton key={field} id={item.id} field={field} label={label} />
+            ))}
+          </div>
+        ) : null
+      }
+    >
+      <input type="hidden" name="id" value={item.id} />
+      <div className="grid gap-4 sm:grid-cols-3">
+        {NUMERIC_LABELS.map(([field, label]) => (
+          <div key={field} className="space-y-2">
+            <Label htmlFor={`${item.id}-${field}`} className="text-xs">{label}</Label>
+            <Input
+              id={`${item.id}-${field}`}
+              name={field}
+              type="number"
+              step="any"
+              min="0"
+              defaultValue={item.override[field] ?? ''}
+              placeholder={item[field] === null ? '—' : String(item[field])}
+            />
+            <p className="text-xs text-muted-foreground">
+              {item.sources[field] ? `now from ${item.sources[field]}` : 'not known'}
+            </p>
+          </div>
+        ))}
+      </div>
+    </FormDialog>
   )
 }
 
-export function DeleteCatalogModelButton({ id }: { id: string }) {
-  const [state, action, pending] = useActionState<ActionState | undefined, FormData>(
-    deleteCatalogModelAction, undefined,
-  )
-
-  useEffect(() => {
-    if (state?.error) toast.error(state.error)
-  }, [state])
-
+export function RouteToModelDialog({
+  item, virtualModels, open, onOpenChange,
+}: {
+  item: CatalogListItem
+  virtualModels: Array<{ id: string; name: string }>
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   return (
-    <form action={action}>
-      <input type="hidden" name="id" value={id} />
-      <Button type="submit" variant="ghost" size="sm" disabled={pending}>
-        {pending ? 'Deleting…' : 'Delete'}
-      </Button>
-    </form>
+    <FormDialog<ActionState>
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`Route to ${item.modelId}`}
+      description="Adds this model as a route target on a virtual model."
+      action={routeToModelAction}
+      submitLabel="Create route"
+      successMessage="Route created."
+    >
+      <input type="hidden" name="providerId" value={item.providerId} />
+      <input type="hidden" name="modelId" value={item.modelId} />
+
+      <div className="space-y-2">
+        <Label htmlFor={`route-${item.id}`}>Route to</Label>
+        <select
+          id={`route-${item.id}`}
+          name="virtualModelId"
+          className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+        >
+          <option value="">— new virtual model —</option>
+          {virtualModels.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor={`route-name-${item.id}`}>New name</Label>
+        <Input id={`route-name-${item.id}`} name="newModelName" placeholder="house-model" />
+      </div>
+    </FormDialog>
   )
 }
 
-export function AddManualModelForm({
+export function AddManualModelDialog({
   providers,
 }: {
   providers: Array<{ id: string; name: string }>
 }) {
-  const [state, action, pending] = useActionState<ActionState | undefined, FormData>(
-    addManualModelAction, undefined,
-  )
-
   return (
-    <form action={action} className="flex flex-wrap items-end gap-2 rounded-lg border p-4">
-      <div className="space-y-1">
-        <Label htmlFor="manual-provider" className="text-xs">Provider</Label>
+    <FormDialog<ActionState>
+      trigger={<Button variant="outline">Add model</Button>}
+      title="Add a model by hand"
+      action={addManualModelAction}
+      submitLabel="Add model"
+      successMessage="Model added."
+    >
+      <div className="space-y-2">
+        <Label htmlFor="manual-provider">Provider</Label>
         <select
           id="manual-provider"
           name="providerId"
-          className="h-9 rounded-md border bg-transparent px-3 text-sm"
+          className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
         >
           {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       </div>
-      <div className="space-y-1">
-        <Label htmlFor="manual-model" className="text-xs">Model id</Label>
+      <div className="space-y-2">
+        <Label htmlFor="manual-model">Model id</Label>
         <Input id="manual-model" name="modelId" required placeholder="internal-llm-v2" />
       </div>
-      <div className="space-y-1">
-        <Label htmlFor="manual-context" className="text-xs">Context window</Label>
-        <Input id="manual-context" name="contextWindow" type="number" min="0" className="w-32" />
+      <div className="space-y-2">
+        <Label htmlFor="manual-context">Context window</Label>
+        <Input id="manual-context" name="contextWindow" type="number" min="0" />
       </div>
-      <Button type="submit" size="sm" disabled={pending}>
-        {pending ? 'Adding…' : 'Add model'}
-      </Button>
-      <div className="w-full"><Message state={state} /></div>
-    </form>
+    </FormDialog>
   )
 }
 
@@ -189,47 +222,6 @@ export function RegistrySettingsForm({
       <Button type="submit" size="sm" variant="outline" disabled={pending}>
         {pending ? 'Saving…' : 'Save'}
       </Button>
-    </form>
-  )
-}
-
-export function RouteToModelForm({
-  item,
-  virtualModels,
-}: {
-  item: CatalogListItem
-  virtualModels: Array<{ id: string; name: string }>
-}) {
-  const [state, action, pending] = useActionState<ActionState | undefined, FormData>(
-    routeToModelAction, undefined,
-  )
-
-  return (
-    <form action={action} className="flex flex-wrap items-end gap-2 border-t pt-3">
-      <input type="hidden" name="providerId" value={item.providerId} />
-      <input type="hidden" name="modelId" value={item.modelId} />
-
-      <div className="space-y-1">
-        <Label htmlFor={`route-${item.id}`} className="text-xs">Route to</Label>
-        <select
-          id={`route-${item.id}`}
-          name="virtualModelId"
-          className="h-9 rounded-md border bg-transparent px-3 text-sm"
-        >
-          <option value="">— new virtual model —</option>
-          {virtualModels.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-        </select>
-      </div>
-
-      <div className="space-y-1">
-        <Label htmlFor={`route-name-${item.id}`} className="text-xs">New name</Label>
-        <Input id={`route-name-${item.id}`} name="newModelName" placeholder="house-model" />
-      </div>
-
-      <Button type="submit" size="sm" variant="outline" disabled={pending}>
-        {pending ? 'Creating…' : 'Route to this'}
-      </Button>
-      <div className="w-full"><Message state={state} /></div>
     </form>
   )
 }
