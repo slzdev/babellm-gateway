@@ -8,7 +8,7 @@ import {
 import { setCatalogSettings } from '@/lib/settings'
 import { loadRegistry } from '@/lib/catalog/registry'
 import { syncAllProviders } from '@/lib/catalog/sync'
-import type { CatalogFields } from '@/lib/catalog/types'
+import { modelKinds, type CatalogFields } from '@/lib/catalog/types'
 
 export interface ActionState {
   error?: string
@@ -41,7 +41,12 @@ function overrideFrom(formData: FormData): Partial<CatalogFields> {
   }
 
   const kind = formData.get('kind')
-  if (typeof kind === 'string' && kind !== '') patch.kind = kind as CatalogFields['kind']
+  if (typeof kind === 'string' && kind !== '') {
+    if (!(modelKinds as readonly string[]).includes(kind)) {
+      throw new Error(`Unknown kind: ${kind}`)
+    }
+    patch.kind = kind as CatalogFields['kind']
+  }
 
   return patch
 }
@@ -73,13 +78,21 @@ export async function setOverrideAction(
   return { success: 'Override saved.' }
 }
 
-export async function clearOverrideAction(formData: FormData): Promise<void> {
+export async function clearOverrideAction(
+  _prev: ActionState | undefined,
+  formData: FormData,
+): Promise<ActionState> {
   await requireAdmin()
-  await clearOverrideField(
-    String(formData.get('id')),
-    String(formData.get('field')) as keyof CatalogFields,
-  )
+  try {
+    await clearOverrideField(
+      String(formData.get('id')),
+      String(formData.get('field')) as keyof CatalogFields,
+    )
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Could not clear the override.' }
+  }
   revalidatePath('/catalog')
+  return {}
 }
 
 export async function addManualModelAction(
@@ -100,10 +113,18 @@ export async function addManualModelAction(
   return { success: 'Model added.' }
 }
 
-export async function deleteCatalogModelAction(formData: FormData): Promise<void> {
+export async function deleteCatalogModelAction(
+  _prev: ActionState | undefined,
+  formData: FormData,
+): Promise<ActionState> {
   await requireAdmin()
-  await deleteCatalogModel(String(formData.get('id')))
+  try {
+    await deleteCatalogModel(String(formData.get('id')))
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Could not delete the model.' }
+  }
   revalidatePath('/catalog')
+  return { success: 'Model deleted.' }
 }
 
 export async function saveRegistrySettingsAction(
@@ -113,7 +134,11 @@ export async function saveRegistrySettingsAction(
   await requireAdmin()
   try {
     await setCatalogSettings({
-      registryEnabled: formData.get('registryEnabled') === 'on',
+      // The Switch renders a native checkbox: checked submits "on" (no value
+      // attribute is set, so it falls back to the HTML default) and unchecked
+      // omits the field entirely. Treat anything present-and-not-explicitly-off
+      // as true rather than betting on the exact string.
+      registryEnabled: !['false', 'off', null, ''].includes(formData.get('registryEnabled') as string | null),
       registryUrl: String(formData.get('registryUrl') ?? ''),
     })
   } catch (err) {

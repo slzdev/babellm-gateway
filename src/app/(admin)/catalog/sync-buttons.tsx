@@ -13,8 +13,12 @@ export function SyncAllButton() {
       size="sm"
       disabled={pending}
       onClick={() => start(async () => {
-        await syncAllAction()
-        toast.success('Sync complete.')
+        try {
+          await syncAllAction()
+          toast.success('Sync complete.')
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : 'Sync failed.')
+        }
       })}
     >
       {pending ? 'Syncing…' : 'Sync all'}
@@ -31,8 +35,12 @@ export function RefreshRegistryButton() {
       variant="outline"
       disabled={pending}
       onClick={() => start(async () => {
-        await refreshRegistryAction()
-        toast.success('Registry refreshed.')
+        try {
+          await refreshRegistryAction()
+          toast.success('Registry refreshed.')
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : 'Registry refresh failed.')
+        }
       })}
     >
       {pending ? 'Refreshing…' : 'Refresh registry'}

@@ -7,8 +7,7 @@ import { requireAdmin } from '@/lib/admin/session'
 import { getCatalogSettings } from '@/lib/settings'
 import { loadRegistry } from '@/lib/catalog/registry'
 import { modelKinds, type ModelKind } from '@/lib/catalog/types'
-import { deleteCatalogModelAction } from './actions'
-import { AddManualModelForm, OverrideForm, RegistrySettingsForm } from './catalog-forms'
+import { AddManualModelForm, DeleteCatalogModelButton, OverrideForm, RegistrySettingsForm } from './catalog-forms'
 import { RefreshRegistryButton, SyncAllButton } from './sync-buttons'
 
 export const dynamic = 'force-dynamic'
@@ -47,7 +46,11 @@ export default async function CatalogPage({
   const params = await searchParams
 
   const providerId = typeof params.provider === 'string' ? params.provider : undefined
-  const kind = typeof params.kind === 'string' ? (params.kind as ModelKind) : undefined
+  // A URL can carry anything; an unrecognised ?kind= is treated as no filter
+  // rather than passed through to the query.
+  const kind = typeof params.kind === 'string' && (modelKinds as readonly string[]).includes(params.kind)
+    ? (params.kind as ModelKind)
+    : undefined
   const search = typeof params.q === 'string' ? params.q : undefined
 
   const [items, providers, settings, registry] = await Promise.all([
@@ -117,10 +120,7 @@ export default async function CatalogPage({
               <td>{money(item.inputPerMtok)}/{money(item.outputPerMtok)}</td>
               <td><StatusCell item={item} /></td>
               <td className="text-right">
-                <form action={deleteCatalogModelAction}>
-                  <input type="hidden" name="id" value={item.id} />
-                  <Button type="submit" variant="ghost" size="sm">Delete</Button>
-                </form>
+                <DeleteCatalogModelButton id={item.id} />
               </td>
             </tr>
           ))}

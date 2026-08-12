@@ -1,14 +1,15 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useEffect } from 'react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import type { CatalogListItem } from '@/lib/admin/catalog'
 import {
-  addManualModelAction, saveRegistrySettingsAction, setOverrideAction,
-  type ActionState,
+  addManualModelAction, clearOverrideAction, deleteCatalogModelAction,
+  saveRegistrySettingsAction, setOverrideAction, type ActionState,
 } from './actions'
 
 function Message({ state }: { state: ActionState | undefined }) {
@@ -25,36 +26,92 @@ const NUMERIC_LABELS = [
   ['cachedInputPerMtok', 'Cached input $/Mtok'],
 ] as const
 
+/** A field currently has an override when its key is present in item.override. */
+function ClearOverrideButton({
+  id, field, label,
+}: {
+  id: string
+  field: keyof CatalogListItem['override']
+  label: string
+}) {
+  const [state, action, pending] = useActionState<ActionState | undefined, FormData>(
+    clearOverrideAction, undefined,
+  )
+
+  useEffect(() => {
+    if (state?.error) toast.error(state.error)
+  }, [state])
+
+  return (
+    <form action={action}>
+      <input type="hidden" name="id" value={id} />
+      <input type="hidden" name="field" value={field} />
+      <Button type="submit" variant="ghost" size="sm" disabled={pending}>
+        {pending ? 'Clearing…' : `Clear ${label.toLowerCase()}`}
+      </Button>
+    </form>
+  )
+}
+
 export function OverrideForm({ item }: { item: CatalogListItem }) {
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(
     setOverrideAction, undefined,
   )
+  const overriddenFields = NUMERIC_LABELS.filter(([field]) => field in item.override)
 
   return (
-    <form action={action} className="space-y-3 pt-2">
-      <input type="hidden" name="id" value={item.id} />
-      <div className="grid gap-3 sm:grid-cols-3">
-        {NUMERIC_LABELS.map(([field, label]) => (
-          <div key={field} className="space-y-1">
-            <Label htmlFor={`${item.id}-${field}`} className="text-xs">{label}</Label>
-            <Input
-              id={`${item.id}-${field}`}
-              name={field}
-              type="number"
-              step="any"
-              min="0"
-              defaultValue={item.override[field] ?? ''}
-              placeholder={item[field] === null ? '—' : String(item[field])}
-            />
-            <p className="text-xs text-muted-foreground">
-              {item.sources[field] ? `now from ${item.sources[field]}` : 'not known'}
-            </p>
-          </div>
-        ))}
-      </div>
-      <Message state={state} />
-      <Button type="submit" size="sm" disabled={pending}>
-        {pending ? 'Saving…' : 'Save override'}
+    <div className="space-y-2 pt-2">
+      <form action={action} className="space-y-3">
+        <input type="hidden" name="id" value={item.id} />
+        <div className="grid gap-3 sm:grid-cols-3">
+          {NUMERIC_LABELS.map(([field, label]) => (
+            <div key={field} className="space-y-1">
+              <Label htmlFor={`${item.id}-${field}`} className="text-xs">{label}</Label>
+              <Input
+                id={`${item.id}-${field}`}
+                name={field}
+                type="number"
+                step="any"
+                min="0"
+                defaultValue={item.override[field] ?? ''}
+                placeholder={item[field] === null ? '—' : String(item[field])}
+              />
+              <p className="text-xs text-muted-foreground">
+                {item.sources[field] ? `now from ${item.sources[field]}` : 'not known'}
+              </p>
+            </div>
+          ))}
+        </div>
+        <Message state={state} />
+        <Button type="submit" size="sm" disabled={pending}>
+          {pending ? 'Saving…' : 'Save override'}
+        </Button>
+      </form>
+      {overriddenFields.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {overriddenFields.map(([field, label]) => (
+            <ClearOverrideButton key={field} id={item.id} field={field} label={label} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+export function DeleteCatalogModelButton({ id }: { id: string }) {
+  const [state, action, pending] = useActionState<ActionState | undefined, FormData>(
+    deleteCatalogModelAction, undefined,
+  )
+
+  useEffect(() => {
+    if (state?.error) toast.error(state.error)
+  }, [state])
+
+  return (
+    <form action={action}>
+      <input type="hidden" name="id" value={id} />
+      <Button type="submit" variant="ghost" size="sm" disabled={pending}>
+        {pending ? 'Deleting…' : 'Delete'}
       </Button>
     </form>
   )
