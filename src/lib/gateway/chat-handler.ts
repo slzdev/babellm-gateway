@@ -5,10 +5,11 @@ import type { ProviderAdapter } from '@/lib/adapters/types'
 import type { ProviderRow } from '@/lib/db/schema'
 import { chatCompletionRequestSchema } from '@/lib/schemas/chat'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
-import { GatewayError, classifyProviderError, errorResponse } from './errors'
-import { attemptContext } from './execute'
+import { GatewayError, RoutedError, errorResponse } from './errors'
+import { execute } from './execute'
 import { newCompletionId, rewriteCompletion } from './identity'
 import { resolveVirtualModel, type Candidate } from './resolve'
+import { selectOrder } from './select'
 import { sseResponse, startChatStream } from './sse'
 
 export interface ChatHandlerDeps {
@@ -52,46 +53,17 @@ export function attemptHeaders(candidate: Candidate, requestId: string): Headers
   }
 }
 
-function upstreamFailure(err: unknown): GatewayError {
-  const classified = classifyProviderError(err)
-  return new GatewayError({
-    status: classified.status,
-    type: classified.type,
-    code: classified.code,
-    message: classified.message,
-  })
-}
-
 export async function handleChatCompletions(
   request: Request,
   deps: ChatHandlerDeps = defaultDeps,
 ): Promise<Response> {
   const requestId = newCompletionId().replace('chatcmpl-', 'req_')
-  // Tracked outside the try block so the catch handler can report which
-  // provider was in flight once a target has actually been chosen.
-  let candidate: Candidate | undefined
 
   try {
     const apiKey = await resolveApiKey(extractBearerToken(request))
     const body = await parseBody(request)
-    const { candidates } = await resolveVirtualModel(body.model)
-
-    // Phase 1 uses the highest-priority target only. Phase 2 walks the list.
-    candidate = candidates[0]
-    const ctx = attemptContext(candidate, requestId, request.signal)
-    const headers = attemptHeaders(candidate, requestId)
-
-    // createAdapter throws for unimplemented adapter types (e.g. gemini,
-    // bedrock) and for misconfigured providers. It must be wrapped the same
-    // as the two calls below it, or those errors escape as opaque 500s
-    // instead of the classified status classifyProviderError already knows
-    // how to produce (501 for UnsupportedOperationError, in particular).
-    let adapter: ProviderAdapter
-    try {
-      adapter = deps.createAdapter(candidate.provider)
-    } catch (err) {
-      throw upstreamFailure(err)
-    }
+    const { model, candidates } = await resolveVirtualModel(body.model)
+    const chain = selectOrder(candidates, model)
 
     void touchApiKey(apiKey.id).catch((err) =>
       console.error(`[gateway] failed to update last_used_at request_id=${requestId}`, err),
@@ -100,29 +72,29 @@ export async function handleChatCompletions(
     const identity = { id: newCompletionId(), model: body.model }
 
     if (body.stream) {
-      let started
-      try {
-        started = await startChatStream(adapter.chatStream(body, ctx))
-      } catch (err) {
-        throw upstreamFailure(err)
-      }
-      return sseResponse(started, identity, headers)
+      // startChatStream pulls the first chunk, so a failure inside `run` is
+      // still a failure before the response is committed — which is what
+      // makes failover safe for streams.
+      const result = await execute(chain, requestId, request.signal, deps, (adapter, ctx) =>
+        startChatStream(adapter.chatStream(body, ctx)),
+      )
+      return sseResponse(result.value, identity, attemptHeaders(result.candidate, requestId))
     }
 
-    let completion
-    try {
-      completion = await adapter.chat(body, ctx)
-    } catch (err) {
-      throw upstreamFailure(err)
-    }
+    const result = await execute(chain, requestId, request.signal, deps, (adapter, ctx) =>
+      adapter.chat(body, ctx),
+    )
 
-    return Response.json(rewriteCompletion(completion, identity), { headers })
+    return Response.json(rewriteCompletion(result.value, identity), {
+      headers: attemptHeaders(result.candidate, requestId),
+    })
   } catch (err) {
-    // Once a target has been chosen, say which provider failed — that is
-    // the only place x-babellm-provider/upstream-model can come from.
-    const headers = candidate
-      ? attemptHeaders(candidate, requestId)
-      : { 'x-request-id': requestId }
+    // Under failover the interesting provider is the last one tried, which
+    // only the routed error knows.
+    const headers: HeadersInit =
+      err instanceof RoutedError && err.lastProvider
+        ? { 'x-request-id': requestId, 'x-babellm-provider': err.lastProvider }
+        : { 'x-request-id': requestId }
     return errorResponse(err, headers)
   }
 }
