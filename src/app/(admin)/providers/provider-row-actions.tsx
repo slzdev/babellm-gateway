@@ -43,8 +43,15 @@ export function ProviderRowActions({ provider }: { provider: ProviderListItem })
 
   function toggle() {
     startTransition(async () => {
-      await toggleProviderAction(provider.id, !provider.enabled)
-      toast.success(provider.enabled ? 'Provider disabled.' : 'Provider enabled.')
+      // The deleted toggle-provider-button.tsx caught here. Folding the button
+      // into a menu item must not quietly drop that: without the catch, a
+      // failed toggle is an unhandled rejection with no user feedback at all.
+      try {
+        await toggleProviderAction(provider.id, !provider.enabled)
+        toast.success(provider.enabled ? 'Provider disabled.' : 'Provider enabled.')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Could not update the provider.')
+      }
     })
   }
 
