@@ -52,4 +52,4 @@ Then follow `superpowers:finishing-a-development-branch`.
 
 ## Defaults
 
-If the user does not answer, or the session is non-interactive: **subagent-driven execution in a git worktree**, and still ask the integration question at the end rather than merging or pushing on your own.
+If the user does not answer, or the session is non-interactive: **subagent-driven execution in a git worktree**, and create a branch + PR when finished.
