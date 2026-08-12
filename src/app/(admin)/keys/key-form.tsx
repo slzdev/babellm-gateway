@@ -123,7 +123,9 @@ function CreateKeyBody({
       ) : null}
 
       <DialogFooter>
-        <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+        <DialogClose render={<Button type="button" variant="outline" disabled={pending} />}>
+          Cancel
+        </DialogClose>
         <Button type="submit" disabled={pending}>{pending ? 'Creating…' : 'Create key'}</Button>
       </DialogFooter>
     </form>

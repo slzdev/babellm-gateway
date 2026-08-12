@@ -55,17 +55,33 @@ export function FormDialog<S extends FormState>({
   // anything went wrong.
   const [pending, setPending] = useState(false)
 
+  // The Dialog's own onOpenChange (X, Escape, backdrop, the gated Cancel) —
+  // refuses to close while a submit is in flight.
   function setOpen(next: boolean) {
     if (!next && pending) return
     if (!isControlled) setUncontrolled(next)
     onOpenChange?.(next)
   }
 
+  // The success path's own close, wired to `onDone` below. It must NOT read
+  // `pending`: the body's layout effect reports pending=false up to this
+  // component, but React flushes a commit's passive effects (where the
+  // success effect that calls onDone lives) before the render that
+  // pending=false update causes has actually committed here — so at the
+  // moment onDone runs, this component's own `pending` closure can still be
+  // stale at `true`, and a check here would swallow the close. Closing
+  // unconditionally sidesteps that staleness instead of racing it, the same
+  // way key-form.tsx's Done button bypasses its dialog's close-gate directly.
+  function closeFromAction() {
+    if (!isControlled) setUncontrolled(false)
+    onOpenChange?.(false)
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={setOpen}>
       {trigger ? <DialogTrigger render={trigger as React.ReactElement} /> : null}
       <DialogContent className={cn('sm:max-w-lg', className)} showCloseButton={!pending}>
-        <FormDialogBody {...body} onDone={() => setOpen(false)} onPendingChange={setPending} />
+        <FormDialogBody {...body} onDone={closeFromAction} onPendingChange={setPending} />
       </DialogContent>
     </Dialog>
   )
