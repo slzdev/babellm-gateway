@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.env
+.env.*
+.superpowers
+.next
+npm-debug.log*
+*.log
+.DS_Store
+tests
+docs
+tsconfig.tsbuildinfo
