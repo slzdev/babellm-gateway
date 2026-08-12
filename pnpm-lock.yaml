@@ -9,25 +9,25 @@ importers:
   .:
     dependencies:
       '@base-ui/react':
-        specifier: ^1.7.0
+        specifier: 1.7.0
         version: 1.7.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       class-variance-authority:
-        specifier: ^0.7.1
+        specifier: 0.7.1
         version: 0.7.1
       clsx:
-        specifier: ^2.1.1
+        specifier: 2.1.1
         version: 2.1.1
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@types/pg@8.21.0)(pg@8.23.0)
       lucide-react:
-        specifier: ^1.31.0
+        specifier: 1.31.0
         version: 1.31.0(react@19.2.8)
       next:
         specifier: 16.3.0
         version: 16.3.0(@babel/core@7.29.7)(@types/node@22.15.3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       next-themes:
-        specifier: ^0.4.6
+        specifier: 0.4.6
         version: 0.4.6(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       openai:
         specifier: 7.4.0
@@ -45,16 +45,16 @@ importers:
         specifier: 0.0.1
         version: 0.0.1
       shadcn:
-        specifier: ^4.17.0
+        specifier: 4.17.0
         version: 4.17.0(typescript@5.9.3)
       sonner:
-        specifier: ^2.0.8
+        specifier: 2.0.8
         version: 2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       tailwind-merge:
-        specifier: ^3.6.0
+        specifier: 3.6.0
         version: 3.6.0
       tw-animate-css:
-        specifier: ^1.4.0
+        specifier: 1.4.0
         version: 1.4.0
       zod:
         specifier: 4.4.3
