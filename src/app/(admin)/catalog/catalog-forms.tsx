@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import type { CatalogListItem } from '@/lib/admin/catalog'
 import {
   addManualModelAction, clearOverrideAction, deleteCatalogModelAction,
-  saveRegistrySettingsAction, setOverrideAction, type ActionState,
+  routeToModelAction, saveRegistrySettingsAction, setOverrideAction, type ActionState,
 } from './actions'
 
 function Message({ state }: { state: ActionState | undefined }) {
@@ -189,6 +189,47 @@ export function RegistrySettingsForm({
       <Button type="submit" size="sm" variant="outline" disabled={pending}>
         {pending ? 'Saving…' : 'Save'}
       </Button>
+    </form>
+  )
+}
+
+export function RouteToModelForm({
+  item,
+  virtualModels,
+}: {
+  item: CatalogListItem
+  virtualModels: Array<{ id: string; name: string }>
+}) {
+  const [state, action, pending] = useActionState<ActionState | undefined, FormData>(
+    routeToModelAction, undefined,
+  )
+
+  return (
+    <form action={action} className="flex flex-wrap items-end gap-2 border-t pt-3">
+      <input type="hidden" name="providerId" value={item.providerId} />
+      <input type="hidden" name="modelId" value={item.modelId} />
+
+      <div className="space-y-1">
+        <Label htmlFor={`route-${item.id}`} className="text-xs">Route to</Label>
+        <select
+          id={`route-${item.id}`}
+          name="virtualModelId"
+          className="h-9 rounded-md border bg-transparent px-3 text-sm"
+        >
+          <option value="">— new virtual model —</option>
+          {virtualModels.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+      </div>
+
+      <div className="space-y-1">
+        <Label htmlFor={`route-name-${item.id}`} className="text-xs">New name</Label>
+        <Input id={`route-name-${item.id}`} name="newModelName" placeholder="house-model" />
+      </div>
+
+      <Button type="submit" size="sm" variant="outline" disabled={pending}>
+        {pending ? 'Creating…' : 'Route to this'}
+      </Button>
+      <div className="w-full"><Message state={state} /></div>
     </form>
   )
 }

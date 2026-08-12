@@ -2,12 +2,16 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { listCatalog, type CatalogListItem } from '@/lib/admin/catalog'
+import { listVirtualModels } from '@/lib/admin/models'
 import { listProviders } from '@/lib/admin/providers'
 import { requireAdmin } from '@/lib/admin/session'
 import { getCatalogSettings } from '@/lib/settings'
 import { loadRegistry } from '@/lib/catalog/registry'
 import { modelKinds, type ModelKind } from '@/lib/catalog/types'
-import { AddManualModelForm, DeleteCatalogModelButton, OverrideForm, RegistrySettingsForm } from './catalog-forms'
+import {
+  AddManualModelForm, DeleteCatalogModelButton, OverrideForm, RegistrySettingsForm,
+  RouteToModelForm,
+} from './catalog-forms'
 import { RefreshRegistryButton, SyncAllButton } from './sync-buttons'
 
 export const dynamic = 'force-dynamic'
@@ -53,11 +57,12 @@ export default async function CatalogPage({
     : undefined
   const search = typeof params.q === 'string' ? params.q : undefined
 
-  const [items, providers, settings, registry] = await Promise.all([
+  const [items, providers, settings, registry, virtualModels] = await Promise.all([
     listCatalog({ providerId, kind, search }),
     listProviders(),
     getCatalogSettings(),
     loadRegistry(),
+    listVirtualModels(),
   ])
 
   return (
@@ -111,6 +116,10 @@ export default async function CatalogPage({
                         : 'No registry match — set a registry namespace on the provider, or override the fields below.'}
                     </p>
                     <OverrideForm item={item} />
+                    <RouteToModelForm
+                      item={item}
+                      virtualModels={virtualModels.map((m) => ({ id: m.id, name: m.name }))}
+                    />
                   </div>
                 </details>
               </td>

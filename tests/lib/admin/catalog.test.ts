@@ -9,6 +9,7 @@ import {
   addManualModel, clearOverrideField, deleteCatalogModel, listCatalog,
   listPickerModels, setOverride, targetWarnings,
 } from '@/lib/admin/catalog'
+import { addRouteTarget } from '@/lib/admin/models'
 import { resetDb } from '../../helpers/db'
 
 beforeEach(async () => {
@@ -215,4 +216,25 @@ test('a target pointing at a retired model is flagged as missing', async () => {
   await syncProvider(provider.id, { registry, createAdapterImpl: () => listing(['gpt-4o']) })
 
   expect(await targetWarnings()).toEqual({ [target.id]: 'missing' })
+})
+
+test('routing from a catalog row reuses addRouteTarget', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [item] = await listCatalog()
+  const [model] = await db.insert(virtualModels).values({ name: 'fast' }).returning()
+
+  await addRouteTarget({
+    virtualModelId: model.id,
+    providerId: item.providerId,
+    upstreamModel: item.modelId,
+  })
+
+  const targets = await db.select().from(routeTargets)
+  expect(targets).toHaveLength(1)
+  expect(targets[0].upstreamModel).toBe('gpt-4o')
+  expect(targets[0].weight).toBe(100)
+
+  // The catalog now reports the reference, which drives the "still routed" badge.
+  const [after] = await listCatalog()
+  expect(after.routeTargetCount).toBe(1)
 })

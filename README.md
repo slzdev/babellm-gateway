@@ -60,6 +60,35 @@ Tests run against a disposable database, driven by `.env.test`:
 pnpm test
 ```
 
+## Model catalog
+
+The **Catalog** page lists every model each provider actually serves. It is
+populated by asking providers directly — `GET /v1/models` for `openai` and
+`openai_compatible` — and enriched from three further layers, resolved field by
+field with the first non-null value winning:
+
+| Layer | Source |
+|---|---|
+| Override | Anything you edit in the dashboard. Always wins, and survives every re-sync. |
+| Discovered | What the provider reported. OpenAI-shaped endpoints report only a model id. |
+| Registry | [models.dev](https://models.dev), fetched at most daily and cached in the database. Toggleable, for deployments without egress. |
+| Seed | A models.dev snapshot vendored into the repo, so a first boot with no network still has context windows and prices. Refresh with `pnpm seed:refresh`. |
+
+Syncing is explicit: a **Sync models** button per provider, **Sync all** on the
+catalog page, and an automatic sync whenever a provider's credentials are
+edited. Nothing runs on a timer.
+
+The catalog is advisory. Route targets remain free text — the picker suggests
+models and warns about names it does not recognise, but never blocks a save, and
+the gateway request path never reads the catalog. A model that stops being
+returned is marked *missing* rather than deleted, so a provider having a bad day
+cannot quietly erase your catalog or the overrides on it.
+
+`openai_compatible` providers can set a **registry namespace** (`groq`,
+`openrouter`, …) so their models match models.dev entries. A self-hosted or
+unlisted `openai_compatible` endpoint has no models.dev namespace, so those
+models stay unenriched unless you override them by hand.
+
 ## Production deployment
 
 The app runs as a Docker image with `next start` — no serverless

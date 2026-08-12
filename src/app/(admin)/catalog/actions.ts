@@ -5,6 +5,7 @@ import { requireAdmin } from '@/lib/admin/session'
 import {
   addManualModel, clearOverrideField, deleteCatalogModel, setOverride,
 } from '@/lib/admin/catalog'
+import { addRouteTarget, createVirtualModel } from '@/lib/admin/models'
 import { setCatalogSettings } from '@/lib/settings'
 import { loadRegistry } from '@/lib/catalog/registry'
 import { syncAllProviders } from '@/lib/catalog/sync'
@@ -146,4 +147,33 @@ export async function saveRegistrySettingsAction(
   }
   revalidatePath('/catalog')
   return { success: 'Registry settings saved.' }
+}
+
+export async function routeToModelAction(
+  _prev: ActionState | undefined,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin()
+
+  const providerId = String(formData.get('providerId'))
+  const upstreamModel = String(formData.get('modelId') ?? '')
+  const existingId = String(formData.get('virtualModelId') ?? '')
+  const newName = String(formData.get('newModelName') ?? '').trim()
+
+  try {
+    let virtualModelId = existingId
+    if (!virtualModelId) {
+      if (!newName) throw new Error('Pick a virtual model, or name a new one.')
+      const created = await createVirtualModel({ name: newName })
+      virtualModelId = created.id
+    }
+
+    await addRouteTarget({ virtualModelId, providerId, upstreamModel })
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Could not create the route.' }
+  }
+
+  revalidatePath('/catalog')
+  revalidatePath('/models')
+  return { success: 'Route created.' }
 }
