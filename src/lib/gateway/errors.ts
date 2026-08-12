@@ -31,6 +31,36 @@ export class UnsupportedOperationError extends Error {
   }
 }
 
+export interface ProviderErrorInit {
+  status: number
+  message: string
+  code?: string | null
+  type?: string
+  retryable: boolean
+}
+
+/**
+ * A provider failure that has already been interpreted by the adapter that
+ * produced it. Adapters throw this instead of their SDK's own error class,
+ * because only the adapter knows which of its provider's statuses are worth
+ * retrying — a fact the failover loop cannot rederive from an HTTP status.
+ */
+export class ProviderError extends Error {
+  readonly status: number
+  readonly code: string | null
+  readonly type: string
+  readonly retryable: boolean
+
+  constructor(init: ProviderErrorInit) {
+    super(init.message)
+    this.name = 'ProviderError'
+    this.status = init.status
+    this.code = init.code ?? null
+    this.type = init.type ?? (init.retryable ? 'api_error' : 'invalid_request_error')
+    this.retryable = init.retryable
+  }
+}
+
 export interface ClassifiedError {
   retryable: boolean
   status: number
@@ -42,6 +72,18 @@ export interface ClassifiedError {
 const RETRYABLE_STATUSES = new Set([408, 409, 429])
 
 export function classifyProviderError(err: unknown): ClassifiedError {
+  // Already interpreted by its adapter. Everything below this line is the
+  // fallback for errors that escaped an adapter unwrapped.
+  if (err instanceof ProviderError) {
+    return {
+      retryable: err.retryable,
+      status: err.status,
+      type: err.type,
+      code: err.code,
+      message: err.message,
+    }
+  }
+
   if (err instanceof UnsupportedOperationError) {
     return {
       retryable: false,
@@ -75,6 +117,34 @@ export function classifyProviderError(err: unknown): ClassifiedError {
     type: 'api_error',
     code: isAbort ? 'upstream_timeout' : 'upstream_error',
     message: err instanceof Error ? err.message : 'Upstream request failed',
+  }
+}
+
+/**
+ * A gateway error that also carries the attempt chain that produced it, so a
+ * failed request can still report which providers were tried and why. The
+ * attempt shape is structural rather than imported, to keep errors.ts free of
+ * a dependency on the routing loop.
+ */
+export interface AttemptSummary {
+  n: number
+  targetId: string
+  provider: string
+  model: string
+  status: number
+  latencyMs: number
+  error?: string
+}
+
+export class RoutedError extends GatewayError {
+  readonly attempts: AttemptSummary[]
+  readonly lastProvider: string | null
+
+  constructor(init: GatewayErrorInit & { attempts: AttemptSummary[]; lastProvider?: string | null }) {
+    super(init)
+    this.name = 'RoutedError'
+    this.attempts = init.attempts
+    this.lastProvider = init.lastProvider ?? null
   }
 }
 

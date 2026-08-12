@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import type { ProviderAdapter } from '@/lib/adapters/types'
@@ -47,6 +47,11 @@ function gatewayClient(apiKey: string, adapter: Partial<ProviderAdapter>) {
 beforeEach(async () => {
   process.env.ENCRYPTION_KEY = '3'.repeat(64)
   await resetDb()
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 test('the SDK completes a non-streaming tool call', async () => {

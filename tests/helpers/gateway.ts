@@ -63,3 +63,81 @@ export function fakeAdapterDeps(adapter: Partial<ProviderAdapter>) {
     }) as ProviderAdapter,
   }
 }
+
+export interface TargetSpec {
+  /** Provider name, also used to build a distinct upstream model name. */
+  name: string
+  priority?: number
+  weight?: number
+  enabled?: boolean
+  adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
+}
+
+export interface SeedTargetsOptions {
+  virtualModel?: string
+  policy?: 'failover' | 'weighted' | 'round_robin'
+  maxAttempts?: number
+  targets: TargetSpec[]
+}
+
+/**
+ * Seeds one virtual model fronting several providers. seedGateway covers the
+ * single-target case every Phase 1 test uses; this is for routing, where the
+ * whole point is which of several targets gets picked.
+ */
+export async function seedTargets(options: SeedTargetsOptions) {
+  const [model] = await db.insert(virtualModels).values({
+    name: options.virtualModel ?? 'house-model',
+    policy: options.policy ?? 'failover',
+    maxAttempts: options.maxAttempts ?? 3,
+  }).returning()
+
+  const targets = []
+  for (const spec of options.targets) {
+    const [provider] = await db.insert(providers).values({
+      name: spec.name,
+      adapter: spec.adapter ?? 'openai',
+      credentials: encryptJson({ apiKey: `sk-${spec.name}` }),
+    }).returning()
+
+    const [target] = await db.insert(routeTargets).values({
+      virtualModelId: model.id,
+      providerId: provider.id,
+      upstreamModel: `${spec.name}-model`,
+      priority: spec.priority ?? 0,
+      weight: spec.weight ?? 100,
+      enabled: spec.enabled ?? true,
+    }).returning()
+
+    targets.push({ provider, target })
+  }
+
+  const generated = generateApiKey()
+  const [key] = await db.insert(apiKeys).values({
+    name: 'test key',
+    keyHash: generated.keyHash,
+    keyPrefix: generated.keyPrefix,
+  }).returning()
+
+  return { model, targets, key, apiKey: generated.key }
+}
+
+/**
+ * A deps object whose adapter depends on which provider is being called, so a
+ * test can make one target fail and another succeed.
+ */
+export function fakeAdapterByProvider(
+  byName: Record<string, Partial<ProviderAdapter>>,
+) {
+  return {
+    createAdapter: (provider: { name: string }) => ({
+      async chat() {
+        throw new Error(`chat not stubbed for ${provider.name}`)
+      },
+      async *chatStream() {
+        throw new Error(`chatStream not stubbed for ${provider.name}`)
+      },
+      ...(byName[provider.name] ?? {}),
+    }) as ProviderAdapter,
+  }
+}

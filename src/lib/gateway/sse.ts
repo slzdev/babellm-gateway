@@ -43,10 +43,13 @@ export async function startChatStream(
   }
 }
 
+export type StreamOutcome = 'ok' | 'client_closed' | 'stream_interrupted'
+
 export function sseResponse(
   started: StartedChatStream,
   identity: IdentityOptions,
   headers: HeadersInit,
+  onSettle?: (outcome: StreamOutcome) => void,
 ): Response {
   // Set the moment the client disconnects. The `for await` below may still
   // be mid-pull when that happens (it does not know the controller is gone
@@ -55,6 +58,21 @@ export function sseResponse(
   // cancelled throws on `enqueue`, and an uncaught throw here would surface
   // as an unhandled rejection.
   let cancelled = false
+
+  // An interrupted stream settles twice without this: the catch reports
+  // stream_interrupted, and the finally then runs with cancelled still
+  // false and reports ok on top of it. First one wins, so the outcome that
+  // describes what actually happened is the one that survives.
+  let settled = false
+  function settle(outcome: StreamOutcome) {
+    if (settled) return
+    settled = true
+    try {
+      onSettle?.(outcome)
+    } catch (err) {
+      console.error('[gateway] stream settle callback failed', err)
+    }
+  }
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -66,6 +84,7 @@ export function sseResponse(
       } catch (err) {
         if (cancelled) return
         const classified = classifyProviderError(err)
+        settle('stream_interrupted')
         controller.enqueue(
           event({
             error: {
@@ -78,6 +97,7 @@ export function sseResponse(
         )
       } finally {
         if (!cancelled) {
+          settle('ok')
           controller.enqueue(DONE)
           controller.close()
         }
@@ -85,12 +105,16 @@ export function sseResponse(
     },
     cancel() {
       cancelled = true
+      settle('client_closed')
       // Ask the source iterator to run its cleanup (e.g. release the
       // upstream fetch) instead of leaving it to keep being pulled by
       // nobody. Without this, a client disconnect only stops progress
       // incidentally — via whatever AbortSignal the adapter happens to
       // wire up — rather than as a guaranteed consequence of cancellation.
-      void started.iterator.return?.()
+      void started.iterator.return?.().catch(() => {
+        // The client is already gone; a failed cleanup has no one to report
+        // to and must not become an unhandled rejection that ends the process.
+      })
     },
   })
 

@@ -7,3 +7,49 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+# UI: prefer shadcn/ui
+
+This project uses shadcn/ui (see `components.json` — `base-nova` style, `neutral` base color, `lucide` icons). **Build UI out of shadcn components wherever possible.**
+
+- Check `src/components/ui/` first — it already holds `alert-dialog`, `badge`, `button`, `dialog`, `dropdown-menu`, `input`, `label`, `select`, `sonner`, `switch`, `table`, `textarea`.
+- If a shadcn component exists for what you need but isn't installed yet, add it with `pnpm dlx shadcn@latest add <component>` rather than hand-rolling it.
+- Compose and extend the shadcn primitives (variants, `cn()`, wrapper components) instead of writing bespoke markup that duplicates them.
+- Only write a custom component when shadcn genuinely has no equivalent — and say so when you do.
+
+# Implementation workflow
+
+Before starting **non-trivial** implementation work, ask the user how to run it. Non-trivial means multi-step or multi-file changes. Skip these questions for one-line fixes, typo/doc tweaks, and read-only investigation — just do those inline on the current branch.
+
+Ask with `AskUserQuestion`, **one question at a time, in this order**. Wait for each answer before asking the next.
+
+## 1. Execution mode
+
+> How should this be executed?
+
+- **Subagent-driven** — dispatch subagents per task (`superpowers:subagent-driven-development`, `superpowers:dispatching-parallel-agents`)
+- **Inline** — implement directly in this session
+
+## 2. Git isolation
+
+> Where should the work happen?
+
+- **Git worktree** — isolated workspace (`superpowers:using-git-worktrees`)
+- **Git branch** — new branch in the current workspace
+- **On master** — no isolation
+
+## 3. When the work is finished
+
+Once the implementation is complete and verified (`superpowers:verification-before-completion`), ask:
+
+> How should this be integrated?
+
+- **Merge into master**
+- **Create a branch**
+- **Create a branch + PR**
+
+Then follow `superpowers:finishing-a-development-branch`.
+
+## Defaults
+
+If the user does not answer, or the session is non-interactive: **subagent-driven execution in a git worktree**, and create a branch + PR when finished.
