@@ -117,5 +117,14 @@ test('rejects a target with a non-integer priority', async () => {
     addRouteTarget({
       virtualModelId: model.id, providerId: p.id, upstreamModel: 'x', priority: 1.5,
     }),
-  ).rejects.toThrow(/priority/i)
+  ).rejects.toThrow(/must be an integer/i)
+})
+
+test('accepts a negative priority', async () => {
+  const p = await provider()
+  const model = await createVirtualModel({ name: 'house-model' })
+  const target = await addRouteTarget({
+    virtualModelId: model.id, providerId: p.id, upstreamModel: 'x', priority: -1,
+  })
+  expect(target.priority).toBe(-1)
 })
