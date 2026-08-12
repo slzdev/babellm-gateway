@@ -49,6 +49,30 @@ function statusOf(err: unknown): number | null {
 }
 
 /**
+ * An SDK error's class, which is where the identity actually lives: the OpenAI
+ * SDK never assigns `name`, so every one of its errors reports the inherited
+ * "Error". Read by name rather than by `instanceof` so this module stays free of
+ * any one provider's SDK.
+ */
+function errorNames(err: unknown): string[] {
+  if (!(err instanceof Error)) return []
+  const ctor = (err.constructor as { name?: unknown } | undefined)?.name
+  return [err.name, typeof ctor === 'string' ? ctor : null].filter((n) => n !== null)
+}
+
+/**
+ * Our own budget running out. AbortSignal.timeout raises a native TimeoutError,
+ * but an adapter that forwards the signal into a client usually surfaces that
+ * client's abort error instead — for the OpenAI SDK, APIUserAbortError. Sync
+ * passes no signal other than the discovery timeout, so an abort here can only
+ * be that timeout firing.
+ */
+const TIMED_OUT_ERROR_NAMES = new Set(['TimeoutError', 'AbortError', 'APIUserAbortError'])
+
+/** The connection, rather than our budget, timed out — possibly much sooner. */
+const CONNECT_TIMEOUT_ERROR_NAMES = new Set(['APIConnectionTimeoutError'])
+
+/**
  * Sync classifies its own failures. It deliberately does not use
  * classifyProviderError: that function serves the request path, and the Phase 1
  * handoff asks for a decision on moving classification behind the adapter
@@ -63,9 +87,15 @@ export function describeDiscoveryError(err: unknown): string {
   if (status === 404 || status === 405) {
     return `This endpoint has no model listing API (${status}).`
   }
-  if (err instanceof Error && err.name === 'TimeoutError') {
+
+  const names = errorNames(err)
+  if (names.some((name) => CONNECT_TIMEOUT_ERROR_NAMES.has(name))) {
+    return 'Discovery timed out connecting to this provider.'
+  }
+  if (names.some((name) => TIMED_OUT_ERROR_NAMES.has(name))) {
     return `Discovery timed out after ${DISCOVERY_TIMEOUT_MS / 1000}s.`
   }
+
   return err instanceof Error ? err.message : String(err)
 }
 
@@ -262,6 +292,9 @@ export async function syncProvider(
 
   const lockName = `catalog-sync:${providerId}`
   const client = await pool.connect()
+  // Set only if the unlock itself fails, in which case this client is destroyed
+  // rather than returned to the pool still holding the lock.
+  let unlockError: Error | undefined
 
   try {
     const locked = await client.query<{ ok: boolean }>(
@@ -278,10 +311,21 @@ export async function syncProvider(
     try {
       return await runSync(provider, options)
     } finally {
-      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockName])
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockName])
+      } catch (err) {
+        // The sync itself already finished and its outcome is already recorded
+        // on the provider row. Throwing from here would discard that result and,
+        // in syncAllProviders, abort every provider after this one — so the
+        // failure is logged and carried to release() instead of raised.
+        unlockError = err instanceof Error ? err : new Error(String(err))
+        console.error(`[catalog] could not release the sync lock for ${lockName}`, err)
+      }
     }
   } finally {
-    client.release()
+    // Passing the error destroys the client instead of recycling one whose
+    // session may still hold the lock.
+    client.release(unlockError)
   }
 }
 

@@ -1,6 +1,8 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 import { and, eq } from 'drizzle-orm'
-import { db } from '@/lib/db'
+import { APIConnectionError, APIConnectionTimeoutError, APIUserAbortError } from 'openai'
+import type { PoolClient } from 'pg'
+import { db, pool } from '@/lib/db'
 import { catalogModels, providers } from '@/lib/db/schema'
 import { encryptJson } from '@/lib/crypto'
 import { UnsupportedOperationError } from '@/lib/gateway/errors'
@@ -216,6 +218,39 @@ test('discovery failures are classified into actionable messages', () => {
     .toMatch(/ECONNREFUSED/)
 })
 
+test('a discovery timeout is named as one, whatever shape the adapter throws', () => {
+  // The real SDK classes on purpose: the whole hazard is that they leave `name`
+  // as the inherited 'Error', so only the constructor identifies them. A
+  // hand-rolled fake would not reproduce that.
+  expect(describeDiscoveryError(new APIUserAbortError({})))
+    .toMatch(/timed out after 30s/i)
+  expect(describeDiscoveryError(new APIConnectionTimeoutError({})))
+    .toMatch(/timed out connecting/i)
+  // What a non-SDK adapter passing the raw signal to fetch would surface.
+  expect(describeDiscoveryError(new DOMException('aborted due to timeout', 'TimeoutError')))
+    .toMatch(/timed out after 30s/i)
+  expect(describeDiscoveryError(Object.assign(new Error('x'), { name: 'AbortError' })))
+    .toMatch(/timed out after 30s/i)
+  // A plain connection failure is not a timeout and keeps its own message.
+  expect(describeDiscoveryError(new APIConnectionError({ message: 'Connection error.' })))
+    .toMatch(/connection error/i)
+})
+
+test('a timed-out discovery records the timeout on the provider row', async () => {
+  const provider = await makeProvider()
+  const timingOut = {
+    chat: vi.fn(), chatStream: vi.fn(),
+    listModels: vi.fn().mockRejectedValue(new APIUserAbortError({})),
+  } as unknown as ProviderAdapter
+
+  const result = await syncProvider(provider.id, opts(timingOut))
+
+  expect(result.status).toBe('failed')
+  expect(result.error).toMatch(/timed out after 30s/i)
+  const [row] = await db.select().from(providers).where(eq(providers.id, provider.id))
+  expect(row.lastSyncError).toMatch(/timed out after 30s/i)
+})
+
 test('the sync outcome is recorded on the provider row', async () => {
   const provider = await makeProvider()
   await syncProvider(provider.id, opts(adapterListing(['gpt-4o'])))
@@ -267,16 +302,29 @@ test('syncing every provider fetches the registry once', async () => {
   expect(results.every((r) => r.status === 'ok')).toBe(true)
 })
 
-test('a provider that vanishes mid-run is reported, not thrown', async () => {
+test('a nonexistent provider id throws rather than returning a result', async () => {
   await expect(
     syncProvider('00000000-0000-0000-0000-000000000000', opts(adapterListing([]))),
   ).rejects.toThrow(/not found/i)
 })
 
-test('a concurrent sync is refused, and the lock is released afterwards', async () => {
-  // The advisory lock is session-level, so it must be taken and released on one
-  // dedicated connection. Releasing on a pooled connection that did not take it
-  // fails silently, and the third sync below is what would catch that.
+/**
+ * Advisory locks are held per session and are re-entrant within one. Asserting
+ * that a later sync re-acquires the lock therefore proves nothing: a release
+ * issued on the wrong pooled connection returns false and leaves the lock held,
+ * yet the next sync pops that same connection off the pool's LIFO idle stack and
+ * re-locks it happily. Only the absence of the lock in pg_locks is real evidence.
+ */
+async function advisoryLockCount() {
+  const { rows } = await pool.query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM pg_locks
+      WHERE locktype = 'advisory'
+        AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
+  )
+  return rows[0].n
+}
+
+test('a concurrent sync is refused, and the lock is truly released afterwards', async () => {
   const provider = await makeProvider()
 
   let release!: () => void
@@ -294,6 +342,10 @@ test('a concurrent sync is refused, and the lock is released afterwards', async 
   // Let the first sync reach its listModels await while holding the lock.
   await vi.waitFor(() => expect(slow.listModels).toHaveBeenCalled())
 
+  // Proves the probe below actually observes this lock, so its later reading of
+  // zero means "released" rather than "querying the wrong thing".
+  expect(await advisoryLockCount()).toBe(1)
+
   const fast = adapterListing(['gpt-4o'])
   const second = await syncProvider(provider.id, opts(fast))
 
@@ -304,5 +356,50 @@ test('a concurrent sync is refused, and the lock is released afterwards', async 
   release()
   expect((await first).status).toBe('ok')
 
+  // The load-bearing assertion: the lock is gone from the server, not merely
+  // re-acquirable by whichever session happens to already hold it.
+  expect(await advisoryLockCount()).toBe(0)
+
   expect((await syncProvider(provider.id, opts(fast))).status).toBe('ok')
+  expect(await advisoryLockCount()).toBe(0)
+})
+
+test('an unlock failure neither discards the result nor leaks the lock', async () => {
+  const provider = await makeProvider()
+  const connect = pool.connect.bind(pool) as (cb?: unknown) => Promise<PoolClient> | void
+  // pool.query() takes a connection through the CALLBACK form internally, so
+  // that form has to pass straight through or every drizzle query in this test
+  // would hang. Only syncProvider's own promise-form checkout is wrapped.
+  const spy = vi.spyOn(pool, 'connect').mockImplementation(((cb?: unknown) => {
+    if (typeof cb === 'function') return connect(cb)
+    return (connect() as Promise<PoolClient>).then((client) => {
+      const query = client.query.bind(client) as (...args: unknown[]) => unknown
+      client.query = ((text: unknown, ...rest: unknown[]) => (
+        typeof text === 'string' && text.includes('pg_advisory_unlock')
+          ? Promise.reject(new Error('connection terminated unexpectedly'))
+          : query(text, ...rest)
+      )) as typeof client.query
+      return client
+    })
+  }) as typeof pool.connect)
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+  try {
+    // The sync itself succeeded and its outcome is already on the provider row;
+    // a failed unlock must not turn that into a thrown error.
+    const result = await syncProvider(provider.id, opts(adapterListing(['gpt-4o'])))
+    expect(result.status).toBe('ok')
+    expect(logged).toHaveBeenCalled()
+    expect(await rowsFor(provider.id)).toHaveLength(1)
+
+    // release(err) destroys the client rather than recycling it, and ending the
+    // session is what makes Postgres drop the lock this connection still holds.
+    await vi.waitFor(async () => expect(await advisoryLockCount()).toBe(0))
+  } finally {
+    spy.mockRestore()
+    logged.mockRestore()
+  }
+
+  // The provider is still syncable afterwards.
+  expect((await syncProvider(provider.id, opts(adapterListing(['gpt-4o'])))).status).toBe('ok')
 })
