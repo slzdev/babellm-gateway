@@ -55,10 +55,15 @@ test('resolveApiKey returns the row for a valid key', async () => {
 
 test('resolveApiKey rejects a missing token', async () => {
   await expect(resolveApiKey(null)).rejects.toThrow(GatewayError)
+  await expect(resolveApiKey(null)).rejects.toMatchObject({
+    status: 401, code: 'missing_api_key',
+  })
 })
 
 test('resolveApiKey rejects an unknown key with 401', async () => {
-  await expect(resolveApiKey('sk-bab-nope')).rejects.toMatchObject({ status: 401 })
+  await expect(resolveApiKey('sk-bab-nope')).rejects.toMatchObject({
+    status: 401, code: 'invalid_api_key',
+  })
 })
 
 test('resolveApiKey rejects a disabled key', async () => {
