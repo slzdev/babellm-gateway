@@ -60,6 +60,26 @@ test('rejects a non-positive rate limit', async () => {
   await expect(createApiKey({ name: 'bad', rpmLimit: 0 })).rejects.toThrow(/rpm/i)
 })
 
+test.each(['abc', '-5', '1e3', '1.1234567'])(
+  'rejects a malformed budget: %s',
+  async (budget) => {
+    await expect(
+      createApiKey({ name: 'bad', budgetMonthlyUsd: budget }),
+    ).rejects.toThrow(/amount/i)
+  },
+)
+
+test('rejects an unparseable expiry', async () => {
+  await expect(
+    createApiKey({ name: 'bad', expiresAt: new Date('not-a-date') }),
+  ).rejects.toThrow(/valid date/i)
+})
+
+test('accepts a budget at the column precision limit', async () => {
+  const { item } = await createApiKey({ name: 'ok', budgetMonthlyUsd: '25.123456' })
+  expect(item.budgetMonthlyUsd).toBe('25.123456')
+})
+
 test('attributes a key to a user and shows the user name in the listing', async () => {
   const user = await createUser({ name: 'Ada' })
   await createApiKey({ name: 'ada key', userId: user.id })

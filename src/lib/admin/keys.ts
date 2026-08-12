@@ -63,29 +63,49 @@ function validateLimit(value: number | null | undefined, label: string) {
   return value
 }
 
+function validateMoney(value: string | null | undefined, label: string) {
+  if (value === null || value === undefined) return null
+  const trimmed = value.trim()
+  if (!/^\d+(\.\d{1,6})?$/.test(trimmed)) {
+    throw new Error(`${label} must be a positive amount with at most 6 decimal places.`)
+  }
+  return trimmed
+}
+
+function validateExpiry(value: Date | null | undefined) {
+  if (value === null || value === undefined) return null
+  if (Number.isNaN(value.getTime())) {
+    throw new Error('Expiry must be a valid date.')
+  }
+  return value
+}
+
 export async function listApiKeys(): Promise<ApiKeyListItem[]> {
+  // Select only the columns ApiKeyListItem needs — keyHash never leaves the
+  // data layer, so "the hash never leaks" holds by construction rather than
+  // depending on every caller remembering to strip it.
   const rows = await db
-    .select({ key: apiKeys, userName: users.name })
+    .select({
+      id: apiKeys.id,
+      name: apiKeys.name,
+      keyPrefix: apiKeys.keyPrefix,
+      userId: apiKeys.userId,
+      userName: users.name,
+      enabled: apiKeys.enabled,
+      expiresAt: apiKeys.expiresAt,
+      lastUsedAt: apiKeys.lastUsedAt,
+      rpmLimit: apiKeys.rpmLimit,
+      tpmLimit: apiKeys.tpmLimit,
+      budgetTotalUsd: apiKeys.budgetTotalUsd,
+      budgetMonthlyUsd: apiKeys.budgetMonthlyUsd,
+      logPayloads: apiKeys.logPayloads,
+      createdAt: apiKeys.createdAt,
+    })
     .from(apiKeys)
     .leftJoin(users, eq(apiKeys.userId, users.id))
     .orderBy(asc(apiKeys.createdAt))
 
-  return rows.map(({ key, userName }) => ({
-    id: key.id,
-    name: key.name,
-    keyPrefix: key.keyPrefix,
-    userId: key.userId,
-    userName: userName ?? null,
-    enabled: key.enabled,
-    expiresAt: key.expiresAt,
-    lastUsedAt: key.lastUsedAt,
-    rpmLimit: key.rpmLimit,
-    tpmLimit: key.tpmLimit,
-    budgetTotalUsd: key.budgetTotalUsd,
-    budgetMonthlyUsd: key.budgetMonthlyUsd,
-    logPayloads: key.logPayloads,
-    createdAt: key.createdAt,
-  }))
+  return rows.map((row) => ({ ...row, userName: row.userName ?? null }))
 }
 
 export async function createApiKey(
@@ -96,6 +116,9 @@ export async function createApiKey(
 
   const rpmLimit = validateLimit(input.rpmLimit, 'rpm limit')
   const tpmLimit = validateLimit(input.tpmLimit, 'tpm limit')
+  const budgetTotalUsd = validateMoney(input.budgetTotalUsd, 'Total budget')
+  const budgetMonthlyUsd = validateMoney(input.budgetMonthlyUsd, 'Monthly budget')
+  const expiresAt = validateExpiry(input.expiresAt)
 
   const generated = generateApiKey()
   const [row] = await db.insert(apiKeys).values({
@@ -105,9 +128,9 @@ export async function createApiKey(
     userId: input.userId ?? null,
     rpmLimit,
     tpmLimit,
-    budgetTotalUsd: input.budgetTotalUsd ?? null,
-    budgetMonthlyUsd: input.budgetMonthlyUsd ?? null,
-    expiresAt: input.expiresAt ?? null,
+    budgetTotalUsd,
+    budgetMonthlyUsd,
+    expiresAt,
     logPayloads: input.logPayloads ?? false,
   }).returning()
 
