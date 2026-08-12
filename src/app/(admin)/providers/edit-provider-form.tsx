@@ -87,7 +87,7 @@ export function EditProviderForm({ provider }: { provider: ProviderListItem }) {
         </fieldset>
 
         {state?.error ? <p role="alert" className="text-sm text-destructive">{state.error}</p> : null}
-        {state?.warning ? <p className="text-sm text-amber-600">{state.warning}</p> : null}
+        {state?.warning ? <p role="alert" className="text-sm text-amber-600">{state.warning}</p> : null}
         {state?.success ? <p className="text-sm text-muted-foreground">{state.success}</p> : null}
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? 'Saving…' : 'Save and re-sync'}

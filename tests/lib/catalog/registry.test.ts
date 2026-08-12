@@ -163,6 +163,38 @@ test('disabling the registry skips the fetch entirely', async () => {
   expect(fetchImpl).not.toHaveBeenCalled()
 })
 
+test('a read-only load never fetches, even with no cache', async () => {
+  const fetchImpl = vi.fn(() => { throw new Error('must not fetch') }) as unknown as typeof fetch
+
+  const result = await loadRegistry({ readOnly: true, fetchImpl })
+  expect(fetchImpl).not.toHaveBeenCalled()
+  expect(result.status).toBe('unfetched')
+  expect(result.fetchedAt).toBeNull()
+  expect(result.index).toEqual({})
+})
+
+test('a read-only load returns the cache without checking staleness', async () => {
+  const start = new Date('2026-08-10T00:00:00Z')
+  await loadRegistry({ fetchImpl: okFetch(), now: start })
+
+  const fetchImpl = vi.fn(() => { throw new Error('must not fetch') }) as unknown as typeof fetch
+  const later = new Date(start.getTime() + REGISTRY_MAX_AGE_MS + 1)
+
+  const result = await loadRegistry({ readOnly: true, fetchImpl, now: later })
+  expect(fetchImpl).not.toHaveBeenCalled()
+  expect(result.status).toBe('cached')
+  expect(result.index['openai/gpt-4o']).toBeDefined()
+})
+
+test('a read-only load reports disabled without fetching', async () => {
+  await setCatalogSettings({ registryEnabled: false })
+  const fetchImpl = vi.fn(() => { throw new Error('must not fetch') }) as unknown as typeof fetch
+
+  const result = await loadRegistry({ readOnly: true, fetchImpl })
+  expect(result.status).toBe('disabled')
+  expect(fetchImpl).not.toHaveBeenCalled()
+})
+
 test('the configured URL is what gets fetched and cached', async () => {
   await setCatalogSettings({ registryUrl: 'https://mirror.internal/api.json' })
   const fetchImpl = okFetch()

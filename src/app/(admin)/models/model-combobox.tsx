@@ -50,13 +50,13 @@ export function ModelCombobox({
       <Autocomplete.Root
         id={id}
         name={name}
+        required
         items={groups}
         value={value}
         onValueChange={setValue}
         itemToStringValue={(item: PickerModel) => item.modelId}
       >
         <Autocomplete.Input
-          required
           placeholder="gpt-4o-mini"
           className="h-9 w-56 rounded-md border bg-transparent px-3 text-sm"
         />

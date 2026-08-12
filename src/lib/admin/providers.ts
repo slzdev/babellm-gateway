@@ -7,6 +7,7 @@ import {
 import { decryptJson, encryptJson } from '@/lib/crypto'
 import { credentialSchemas, maskCredentials, type AdapterType } from '@/lib/adapters/credentials'
 import { createAdapter } from '@/lib/adapters/registry'
+import { parseProviderConfig, readRegistryNamespace } from '@/lib/catalog/config'
 
 export interface ProviderInput {
   name: string
@@ -83,21 +84,6 @@ export async function listProviders(): Promise<ProviderListItem[]> {
   }))
 }
 
-/** Parses the `config` TEXT column defensively — malformed JSON reads as empty. */
-function parseConfig(config: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(config) as unknown
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}
-  } catch {
-    return {}
-  }
-}
-
-function readRegistryNamespace(config: string): string | null {
-  const parsed = parseConfig(config)
-  return typeof parsed.registryNamespace === 'string' ? parsed.registryNamespace : null
-}
-
 /**
  * Fetches a provider's config object as stored, so a caller can merge a
  * targeted key into it (e.g. `registryNamespace`) without clobbering other
@@ -107,7 +93,7 @@ function readRegistryNamespace(config: string): string | null {
 export async function getProviderConfig(id: string): Promise<Record<string, unknown>> {
   const [row] = await db.select().from(providers).where(eq(providers.id, id))
   if (!row) throw new Error('Provider not found.')
-  return parseConfig(row.config)
+  return parseProviderConfig(row.config)
 }
 
 export async function createProvider(input: ProviderInput): Promise<ProviderRow> {

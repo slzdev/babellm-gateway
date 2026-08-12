@@ -46,8 +46,9 @@ export async function createProviderAction(
   }
   const adapter = rawAdapter as AdapterType
 
+  let created
   try {
-    await createProvider({
+    created = await createProvider({
       name: String(formData.get('name') ?? ''),
       adapter,
       baseUrl: (formData.get('baseUrl') as string) || null,
@@ -58,6 +59,27 @@ export async function createProviderAction(
   }
 
   revalidatePath('/providers')
+  revalidatePath('/catalog')
+
+  // The provider above has already been created — a sync failure (e.g. a
+  // freshly typed key that turns out to be bad) must not roll that back or be
+  // reported as a create failure. It is surfaced as a separate warning
+  // instead, mirroring updateProviderAction's re-sync-after-save pattern.
+  try {
+    const result = await syncProvider(created.id)
+    if (result.status === 'failed') {
+      return {
+        success: 'Provider created.',
+        warning: `Sync failed: ${result.error ?? 'unknown error'}`,
+      }
+    }
+  } catch (err) {
+    return {
+      success: 'Provider created.',
+      warning: `Sync failed: ${err instanceof Error ? err.message : 'unknown error'}`,
+    }
+  }
+
   return { success: 'Provider created.' }
 }
 

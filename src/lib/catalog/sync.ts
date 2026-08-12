@@ -6,6 +6,7 @@ import type { ProviderAdapter } from '@/lib/adapters/types'
 import { db, pool } from '@/lib/db'
 import { catalogModels, providers, type ProviderRow } from '@/lib/db/schema'
 import { UnsupportedOperationError } from '@/lib/gateway/errors'
+import { readRegistryNamespace } from './config'
 import { mergeCatalogFields } from './merge'
 import { canonicalKeyCandidates } from './normalize'
 import { loadRegistry, type RegistryIndex, type RegistryLoad, type RegistryStatus } from './registry'
@@ -99,15 +100,6 @@ export function describeDiscoveryError(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-function readRegistryNamespace(config: string): string | null {
-  try {
-    const parsed = JSON.parse(config) as { registryNamespace?: unknown }
-    return typeof parsed.registryNamespace === 'string' ? parsed.registryNamespace : null
-  } catch {
-    return null
-  }
-}
-
 function matchCanonicalKey(
   adapter: AdapterType,
   modelId: string,
@@ -199,6 +191,14 @@ async function runSync(provider: ProviderRow, options: SyncOptions): Promise<Syn
   const seed = loadSeed()
   const namespace = readRegistryNamespace(provider.config)
 
+  // Spec §6: when the registry is disabled or unreachable, the merge runs on
+  // override → discovered → seed and any `registry` blob written by an
+  // earlier successful sync is left in place, ignored rather than
+  // overwritten — so re-enabling the setting restores it without a refetch.
+  // On a genuinely successful load, `registry` is written normally, and an
+  // unmatched model correctly stores `{}`.
+  const keepStoredRegistryBlob = registry.status === 'disabled' || registry.status === 'failed'
+
   const existing = await db.select().from(catalogModels)
     .where(eq(catalogModels.providerId, provider.id))
   const previousByModelId = new Map(existing.map((row) => [row.modelId, row]))
@@ -239,7 +239,7 @@ async function runSync(provider: ProviderRow, options: SyncOptions): Promise<Syn
       status: 'available' as const,
       lastSeenAt: now,
       discovered: model.fields as Record<string, unknown>,
-      registry: (registryFields ?? {}) as Record<string, unknown>,
+      ...(keepStoredRegistryBlob ? {} : { registry: (registryFields ?? {}) as Record<string, unknown> }),
       seed: (seedFields ?? {}) as Record<string, unknown>,
       ...effectiveColumns(effective, sources),
       updatedAt: now,

@@ -3,8 +3,9 @@ import { and, asc, eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import {
   catalogModels, providers, routeTargets,
-  type CatalogModelRow, type ProviderRow,
+  type CatalogModelRow,
 } from '@/lib/db/schema'
+import { readRegistryNamespace } from '@/lib/catalog/config'
 import { mergeCatalogFields } from '@/lib/catalog/merge'
 import { canonicalKeyCandidates } from '@/lib/catalog/normalize'
 import { loadRegistry, type RegistryLoad } from '@/lib/catalog/registry'
@@ -184,7 +185,7 @@ export async function addManualModel(
 
   const registry = opts.registry ?? (await loadRegistry())
   const seed = loadSeed()
-  const namespace = readNamespace(provider)
+  const namespace = readRegistryNamespace(provider.config)
 
   let canonicalKey: string | null = null
   for (const key of canonicalKeyCandidates(provider.adapter, modelId, namespace)) {
@@ -220,15 +221,6 @@ export async function addManualModel(
 
 export async function deleteCatalogModel(id: string): Promise<void> {
   await db.delete(catalogModels).where(eq(catalogModels.id, id))
-}
-
-function readNamespace(provider: ProviderRow): string | null {
-  try {
-    const parsed = JSON.parse(provider.config) as { registryNamespace?: unknown }
-    return typeof parsed.registryNamespace === 'string' ? parsed.registryNamespace : null
-  } catch {
-    return null
-  }
 }
 
 export interface PickerModel {

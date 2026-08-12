@@ -14,7 +14,7 @@ import {
 
 function Message({ state }: { state: ActionState | undefined }) {
   if (state?.error) return <p role="alert" className="text-sm text-destructive">{state.error}</p>
-  if (state?.success) return <p className="text-sm text-muted-foreground">{state.success}</p>
+  if (state?.success) return <p role="status" className="text-sm text-muted-foreground">{state.success}</p>
   return null
 }
 

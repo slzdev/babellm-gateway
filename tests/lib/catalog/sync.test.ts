@@ -79,6 +79,51 @@ test('registry metadata is merged onto a matched model', async () => {
   expect(row.sources).toMatchObject({ contextWindow: 'registry', kind: 'registry' })
 })
 
+test('a successful load with no registry match still stores an empty blob', async () => {
+  const provider = await makeProvider()
+  await syncProvider(provider.id, opts(adapterListing(['whisper-1'])))
+
+  const [row] = await rowsFor(provider.id)
+  expect(row.canonicalKey).toBeNull()
+  expect(row.registry).toEqual({})
+})
+
+test('a disabled registry leaves a previously stored registry blob in place', async () => {
+  const provider = await makeProvider()
+  await syncProvider(provider.id, opts(adapterListing(['gpt-4o'])))
+  const [before] = await rowsFor(provider.id)
+  expect(before.registry).toEqual(registry.index['openai/gpt-4o'])
+
+  const disabled: RegistryLoad = { index: {}, status: 'disabled', url: registry.url, fetchedAt: null, error: null }
+  await syncProvider(
+    provider.id,
+    { registry: disabled, createAdapterImpl: () => adapterListing(['gpt-4o']) },
+  )
+
+  const [after] = await rowsFor(provider.id)
+  // The stored blob survives untouched — re-enabling the setting restores
+  // the previous behaviour without a refetch.
+  expect(after.registry).toEqual(registry.index['openai/gpt-4o'])
+})
+
+test('a failed registry load leaves a previously stored registry blob in place', async () => {
+  const provider = await makeProvider()
+  await syncProvider(provider.id, opts(adapterListing(['gpt-4o'])))
+  const [before] = await rowsFor(provider.id)
+  expect(before.registry).toEqual(registry.index['openai/gpt-4o'])
+
+  const failed: RegistryLoad = {
+    index: {}, status: 'failed', url: registry.url, fetchedAt: null, error: 'ECONNREFUSED',
+  }
+  await syncProvider(
+    provider.id,
+    { registry: failed, createAdapterImpl: () => adapterListing(['gpt-4o']) },
+  )
+
+  const [after] = await rowsFor(provider.id)
+  expect(after.registry).toEqual(registry.index['openai/gpt-4o'])
+})
+
 test('an unmatched model still lands, classified by the id heuristic', async () => {
   const provider = await makeProvider()
   await syncProvider(provider.id, opts(adapterListing(['whisper-1'])))

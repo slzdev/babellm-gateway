@@ -86,7 +86,7 @@ export function projectModelsDev(doc: unknown): RegistryIndex {
   return index
 }
 
-export type RegistryStatus = 'fresh' | 'cached' | 'disabled' | 'failed'
+export type RegistryStatus = 'fresh' | 'cached' | 'disabled' | 'failed' | 'unfetched'
 
 export interface RegistryLoad {
   index: RegistryIndex
@@ -100,9 +100,15 @@ export interface RegistryLoad {
  * Never throws. A registry that cannot be reached degrades to the last good
  * cache, then to an empty index — a sync must still succeed on discovery and
  * seed alone.
+ *
+ * `readOnly` is for callers on the request path (e.g. rendering `/catalog`)
+ * that only want to *display* the last known status: it reads the settings
+ * and cache row and returns, and never enters the fetch branch — not even
+ * when the cache is stale or missing. A `fetchImpl` passed alongside
+ * `readOnly` is therefore guaranteed to never be called.
  */
 export async function loadRegistry(
-  opts: { force?: boolean; now?: Date; fetchImpl?: typeof fetch } = {},
+  opts: { force?: boolean; now?: Date; fetchImpl?: typeof fetch; readOnly?: boolean } = {},
 ): Promise<RegistryLoad> {
   const now = opts.now ?? new Date()
   const { registryEnabled, registryUrl } = await getCatalogSettings()
@@ -122,11 +128,16 @@ export async function loadRegistry(
   const cachedIndex = () => (cached!.payload ?? {}) as RegistryIndex
   const age = cached ? now.getTime() - cached.fetchedAt.getTime() : Number.POSITIVE_INFINITY
 
-  if (cached && !opts.force && age < REGISTRY_MAX_AGE_MS) {
+  if (cached && (opts.readOnly || (!opts.force && age < REGISTRY_MAX_AGE_MS))) {
     return {
       index: cachedIndex(), status: 'cached', url: registryUrl,
       fetchedAt: cached.fetchedAt, error: null,
     }
+  }
+
+  if (opts.readOnly) {
+    // Enabled, but nothing has ever been cached — still must not fetch.
+    return { index: {}, status: 'unfetched', url: registryUrl, fetchedAt: null, error: null }
   }
 
   const doFetch = opts.fetchImpl ?? fetch

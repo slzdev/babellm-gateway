@@ -16,6 +16,17 @@ export interface ActionState {
   success?: string
 }
 
+export interface SyncAllSummary {
+  ok: number
+  unsupported: number
+  failed: number
+}
+
+export interface RegistryRefreshResult {
+  status: string
+  error: string | null
+}
+
 /** Numeric override fields, parsed from their form values. */
 const NUMERIC_FIELDS = [
   'contextWindow', 'maxOutputTokens', 'inputPerMtok', 'outputPerMtok',
@@ -52,17 +63,27 @@ function overrideFrom(formData: FormData): Partial<CatalogFields> {
   return patch
 }
 
-export async function syncAllAction(): Promise<void> {
+export async function syncAllAction(): Promise<SyncAllSummary> {
   await requireAdmin()
-  await syncAllProviders()
+  const results = await syncAllProviders()
   revalidatePath('/catalog')
   revalidatePath('/providers')
+
+  // `unsupported` (gemini, bedrock — no adapter until Phase 3) is a normal
+  // outcome, not a failure, so it gets its own bucket rather than being
+  // folded into `failed`.
+  return {
+    ok: results.filter((r) => r.status === 'ok').length,
+    unsupported: results.filter((r) => r.status === 'unsupported').length,
+    failed: results.filter((r) => r.status === 'failed').length,
+  }
 }
 
-export async function refreshRegistryAction(): Promise<void> {
+export async function refreshRegistryAction(): Promise<RegistryRefreshResult> {
   await requireAdmin()
-  await loadRegistry({ force: true })
+  const result = await loadRegistry({ force: true })
   revalidatePath('/catalog')
+  return { status: result.status, error: result.error }
 }
 
 export async function setOverrideAction(

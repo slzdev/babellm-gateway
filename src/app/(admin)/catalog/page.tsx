@@ -61,7 +61,9 @@ export default async function CatalogPage({
     listCatalog({ providerId, kind, search }),
     listProviders(),
     getCatalogSettings(),
-    loadRegistry(),
+    // Read-only: this page must never trigger the live models.dev fetch. That
+    // only happens from a sync or the explicit "Refresh registry" action.
+    loadRegistry({ readOnly: true }),
     listVirtualModels(),
   ])
 
@@ -76,10 +78,17 @@ export default async function CatalogPage({
       </div>
 
       <form className="flex flex-wrap items-end gap-2">
-        <Input name="q" defaultValue={search ?? ''} placeholder="Search model id" className="w-64" />
+        <Input
+          name="q"
+          defaultValue={search ?? ''}
+          placeholder="Search model id"
+          aria-label="Search model id"
+          className="w-64"
+        />
         <select
           name="provider"
           defaultValue={providerId ?? ''}
+          aria-label="Filter by provider"
           className="h-9 rounded-md border bg-transparent px-3 text-sm"
         >
           <option value="">All providers</option>
@@ -88,6 +97,7 @@ export default async function CatalogPage({
         <select
           name="kind"
           defaultValue={kind ?? ''}
+          aria-label="Filter by kind"
           className="h-9 rounded-md border bg-transparent px-3 text-sm"
         >
           <option value="">All kinds</option>
