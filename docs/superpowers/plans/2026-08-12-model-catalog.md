@@ -698,8 +698,10 @@ export const REGISTRY_NAMESPACE: Record<AdapterType, string | null> = {
   bedrock: 'amazon-bedrock',
 }
 
+// One list defines the concept: the strip pattern is derived from it, so the
+// two directions cannot drift apart.
 const BEDROCK_REGIONS = ['us', 'eu', 'apac', 'global'] as const
-const BEDROCK_REGION_PREFIX = /^(?:us|eu|apac|ap|global)\./
+const BEDROCK_REGION_PREFIX = new RegExp(`^(?:${BEDROCK_REGIONS.join('|')})\\.`)
 const OPENAI_DATE_SUFFIX = /-\d{4}-\d{2}-\d{2}$/
 
 /** Bare model ids to try, most specific first, before namespacing. */
