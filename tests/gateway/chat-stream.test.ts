@@ -83,7 +83,6 @@ test('a failure before the first chunk returns a JSON error, not a stream', asyn
   const { apiKey } = await seedGateway()
   const chatStream = async function* () {
     throw new OpenAI.APIError(429, { message: 'rate limited', code: 'rate_limit_exceeded' }, 'rate limited', undefined)
-    // eslint-disable-next-line no-unreachable
     yield undefined as never
   }
 
