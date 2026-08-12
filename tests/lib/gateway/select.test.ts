@@ -158,3 +158,59 @@ test('a single weighted candidate needs no roll at all', () => {
   )
   expect(names(chain)).toEqual(['only'])
 })
+
+function cursorOf(value: number) {
+  return () => value
+}
+
+test('round robin rotates the eligible list by the cursor', () => {
+  const targets = [candidate('a'), candidate('b'), candidate('c')]
+  const rr = model({ policy: 'round_robin', maxAttempts: 3 })
+
+  expect(names(selectOrder(targets, rr, { nextCursor: cursorOf(0) })))
+    .toEqual(['a', 'b', 'c'])
+  expect(names(selectOrder(targets, rr, { nextCursor: cursorOf(1) })))
+    .toEqual(['b', 'c', 'a'])
+  expect(names(selectOrder(targets, rr, { nextCursor: cursorOf(2) })))
+    .toEqual(['c', 'a', 'b'])
+})
+
+test('a cursor past the end of the list wraps', () => {
+  const chain = selectOrder(
+    [candidate('a'), candidate('b'), candidate('c')],
+    model({ policy: 'round_robin', maxAttempts: 3 }),
+    { nextCursor: cursorOf(7) },
+  )
+  expect(names(chain)).toEqual(['b', 'c', 'a'])
+})
+
+test('round robin is asked for the cursor of the model being routed', () => {
+  const seen: string[] = []
+  selectOrder(
+    [candidate('a'), candidate('b')],
+    model({ id: 'vm-42', policy: 'round_robin' }),
+    { nextCursor: (id) => { seen.push(id); return 0 } },
+  )
+  expect(seen).toEqual(['vm-42'])
+})
+
+test('round robin still respects max_attempts after rotating', () => {
+  const chain = selectOrder(
+    [candidate('a'), candidate('b'), candidate('c')],
+    model({ policy: 'round_robin', maxAttempts: 2 }),
+    { nextCursor: cursorOf(1) },
+  )
+  expect(names(chain)).toEqual(['b', 'c'])
+})
+
+test('failover and weighted never touch the cursor', () => {
+  const nextCursor = () => { throw new Error('cursor should not be consulted') }
+
+  expect(() => selectOrder([candidate('a')], model(), { nextCursor })).not.toThrow()
+  expect(() =>
+    selectOrder([candidate('a', 1), candidate('b', 1)], model({ policy: 'weighted' }), {
+      nextCursor,
+      random: () => 0.5,
+    }),
+  ).not.toThrow()
+})

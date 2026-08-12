@@ -1,4 +1,5 @@
 import type { Candidate } from './resolve'
+import { nextCursor as defaultNextCursor } from './rr-cursor'
 
 export interface SelectDeps {
   random: () => number
@@ -56,6 +57,16 @@ function weightedOrder(candidates: Candidate[], random: () => number): Candidate
 }
 
 /**
+ * Rotating, rather than only moving one target to the head, keeps the rest of
+ * the failover chain in the tie-break order every instance shares — so a
+ * request that has to fail over still walks a predictable sequence.
+ */
+function rotate(candidates: Candidate[], cursor: number): Candidate[] {
+  const offset = ((cursor % candidates.length) + candidates.length) % candidates.length
+  return [...candidates.slice(offset), ...candidates.slice(0, offset)]
+}
+
+/**
  * Orders every eligible target into the chain the attempt loop will walk.
  * Pure: the caller injects randomness and the round-robin cursor, which is
  * what makes weighted and round-robin selection testable at all.
@@ -71,9 +82,11 @@ export function selectOrder(
 ): Candidate[] {
   if (candidates.length === 0) return []
 
-  const { random = Math.random } = deps
+  const { random = Math.random, nextCursor = defaultNextCursor } = deps
   const ordered =
-    model.policy === 'weighted' ? weightedOrder(candidates, random) : candidates
+    model.policy === 'weighted' ? weightedOrder(candidates, random)
+    : model.policy === 'round_robin' ? rotate(candidates, nextCursor(model.id))
+    : candidates
 
   // max_attempts is a bare integer column, so a 0 or a negative is storable.
   // One attempt is the smallest number that still asks a provider anything.
