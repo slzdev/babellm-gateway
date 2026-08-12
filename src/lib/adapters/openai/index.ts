@@ -41,10 +41,12 @@ export function createOpenAIAdapter(
 
   return {
     async chat(req, ctx): Promise<ChatCompletion> {
-      const params = { ...upstreamParams(req, ctx), stream: false as const }
-      return (await client.chat.completions.create(params as never, {
-        signal: ctx.signal,
-      })) as ChatCompletion
+      const params = {
+        ...upstreamParams(req, ctx),
+        stream: false as const,
+      } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming
+
+      return client.chat.completions.create(params, { signal: ctx.signal })
     },
 
     async *chatStream(req, ctx): AsyncIterable<ChatCompletionChunk> {
@@ -53,10 +55,13 @@ export function createOpenAIAdapter(
         ? {}
         : { stream_options: { include_usage: true, ...(base.stream_options ?? {}) } }
 
-      const stream = (await client.chat.completions.create(
-        { ...base, ...streamOptions, stream: true } as never,
-        { signal: ctx.signal },
-      )) as unknown as AsyncIterable<ChatCompletionChunk>
+      const params = {
+        ...base,
+        ...streamOptions,
+        stream: true as const,
+      } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming
+
+      const stream = await client.chat.completions.create(params, { signal: ctx.signal })
 
       for await (const chunk of stream) yield chunk
     },
