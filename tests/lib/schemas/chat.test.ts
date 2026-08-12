@@ -10,7 +10,9 @@ test('accepts a minimal request', () => {
 })
 
 test('rejects a request with no model', () => {
-  expect(() => chatCompletionRequestSchema.parse({ messages: [] })).toThrow()
+  expect(() =>
+    chatCompletionRequestSchema.parse({ messages: [{ role: 'user', content: 'hi' }] }),
+  ).toThrow()
 })
 
 test('rejects an empty messages array', () => {
@@ -92,4 +94,56 @@ test('rejects a non-boolean stream flag', () => {
   expect(() =>
     chatCompletionRequestSchema.parse({ ...minimal, stream: 'yes' }),
   ).toThrow()
+})
+
+test('preserves unknown keys nested inside messages, content parts, tool calls, and stream_options', () => {
+  const parsed = chatCompletionRequestSchema.parse({
+    model: 'fast',
+    messages: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } }],
+        vendor_hint: 'x',
+      },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: 'call_1',
+          type: 'function',
+          function: { name: 'f', arguments: '{}', vendor_arg_meta: 1 },
+        }],
+      },
+    ],
+    stream: true,
+    stream_options: { include_usage: true, vendor_flag: true },
+  }) as Record<string, never>
+
+  const [first, second] = parsed.messages
+  expect(first.vendor_hint).toBe('x')
+  expect(first.content[0].cache_control).toEqual({ type: 'ephemeral' })
+  expect(second.tool_calls[0].function.vendor_arg_meta).toBe(1)
+  expect(parsed.stream_options.vendor_flag).toBe(true)
+})
+
+test('preserves an unrecognized content part type', () => {
+  const parsed = chatCompletionRequestSchema.parse({
+    model: 'fast',
+    messages: [{
+      role: 'user',
+      content: [{ type: 'input_audio', input_audio: { data: 'AAA', format: 'wav' } }],
+    }],
+  }) as Record<string, never>
+
+  expect(parsed.messages[0].content[0]).toEqual({
+    type: 'input_audio', input_audio: { data: 'AAA', format: 'wav' },
+  })
+})
+
+test('accepts the legacy function role', () => {
+  const parsed = chatCompletionRequestSchema.parse({
+    model: 'fast',
+    messages: [{ role: 'function', name: 'get_weather', content: '18C' }],
+  })
+  expect(parsed.messages[0].role).toBe('function')
 })

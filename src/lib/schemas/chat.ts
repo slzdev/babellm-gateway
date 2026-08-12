@@ -27,7 +27,7 @@ const toolCall = z.looseObject({
 })
 
 const message = z.looseObject({
-  role: z.enum(['system', 'developer', 'user', 'assistant', 'tool']),
+  role: z.enum(['system', 'developer', 'user', 'assistant', 'tool', 'function']),
   content: content.nullable().optional(),
   name: z.string().optional(),
   tool_calls: z.array(toolCall).optional(),
