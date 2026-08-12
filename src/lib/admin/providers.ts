@@ -31,7 +31,9 @@ export interface ProviderListItem {
   lastSyncedAt: Date | null
   lastSyncStatus: 'ok' | 'failed' | 'unsupported' | null
   lastSyncError: string | null
-  lastSyncSummary: { added: number; updated: number; missing: number; total: number } | null
+  lastSyncSummary: {
+    added: number; updated: number; missing: number; total: number; matched?: number
+  } | null
 }
 
 function validate(adapter: AdapterType, credentials: unknown, baseUrl?: string | null) {

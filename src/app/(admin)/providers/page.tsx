@@ -10,13 +10,37 @@ import { ToggleProviderButton } from './toggle-provider-button'
 
 export const dynamic = 'force-dynamic'
 
+/**
+ * A summary written before match counting existed carries no count, and must
+ * not be reported as zero matches — so an absent count renders nothing.
+ */
+function RegistryMatch({ matched, total }: { matched?: number; total: number }) {
+  if (matched === undefined || total === 0 || matched === total) return null
+
+  if (matched === 0) {
+    return (
+      <div className="text-destructive">
+        ⚠ 0 of {total} matched models.dev — set a registry namespace to get pricing
+        and context limits
+      </div>
+    )
+  }
+
+  return <div>{matched} of {total} matched models.dev</div>
+}
+
 function SyncStatus({ provider }: { provider: ProviderListItem }) {
   if (!provider.lastSyncedAt) return <>never synced</>
 
   const when = provider.lastSyncedAt.toISOString()
   if (provider.lastSyncStatus === 'ok' && provider.lastSyncSummary) {
-    const { added, updated, missing } = provider.lastSyncSummary
-    return <>synced {when} · +{added} new ~{updated} updated{missing > 0 ? ` !${missing} missing` : ''}</>
+    const { added, updated, missing, matched, total } = provider.lastSyncSummary
+    return (
+      <>
+        synced {when} · +{added} new ~{updated} updated{missing > 0 ? ` !${missing} missing` : ''}
+        <RegistryMatch matched={matched} total={total} />
+      </>
+    )
   }
   if (provider.lastSyncStatus === 'unsupported') {
     // Not an error: gemini and bedrock have no listModels adapter until
