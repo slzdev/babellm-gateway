@@ -281,3 +281,28 @@ ProviderForm / EditProviderForm (client)
 | `src/app/(admin)/providers/edit-provider-form.tsx` | use the shared field |
 | `src/app/(admin)/providers/actions.ts` | parse and persist on create |
 | `src/app/(admin)/providers/page.tsx` | render the datalist; zero-match warning |
+
+## 9. Known follow-ups
+
+Two findings from the whole-branch review were judged real but not worth their
+own commit. Neither blocks anything; both are worth doing by whoever next has
+these files open.
+
+**The datalist does not need to be a Client Component.** Neither export in
+`registry-namespace-field.tsx` uses state, effects, or handlers. The
+`'use client'` boundary exists only because the field imports
+`@/components/ui/input`, which wraps a `@base-ui/react` primitive. Because the
+datalist shares that module, `page.tsx` passes ~183 `{ slug, name }` objects
+across a server-to-client boundary, so the list ships once as HTML and again as
+serialized props in the RSC payload, on every render of a `force-dynamic` page.
+Moving `REGISTRY_NAMESPACE_LIST_ID` and `RegistryNamespaceDatalist` into a
+sibling module without the directive would drop that second copy. A few KB per
+render.
+
+**The stored-summary shape is declared three times** — `catalog/sync.ts`,
+`db/schema.ts`, and `admin/providers.ts`. Two of those copies predate this
+work, but `matched` makes the drift risk concrete: the two read-side copies
+must stay optional and the write-side one must stay required, or the
+`matched === undefined` guard on `/providers` stops meaning anything. Declaring
+the stored shape once in `catalog/types.ts` and having `SyncSummary` extend it
+with `matched: number` would make that structural rather than conventional.
