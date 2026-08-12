@@ -1404,8 +1404,11 @@ for (const [slug, provider] of Object.entries(doc)) {
   providers += 1
 }
 
-if (models === 0) {
-  console.error('Refusing to write an empty seed.')
+// Refuse a degenerate snapshot rather than overwriting a good one. The live
+// document carries ~183 providers; anything under 100 means the fetch returned
+// something unexpected.
+if (providers < 100 || models === 0) {
+  console.error(`Refusing to write a degenerate seed: ${providers} providers / ${models} models.`)
   process.exit(1)
 }
 
