@@ -18,6 +18,12 @@ function SyncStatus({ provider }: { provider: ProviderListItem }) {
     const { added, updated, missing } = provider.lastSyncSummary
     return <>synced {when} · +{added} new ~{updated} updated{missing > 0 ? ` !${missing} missing` : ''}</>
   }
+  if (provider.lastSyncStatus === 'unsupported') {
+    // Not an error: gemini and bedrock have no listModels adapter until
+    // Phase 3, so every sync reports unsupported. Inherits the row's muted
+    // text color instead of the destructive one.
+    return <>{provider.lastSyncError ?? 'model discovery not supported'}</>
+  }
   return <span className="text-destructive">{provider.lastSyncStatus}: {provider.lastSyncError}</span>
 }
 

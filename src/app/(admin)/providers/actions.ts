@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireAdmin } from '@/lib/admin/session'
 import {
-  createProvider, deleteProvider, testProvider, updateProvider,
+  createProvider, deleteProvider, getProviderConfig, testProvider, updateProvider,
 } from '@/lib/admin/providers'
 import { adapterTypes, type AdapterType } from '@/lib/adapters/credentials'
 import { syncProvider, type SyncResult } from '@/lib/catalog/sync'
@@ -117,6 +117,15 @@ export async function updateProviderAction(
   const namespace = String(formData.get('registryNamespace') ?? '').trim()
 
   try {
+    // registryNamespace is the only config key this form edits. Merge it onto
+    // the stored config instead of replacing the object outright — {} is
+    // truthy, so passing it unconditionally would clobber keys no form
+    // exposes yet (timeoutMs, disableStreamUsage) that are still read on the
+    // request path.
+    const config = await getProviderConfig(id)
+    if (namespace) config.registryNamespace = namespace
+    else delete config.registryNamespace
+
     await updateProvider(id, {
       name: String(formData.get('name') ?? ''),
       adapter,
@@ -124,7 +133,7 @@ export async function updateProviderAction(
       // An empty credential form means "keep what is stored" — the browser is
       // never sent the current secret, so a blank field cannot mean "erase".
       ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
-      config: namespace ? { registryNamespace: namespace } : {},
+      config,
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not update the provider.' }

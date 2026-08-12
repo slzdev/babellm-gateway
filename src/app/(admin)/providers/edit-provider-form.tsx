@@ -56,7 +56,7 @@ export function EditProviderForm({ provider }: { provider: ProviderListItem }) {
 
         <fieldset className="space-y-3">
           <legend className="text-xs text-muted-foreground">
-            Credentials — leave blank to keep the stored values.
+            Credentials — leave a field blank to keep its stored value.
           </legend>
           <div className="grid gap-3 sm:grid-cols-2">
             {CREDENTIAL_FIELDS[provider.adapter].map((field) => (
@@ -74,6 +74,16 @@ export function EditProviderForm({ provider }: { provider: ProviderListItem }) {
               </div>
             ))}
           </div>
+          {provider.adapter === 'bedrock' ? (
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                name="useInstanceRole"
+                defaultChecked={provider.maskedCredentials.useInstanceRole === 'true'}
+              />
+              Use the instance IAM role instead of access keys
+            </label>
+          ) : null}
         </fieldset>
 
         {state?.error ? <p role="alert" className="text-sm text-destructive">{state.error}</p> : null}

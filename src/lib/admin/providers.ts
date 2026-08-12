@@ -83,13 +83,31 @@ export async function listProviders(): Promise<ProviderListItem[]> {
   }))
 }
 
-function readRegistryNamespace(config: string): string | null {
+/** Parses the `config` TEXT column defensively — malformed JSON reads as empty. */
+function parseConfig(config: string): Record<string, unknown> {
   try {
-    const parsed = JSON.parse(config) as { registryNamespace?: unknown }
-    return typeof parsed.registryNamespace === 'string' ? parsed.registryNamespace : null
+    const parsed = JSON.parse(config) as unknown
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}
   } catch {
-    return null
+    return {}
   }
+}
+
+function readRegistryNamespace(config: string): string | null {
+  const parsed = parseConfig(config)
+  return typeof parsed.registryNamespace === 'string' ? parsed.registryNamespace : null
+}
+
+/**
+ * Fetches a provider's config object as stored, so a caller can merge a
+ * targeted key into it (e.g. `registryNamespace`) without clobbering other
+ * keys — `timeoutMs`, `disableStreamUsage` — that aren't editable from any
+ * current form but are still read on the request path.
+ */
+export async function getProviderConfig(id: string): Promise<Record<string, unknown>> {
+  const [row] = await db.select().from(providers).where(eq(providers.id, id))
+  if (!row) throw new Error('Provider not found.')
+  return parseConfig(row.config)
 }
 
 export async function createProvider(input: ProviderInput): Promise<ProviderRow> {
@@ -105,6 +123,35 @@ export async function createProvider(input: ProviderInput): Promise<ProviderRow>
   return row
 }
 
+/**
+ * bedrock's credential schema is a two-branch union (static keys vs. instance
+ * role) rather than one flat shape with optional fields. A field-level merge
+ * that blindly overlays new input onto old credentials can silently resurrect
+ * the branch an edit is trying to leave: checking "use the instance role"
+ * while old access keys are still present via merge lets the static-keys
+ * branch keep matching first (zod tries union branches in order), so the
+ * checkbox would be silently ignored. When the incoming edit explicitly opts
+ * into the instance role, the static-key fields are dropped from the merge
+ * base so only the instance-role branch can match. The reverse direction
+ * needs no special handling: supplying accessKeyId/secretAccessKey always
+ * satisfies the static-keys branch first, and zod's default "strip unknown
+ * keys" behavior drops any stale useInstanceRole flag from the parsed result.
+ */
+function mergeCredentials(
+  adapter: AdapterType,
+  base: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  if (adapter === 'bedrock' && patch.useInstanceRole === true) {
+    const staticKeyFields = new Set(['accessKeyId', 'secretAccessKey', 'sessionToken'])
+    const filteredBase = Object.fromEntries(
+      Object.entries(base).filter(([key]) => !staticKeyFields.has(key)),
+    )
+    return { ...filteredBase, ...patch }
+  }
+  return { ...base, ...patch }
+}
+
 export async function updateProvider(
   id: string,
   input: Partial<ProviderInput>,
@@ -114,12 +161,22 @@ export async function updateProvider(
 
   const adapter = input.adapter ?? existing.adapter
   const baseUrl = input.baseUrl === undefined ? existing.baseUrl : input.baseUrl
+  const adapterChanged = input.adapter !== undefined && input.adapter !== existing.adapter
 
-  const credentials = input.credentials
-    ? encryptJson(validate(adapter, input.credentials, baseUrl))
-    : existing.credentials
-
-  if (!input.credentials) {
+  let credentials = existing.credentials
+  if (input.credentials) {
+    // A field left blank in the edit form means "keep this one field", not
+    // "erase it" — the browser is never sent the stored secret, so the new
+    // input is merged onto what's stored rather than replacing the whole
+    // blob. That merge is only sound when the credential shape hasn't
+    // changed; switching adapters would merge an old shape into a new one,
+    // so that case replaces wholesale instead (an empty merge base).
+    const base = adapterChanged
+      ? {}
+      : decryptJson<Record<string, unknown>>(existing.credentials)
+    const merged = mergeCredentials(adapter, base, input.credentials)
+    credentials = encryptJson(validate(adapter, merged, baseUrl))
+  } else {
     validate(adapter, decryptJson<Record<string, unknown>>(existing.credentials), baseUrl)
   }
 

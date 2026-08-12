@@ -65,12 +65,61 @@ test('updating without credentials keeps the stored ones', async () => {
   expect(decryptJson<{ apiKey: string }>(updated.credentials).apiKey).toBe('sk-original')
 })
 
-test('updating with credentials replaces them', async () => {
+test('updating credentials merges onto the stored ones, preserving unsubmitted fields', async () => {
   const created = await createProvider({
-    name: 'openai-prod', adapter: 'openai', credentials: { apiKey: 'sk-original' },
+    name: 'openai-prod', adapter: 'openai',
+    credentials: { apiKey: 'sk-original', organization: 'org-1' },
   })
+  // Only apiKey is submitted — organization is never sent because the form
+  // never echoes it back, yet it must survive the edit rather than being
+  // dropped by a whole-object replace.
   const updated = await updateProvider(created.id, { credentials: { apiKey: 'sk-rotated' } })
-  expect(decryptJson<{ apiKey: string }>(updated.credentials).apiKey).toBe('sk-rotated')
+  const stored = decryptJson<{ apiKey: string; organization?: string }>(updated.credentials)
+  expect(stored.apiKey).toBe('sk-rotated')
+  expect(stored.organization).toBe('org-1')
+})
+
+test('a bedrock edit that only touches one field succeeds via merge', async () => {
+  const created = await createProvider({
+    name: 'bedrock-keys', adapter: 'bedrock',
+    credentials: { region: 'us-east-1', accessKeyId: 'AK', secretAccessKey: 'SK' },
+  })
+  // A whole-object replace with only { region } would fail bedrock's
+  // credential union (neither branch is satisfied by region alone).
+  const updated = await updateProvider(created.id, { credentials: { region: 'us-west-2' } })
+  const stored = decryptJson<{ region: string; accessKeyId: string; secretAccessKey: string }>(
+    updated.credentials,
+  )
+  expect(stored.region).toBe('us-west-2')
+  expect(stored.accessKeyId).toBe('AK')
+  expect(stored.secretAccessKey).toBe('SK')
+})
+
+test('switching adapter type replaces credentials instead of merging the old shape', async () => {
+  const created = await createProvider({
+    name: 'flexible', adapter: 'openai',
+    credentials: { apiKey: 'sk-x', organization: 'org-1' },
+  })
+  const updated = await updateProvider(created.id, {
+    adapter: 'bedrock',
+    credentials: { region: 'us-east-1', useInstanceRole: true },
+  })
+  expect(decryptJson<Record<string, unknown>>(updated.credentials)).toEqual({
+    region: 'us-east-1', useInstanceRole: true,
+  })
+})
+
+test('checking useInstanceRole on a bedrock edit drops the old access keys', async () => {
+  const created = await createProvider({
+    name: 'bedrock-keys', adapter: 'bedrock',
+    credentials: { region: 'us-east-1', accessKeyId: 'AK', secretAccessKey: 'SK' },
+  })
+  const updated = await updateProvider(created.id, {
+    credentials: { useInstanceRole: true },
+  })
+  expect(decryptJson<Record<string, unknown>>(updated.credentials)).toEqual({
+    region: 'us-east-1', useInstanceRole: true,
+  })
 })
 
 test('deleting a referenced provider is refused with a useful message', async () => {
