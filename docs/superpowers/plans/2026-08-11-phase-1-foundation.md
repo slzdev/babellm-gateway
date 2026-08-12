@@ -16,7 +16,7 @@
 - **Node runtime.** Every gateway route handler declares `export const runtime = 'nodejs'` and `export const dynamic = 'force-dynamic'`. No edge runtime anywhere.
 - **All shared state lives in Postgres.** No module-level mutable state that a second instance would not see.
 - **Secrets never leave the server.** Provider credentials are AES-256-GCM encrypted at rest and are never returned to the browser after creation — only a masked suffix.
-- **The gateway never imports from the dashboard, and vice versa.** Shared code goes in `lib/db` or `lib/crypto` only.
+- **The gateway never imports from the dashboard.** The reverse is permitted: the dashboard may import gateway primitives (Task 16 uses `generateApiKey`/`hashApiKey` from `lib/gateway/auth`). What matters is that no dashboard code — React, session handling, Server Actions — can reach the streaming path. *(Corrected during execution: the original wording forbade both directions, which Task 16's own brief then contradicted.)*
 - **Response identity:** every chat response reports the *virtual* model name and a gateway-generated `chatcmpl-…` id. Never leak the upstream model in the body — it goes in `x-babellm-upstream-model`.
 - **Errors are always the OpenAI envelope:** `{"error":{"message","type","param","code"}}`.
 - **Unknown request parameters are forwarded to the provider**, not stripped. This is what makes provider extensions (xAI's `search_parameters`) work.
