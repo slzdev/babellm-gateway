@@ -21,6 +21,8 @@ export interface SyncSummary {
   updated: number
   missing: number
   total: number
+  /** How many of `total` resolved to a models.dev entry. */
+  matched: number
 }
 
 export interface SyncResult {
@@ -206,6 +208,7 @@ async function runSync(provider: ProviderRow, options: SyncOptions): Promise<Syn
   const seen = new Set<string>()
   let added = 0
   let updated = 0
+  let matched = 0
 
   const upserts = discovered.flatMap((model) => {
     // A provider listing the same id twice would otherwise self-conflict.
@@ -219,6 +222,7 @@ async function runSync(provider: ProviderRow, options: SyncOptions): Promise<Syn
     const canonicalKey = matchCanonicalKey(
       provider.adapter, model.id, namespace, registry.index, seed,
     )
+    if (canonicalKey) matched += 1
     const registryFields = canonicalKey ? registry.index[canonicalKey] ?? null : null
     const seedFields = canonicalKey ? seed[canonicalKey] ?? null : null
 
@@ -270,7 +274,7 @@ async function runSync(provider: ProviderRow, options: SyncOptions): Promise<Syn
   return recordOutcome({
     ...base,
     status: 'ok',
-    summary: { added, updated, missing: missing.length, total: upserts.length },
+    summary: { added, updated, missing: missing.length, total: upserts.length, matched },
     error: null,
     registryStatus: registry.status,
     registryError: registry.error,

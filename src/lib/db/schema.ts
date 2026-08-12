@@ -33,6 +33,9 @@ export const providers = pgTable('providers', {
   lastSyncError: text('last_sync_error'),
   lastSyncSummary: jsonb('last_sync_summary').$type<{
     added: number; updated: number; missing: number; total: number
+    // Optional because rows written before match counting existed have no
+    // count, and must not be read as "matched nothing".
+    matched?: number
   } | null>(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

@@ -38,6 +38,21 @@ async function makeProvider(name = 'openai-prod', config = '{}') {
   return row
 }
 
+/**
+ * openai_compatible is the adapter with no default namespace, which is the
+ * whole reason the match count exists.
+ */
+async function makeCompatibleProvider(config = '{}') {
+  const [row] = await db.insert(providers).values({
+    name: 'grok',
+    adapter: 'openai_compatible',
+    baseUrl: 'https://api.x.ai/v1',
+    credentials: encryptJson({ apiKey: 'sk-test' }),
+    config,
+  }).returning()
+  return row
+}
+
 function adapterListing(ids: string[]): ProviderAdapter {
   return {
     chat: vi.fn(), chatStream: vi.fn(),
@@ -61,7 +76,7 @@ test('a first sync inserts every discovered model', async () => {
   const result = await syncProvider(provider.id, opts(adapterListing(['gpt-4o', 'whisper-1'])))
 
   expect(result.status).toBe('ok')
-  expect(result.summary).toEqual({ added: 2, updated: 0, missing: 0, total: 2 })
+  expect(result.summary).toEqual({ added: 2, updated: 0, missing: 0, total: 2, matched: 1 })
   expect((await rowsFor(provider.id)).map((r) => r.modelId).sort())
     .toEqual(['gpt-4o', 'whisper-1'])
 })
@@ -140,7 +155,7 @@ test('a second sync updates rather than duplicates', async () => {
   await syncProvider(provider.id, opts(adapterListing(['gpt-4o'])))
   const result = await syncProvider(provider.id, opts(adapterListing(['gpt-4o'])))
 
-  expect(result.summary).toEqual({ added: 0, updated: 1, missing: 0, total: 1 })
+  expect(result.summary).toEqual({ added: 0, updated: 1, missing: 0, total: 1, matched: 1 })
   expect(await rowsFor(provider.id)).toHaveLength(1)
 })
 
@@ -149,7 +164,7 @@ test('a model that stops being returned is marked missing, not deleted', async (
   await syncProvider(provider.id, opts(adapterListing(['gpt-4o', 'gpt-4.5-preview'])))
   const result = await syncProvider(provider.id, opts(adapterListing(['gpt-4o'])))
 
-  expect(result.summary).toEqual({ added: 0, updated: 1, missing: 1, total: 1 })
+  expect(result.summary).toEqual({ added: 0, updated: 1, missing: 1, total: 1, matched: 1 })
   const rows = await rowsFor(provider.id)
   expect(rows).toHaveLength(2)
   expect(rows.find((r) => r.modelId === 'gpt-4.5-preview')!.status).toBe('missing')
@@ -173,7 +188,7 @@ test('a manual row is never marked missing', async () => {
 
   const result = await syncProvider(provider.id, opts(adapterListing(['gpt-4o'])))
 
-  expect(result.summary).toEqual({ added: 1, updated: 0, missing: 0, total: 1 })
+  expect(result.summary).toEqual({ added: 1, updated: 0, missing: 0, total: 1, matched: 1 })
   const [manual] = await db.select().from(catalogModels)
     .where(and(eq(catalogModels.providerId, provider.id), eq(catalogModels.modelId, 'private-ft')))
   expect(manual.status).toBe('available')
@@ -304,7 +319,7 @@ test('the sync outcome is recorded on the provider row', async () => {
   expect(row.lastSyncStatus).toBe('ok')
   expect(row.lastSyncedAt).toBeInstanceOf(Date)
   expect(row.lastSyncError).toBeNull()
-  expect(row.lastSyncSummary).toEqual({ added: 1, updated: 0, missing: 0, total: 1 })
+  expect(row.lastSyncSummary).toEqual({ added: 1, updated: 0, missing: 0, total: 1, matched: 1 })
 })
 
 test('a failure records its reason on the provider row', async () => {
@@ -447,4 +462,30 @@ test('an unlock failure neither discards the result nor leaks the lock', async (
 
   // The provider is still syncable afterwards.
   expect((await syncProvider(provider.id, opts(adapterListing(['gpt-4o'])))).status).toBe('ok')
+})
+
+test('the summary counts how many models matched the registry', async () => {
+  const provider = await makeProvider()
+  const result = await syncProvider(provider.id, opts(adapterListing(['gpt-4o', 'whisper-1'])))
+
+  expect(result.summary).toEqual({ added: 2, updated: 0, missing: 0, total: 2, matched: 1 })
+})
+
+test('a provider with no usable namespace matches nothing', async () => {
+  const provider = await makeCompatibleProvider()
+  const result = await syncProvider(provider.id, opts(adapterListing(['grok-4.3', 'grok-4.5'])))
+
+  expect(result.summary).toMatchObject({ total: 2, matched: 0 })
+  expect((await rowsFor(provider.id)).every((row) => row.canonicalKey === null)).toBe(true)
+})
+
+test('a namespace in the provider config makes its models match', async () => {
+  const provider = await makeCompatibleProvider(JSON.stringify({ registryNamespace: 'xai' }))
+  const result = await syncProvider(provider.id, opts(adapterListing(['grok-4.3', 'not-a-model'])))
+
+  expect(result.summary).toMatchObject({ total: 2, matched: 1 })
+
+  const [row] = (await rowsFor(provider.id)).filter((r) => r.modelId === 'grok-4.3')
+  expect(row.canonicalKey).toBe('xai/grok-4.3')
+  expect(row.inputPerMtok).not.toBeNull()
 })
