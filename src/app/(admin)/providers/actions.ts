@@ -5,7 +5,7 @@ import { requireAdmin } from '@/lib/admin/session'
 import {
   createProvider, deleteProvider, testProvider, updateProvider,
 } from '@/lib/admin/providers'
-import type { AdapterType } from '@/lib/adapters/credentials'
+import { adapterTypes, type AdapterType } from '@/lib/adapters/credentials'
 
 export interface ActionState {
   error?: string
@@ -35,7 +35,11 @@ export async function createProviderAction(
   formData: FormData,
 ): Promise<ActionState> {
   await requireAdmin()
-  const adapter = String(formData.get('adapter')) as AdapterType
+  const rawAdapter = String(formData.get('adapter'))
+  if (!(adapterTypes as readonly string[]).includes(rawAdapter)) {
+    return { error: `Unknown adapter: ${rawAdapter}` }
+  }
+  const adapter = rawAdapter as AdapterType
 
   try {
     await createProvider({

@@ -3,6 +3,8 @@ import { listProviders } from '@/lib/admin/providers'
 import { requireAdmin } from '@/lib/admin/session'
 import { DeleteProviderButton } from './delete-provider-button'
 import { ProviderForm } from './provider-form'
+import { TestProviderButton } from './test-provider-button'
+import { ToggleProviderButton } from './toggle-provider-button'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,6 +24,7 @@ export default async function ProvidersPage() {
             <th>Credentials</th>
             <th>Targets</th>
             <th>Status</th>
+            <th>Test connection</th>
             <th />
           </tr>
         </thead>
@@ -41,13 +44,17 @@ export default async function ProvidersPage() {
                   {provider.enabled ? 'enabled' : 'disabled'}
                 </Badge>
               </td>
-              <td className="text-right">
+              <td>
+                <TestProviderButton providerId={provider.id} />
+              </td>
+              <td className="text-right whitespace-nowrap">
+                <ToggleProviderButton id={provider.id} enabled={provider.enabled} />
                 <DeleteProviderButton id={provider.id} />
               </td>
             </tr>
           ))}
           {providers.length === 0 ? (
-            <tr><td colSpan={6} className="py-6 text-muted-foreground">No providers yet.</td></tr>
+            <tr><td colSpan={7} className="py-6 text-muted-foreground">No providers yet.</td></tr>
           ) : null}
         </tbody>
       </table>
