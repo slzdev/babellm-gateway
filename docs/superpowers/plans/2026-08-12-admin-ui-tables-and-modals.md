@@ -571,6 +571,8 @@ git commit -m "feat(users): table primitives, create dialog, and confirmed delet
 
 **Background.** `createKeyAction` returns `{ error?, plaintextKey? }` — no `success` field, and the plaintext key is shown exactly once. `FormDialog` would close on success and destroy it, so this page does **not** use `FormDialog`. It uses a hand-rolled two-step dialog. This is the one deliberate exception, and it is why the key form is its own task.
 
+**The reveal step must block every dismissal route.** Not auto-closing is not enough: the key is already persisted server-side when it appears, and it is unrecoverable, so Escape, a backdrop click, and `DialogContent`'s own X button each destroy it silently. All three must be gated while the reveal is up, leaving **Done** as the only exit. Base UI's documented way to refuse a close is to intercept `onOpenChange` (`node_modules/@base-ui/react/docs/react/components/dialog.md`, "Close confirmation"); the X is suppressed with `showCloseButton={false}`.
+
 - [ ] **Step 1: Rewrite the create form as a two-step dialog**
 
 Replace `src/app/(admin)/keys/key-form.tsx` entirely:

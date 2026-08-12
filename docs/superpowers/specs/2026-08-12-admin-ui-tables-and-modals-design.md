@@ -111,6 +111,13 @@ section, since its combobox is cramped inline. `Edit target` moves from
 holding the key, a Copy button, and Done. Revoke/Restore and Delete collapse
 into the `⋯` menu.
 
+The reveal step must **block every dismissal route**, not merely decline to
+auto-close. The key is already persisted server-side by the time it is shown,
+and it is unrecoverable, so Escape, a backdrop click, and the dialog's own X
+button all have to be gated while the reveal is up — leaving **Done** as the
+only exit. Declining to auto-close on success only defends against a threat
+this flow never had; reflex dismissal is the real one.
+
 **Users.** Header button plus create dialog, `⋯` menu for Delete.
 
 ## Out of scope
