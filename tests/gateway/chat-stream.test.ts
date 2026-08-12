@@ -119,6 +119,43 @@ test('a mid-stream failure emits an error event then [DONE] on an already-commit
   expect(sseTerminated(text)).toBe(true)
 })
 
+test('cancelling the response body runs the source generator cleanup', async () => {
+  const { apiKey } = await seedGateway()
+  let cleanedUp = false
+  let releaseGate: () => void = () => {}
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve
+  })
+
+  // A generator whose second chunk is behind a real async gap, so we can
+  // observe it sitting mid-stream (like a real upstream HTTP stream would)
+  // when the client disconnects.
+  const chatStream = async function* () {
+    try {
+      yield fixture[0]
+      await gate
+      yield fixture[1]
+    } finally {
+      cleanedUp = true
+    }
+  }
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chatStream: chatStream as never }),
+  )
+
+  const reader = res.body!.getReader()
+  await reader.read() // first SSE chunk
+  await reader.cancel()
+  releaseGate()
+  // Let the source generator's queued cleanup (triggered by cancel calling
+  // iterator.return()) actually run.
+  await new Promise((resolve) => setTimeout(resolve, 10))
+
+  expect(cleanedUp).toBe(true)
+})
+
 test('a non-streaming request is unaffected by the streaming path', async () => {
   const { apiKey } = await seedGateway()
   const chat = vi.fn().mockResolvedValue({

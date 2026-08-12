@@ -84,6 +84,9 @@ export async function handleChatCompletions(
   deps: ChatHandlerDeps = defaultDeps,
 ): Promise<Response> {
   const requestId = newCompletionId().replace('chatcmpl-', 'req_')
+  // Tracked outside the try block so the catch handler can report which
+  // provider was in flight once a target has actually been chosen.
+  let candidate: Candidate | undefined
 
   try {
     const apiKey = await resolveApiKey(extractBearerToken(request))
@@ -91,25 +94,36 @@ export async function handleChatCompletions(
     const { candidates } = await resolveVirtualModel(body.model)
 
     // Phase 1 uses the highest-priority target only. Phase 2 walks the list.
-    const candidate = candidates[0]
-    const adapter = deps.createAdapter(candidate.provider)
+    candidate = candidates[0]
     const ctx = attemptContext(candidate, requestId, request.signal)
     const headers = attemptHeaders(candidate, requestId)
 
+    // createAdapter throws for unimplemented adapter types (e.g. gemini,
+    // bedrock) and for misconfigured providers. It must be wrapped the same
+    // as the two calls below it, or those errors escape as opaque 500s
+    // instead of the classified status classifyProviderError already knows
+    // how to produce (501 for UnsupportedOperationError, in particular).
+    let adapter: ProviderAdapter
+    try {
+      adapter = deps.createAdapter(candidate.provider)
+    } catch (err) {
+      throw upstreamFailure(err)
+    }
+
     void touchApiKey(apiKey.id).catch((err) =>
-      console.error('[gateway] failed to update last_used_at', err),
+      console.error(`[gateway] failed to update last_used_at request_id=${requestId}`, err),
     )
 
     const identity = { id: newCompletionId(), model: body.model }
 
     if (body.stream) {
-      let chunks
+      let started
       try {
-        chunks = await startChatStream(adapter.chatStream(body, ctx))
+        started = await startChatStream(adapter.chatStream(body, ctx))
       } catch (err) {
         throw upstreamFailure(err)
       }
-      return sseResponse(chunks, identity, headers)
+      return sseResponse(started, identity, headers)
     }
 
     let completion
@@ -121,6 +135,11 @@ export async function handleChatCompletions(
 
     return Response.json(rewriteCompletion(completion, identity), { headers })
   } catch (err) {
-    return errorResponse(err, { 'x-request-id': requestId })
+    // Once a target has been chosen, say which provider failed — that is
+    // the only place x-babellm-provider/upstream-model can come from.
+    const headers = candidate
+      ? attemptHeaders(candidate, requestId)
+      : { 'x-request-id': requestId }
+    return errorResponse(err, headers)
   }
 }

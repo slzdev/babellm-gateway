@@ -10,8 +10,10 @@ function event(payload: unknown): Uint8Array {
 
 const DONE = encoder.encode('data: [DONE]\n\n')
 
-export interface StartedStream {
+export interface StartedChatStream {
   chunks: AsyncIterable<ChatCompletionChunk>
+  /** The raw source iterator, exposed so a cancelled response can clean it up. */
+  iterator: AsyncIterator<ChatCompletionChunk>
 }
 
 /**
@@ -21,35 +23,48 @@ export interface StartedStream {
  */
 export async function startChatStream(
   source: AsyncIterable<ChatCompletionChunk>,
-): Promise<AsyncIterable<ChatCompletionChunk>> {
+): Promise<StartedChatStream> {
   const iterator = source[Symbol.asyncIterator]()
   const first = await iterator.next()
 
   return {
-    async *[Symbol.asyncIterator]() {
-      if (first.done) return
-      yield first.value
-      while (true) {
-        const next = await iterator.next()
-        if (next.done) return
-        yield next.value
-      }
+    iterator,
+    chunks: {
+      async *[Symbol.asyncIterator]() {
+        if (first.done) return
+        yield first.value
+        while (true) {
+          const next = await iterator.next()
+          if (next.done) return
+          yield next.value
+        }
+      },
     },
   }
 }
 
 export function sseResponse(
-  chunks: AsyncIterable<ChatCompletionChunk>,
+  started: StartedChatStream,
   identity: IdentityOptions,
   headers: HeadersInit,
 ): Response {
+  // Set the moment the client disconnects. The `for await` below may still
+  // be mid-pull when that happens (it does not know the controller is gone
+  // until it tries to enqueue), so every enqueue site checks this before
+  // touching the controller — a ReadableStreamController that has been
+  // cancelled throws on `enqueue`, and an uncaught throw here would surface
+  // as an unhandled rejection.
+  let cancelled = false
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const chunk of chunks) {
+        for await (const chunk of started.chunks) {
+          if (cancelled) return
           controller.enqueue(event(rewriteChunk(chunk, identity)))
         }
       } catch (err) {
+        if (cancelled) return
         const classified = classifyProviderError(err)
         controller.enqueue(
           event({
@@ -62,9 +77,20 @@ export function sseResponse(
           }),
         )
       } finally {
-        controller.enqueue(DONE)
-        controller.close()
+        if (!cancelled) {
+          controller.enqueue(DONE)
+          controller.close()
+        }
       }
+    },
+    cancel() {
+      cancelled = true
+      // Ask the source iterator to run its cleanup (e.g. release the
+      // upstream fetch) instead of leaving it to keep being pulled by
+      // nobody. Without this, a client disconnect only stops progress
+      // incidentally — via whatever AbortSignal the adapter happens to
+      // wire up — rather than as a guaranteed consequence of cancellation.
+      void started.iterator.return?.()
     },
   })
 

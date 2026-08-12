@@ -7,6 +7,8 @@ import type { ProviderAdapter } from '@/lib/adapters/types'
 export interface SeedOptions {
   virtualModel?: string
   upstreamModel?: string
+  adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
+  credentials?: Record<string, unknown>
 }
 
 export async function seedGateway(options: SeedOptions = {}) {
@@ -15,8 +17,8 @@ export async function seedGateway(options: SeedOptions = {}) {
 
   const [provider] = await db.insert(providers).values({
     name: 'test-provider',
-    adapter: 'openai',
-    credentials: encryptJson({ apiKey: 'sk-upstream' }),
+    adapter: options.adapter ?? 'openai',
+    credentials: encryptJson(options.credentials ?? { apiKey: 'sk-upstream' }),
   }).returning()
 
   const [model] = await db.insert(virtualModels).values({ name: virtualModel }).returning()

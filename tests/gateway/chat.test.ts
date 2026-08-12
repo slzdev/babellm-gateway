@@ -116,6 +116,21 @@ test('propagates an upstream 500 as 500 with type api_error', async () => {
   expect((await res.json()).error.type).toBe('api_error')
 })
 
+test('a gemini target returns 501 unsupported_operation instead of an opaque 500', async () => {
+  // Regression test: createAdapter() (which throws UnsupportedOperationError
+  // for adapters not yet implemented) used to sit outside the try/catch that
+  // classifies provider errors, so this fell through to a bare 500.
+  // Exercised with the real registry (no deps override) since the bug lived
+  // in how the handler wraps deps.createAdapter, not in a fake.
+  const { apiKey } = await seedGateway({ adapter: 'gemini', credentials: { apiKey: 'g-key' } })
+
+  const res = await handleChatCompletions(chatRequest(body, apiKey))
+  const json = await res.json()
+
+  expect(res.status).toBe(501)
+  expect(json.error.code).toBe('unsupported_operation')
+})
+
 test('records last_used_at on the key', async () => {
   const { apiKey, key } = await seedGateway()
   const chat = vi.fn().mockResolvedValue(upstreamCompletion)

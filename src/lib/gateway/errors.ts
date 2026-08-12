@@ -96,6 +96,15 @@ export function errorBody(err: unknown) {
 
 export function errorResponse(err: unknown, extraHeaders?: HeadersInit): Response {
   const status = err instanceof GatewayError ? err.status : 500
-  if (!(err instanceof GatewayError)) console.error('[gateway] unhandled error', err)
+  if (!(err instanceof GatewayError)) {
+    // extraHeaders carries x-request-id whenever the caller has one (every
+    // gateway route does), which is the only thing that lets this log line
+    // be joined back to the response a client is complaining about.
+    const requestId = extraHeaders ? new Headers(extraHeaders).get('x-request-id') : null
+    console.error(
+      `[gateway] unhandled error${requestId ? ` request_id=${requestId}` : ''}`,
+      err,
+    )
+  }
   return Response.json(errorBody(err), { status, headers: extraHeaders })
 }
