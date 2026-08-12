@@ -1,14 +1,16 @@
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table'
+import { PageHeader } from '@/components/admin/page-header'
 import { listPickerModels, targetWarnings, type TargetWarning } from '@/lib/admin/catalog'
 import { listProviders } from '@/lib/admin/providers'
 import { listVirtualModels } from '@/lib/admin/models'
 import { requireAdmin } from '@/lib/admin/session'
-import { deleteModelAction, removeTargetAction } from './actions'
-import { EditTargetForm } from './edit-target-form'
-import { AddTargetForm, CreateModelForm } from './model-form'
+import { AddTargetDialog, CreateModelDialog } from './model-form'
+import { ModelSectionActions } from './model-section-actions'
 import { PolicySelect } from './policy-select'
-import { TargetEnabledToggle } from './target-enabled-toggle'
+import { TargetRowActions } from './target-row-actions'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,7 +39,7 @@ export default async function ModelsPage() {
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-semibold">Virtual models</h1>
+      <PageHeader title="Virtual models" action={<CreateModelDialog />} />
 
       {models.map((model) => (
         <section key={model.id} className="space-y-2 rounded-lg border p-4">
@@ -45,57 +47,57 @@ export default async function ModelsPage() {
             <h2 className="font-medium">{model.name}</h2>
             <PolicySelect id={model.id} policy={model.policy} />
             {!model.enabled ? <Badge variant="outline">disabled</Badge> : null}
-            <form action={deleteModelAction} className="ml-auto">
-              <input type="hidden" name="id" value={model.id} />
-              <Button type="submit" variant="ghost" size="sm">Delete</Button>
-            </form>
+            <div className="ml-auto">
+              <ModelSectionActions id={model.id} name={model.name} />
+            </div>
           </div>
 
-          <table className="w-full text-sm">
-            <thead className="text-left text-muted-foreground">
-              <tr>
-                <th className="py-1">Provider</th><th>Upstream model</th><th>Priority</th>
-                <th>Weight</th><th>Enabled</th><th /><th />
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Provider</TableHead>
+                <TableHead>Upstream model</TableHead>
+                <TableHead className="text-right">Priority</TableHead>
+                <TableHead className="text-right">Weight</TableHead>
+                <TableHead>Enabled</TableHead>
+                <TableHead className="w-0" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {model.targets.map((target) => (
-                <tr key={target.id} className="border-t">
-                  <td className="py-1">{target.providerName}</td>
-                  <td className="font-mono text-xs">
+                <TableRow key={target.id}>
+                  <TableCell>{target.providerName}</TableCell>
+                  <TableCell className="font-mono text-xs">
                     {target.upstreamModel}
                     <TargetWarningBadge warning={warnings[target.id]} />
-                    <EditTargetForm
-                      target={target}
-                      groups={groupsByProvider[target.providerId] ?? []}
-                    />
-                  </td>
-                  <td>{target.priority}</td>
-                  <td>{target.weight}</td>
-                  <td>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{target.priority}</TableCell>
+                  <TableCell className="text-right tabular-nums">{target.weight}</TableCell>
+                  <TableCell>
                     <Badge variant={target.enabled ? 'default' : 'secondary'}>
                       {target.enabled ? 'enabled' : 'disabled'}
                     </Badge>
-                  </td>
-                  <td className="text-right">
-                    <TargetEnabledToggle id={target.id} enabled={target.enabled} />
-                  </td>
-                  <td className="text-right">
-                    <form action={removeTargetAction}>
-                      <input type="hidden" name="id" value={target.id} />
-                      <Button type="submit" variant="ghost" size="sm">Remove</Button>
-                    </form>
-                  </td>
-                </tr>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <TargetRowActions
+                      target={target}
+                      groups={groupsByProvider[target.providerId] ?? []}
+                    />
+                  </TableCell>
+                </TableRow>
               ))}
               {model.targets.length === 0 ? (
-                <tr><td colSpan={7} className="py-3 text-muted-foreground">No targets — requests to this model will fail with 503.</td></tr>
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                    No targets — requests to this model will fail with 503.
+                  </TableCell>
+                </TableRow>
               ) : null}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
 
           {providers.length > 0 ? (
-            <AddTargetForm
+            <AddTargetDialog
               virtualModelId={model.id}
               providers={providers}
               groupsByProvider={groupsByProvider}
@@ -103,8 +105,6 @@ export default async function ModelsPage() {
           ) : null}
         </section>
       ))}
-
-      <CreateModelForm />
     </div>
   )
 }
