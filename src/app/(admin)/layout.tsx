@@ -4,6 +4,7 @@ import { NavLink } from './nav-link'
 
 const NAV = [
   { href: '/providers', label: 'Providers' },
+  { href: '/catalog', label: 'Catalog' },
   { href: '/models', label: 'Virtual models' },
   { href: '/keys', label: 'API keys' },
   { href: '/users', label: 'Users' },
