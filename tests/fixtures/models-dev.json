@@ -1,0 +1,56 @@
+{
+  "openai": {
+    "id": "openai",
+    "name": "OpenAI",
+    "models": {
+      "gpt-4o": {
+        "id": "gpt-4o",
+        "family": "gpt",
+        "temperature": true,
+        "tool_call": true,
+        "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+        "limit": { "context": 128000, "output": 16384 },
+        "cost": { "input": 2.5, "output": 10, "cache_read": 1.25 }
+      },
+      "text-embedding-3-small": {
+        "id": "text-embedding-3-small",
+        "family": "text-embedding",
+        "temperature": false,
+        "tool_call": false,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 8191, "output": 1536 },
+        "cost": { "input": 0.02, "output": 0 }
+      }
+    }
+  },
+  "amazon-bedrock": {
+    "id": "amazon-bedrock",
+    "name": "Amazon Bedrock",
+    "models": {
+      "us.deepseek.r1-v1:0": {
+        "id": "us.deepseek.r1-v1:0",
+        "family": "deepseek",
+        "temperature": true,
+        "tool_call": false,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 128000, "output": 32768 },
+        "cost": { "input": 1.35, "output": 5.4 }
+      }
+    }
+  },
+  "poe": {
+    "id": "poe",
+    "name": "Poe",
+    "models": {
+      "google/veo-3": {
+        "id": "google/veo-3",
+        "family": "veo",
+        "temperature": false,
+        "tool_call": false,
+        "modalities": { "input": ["text"], "output": ["video"] },
+        "limit": { "context": 1024, "output": 1 },
+        "cost": { "input": 0, "output": 0 }
+      }
+    }
+  }
+}
