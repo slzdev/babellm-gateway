@@ -92,7 +92,7 @@ seed        jsonb
 override    jsonb   -- the only column a human writes
 
 -- effective values, written by merge(), indexable
-kind                   text        -- chat | embedding | image | audio | unknown
+kind                   text        -- chat | embedding | image | audio | video | unknown
 context_window         int null
 max_output_tokens      int null
 input_per_mtok         numeric null
@@ -172,6 +172,10 @@ previous value.
 `kind` gets one extra step after all four layers miss: an id-prefix heuristic
 (`text-embedding-*`, `whisper-*`, `dall-e-*`, `tts-*`), then `unknown`.
 
+models.dev has no chat/embedding marker; `kind` is derived from output
+modalities, then `family` matching `/embed/i`, then `cost.output === 0 &&
+temperature === false`.
+
 ### normalize()
 
 Returns *candidate* canonical keys, tried in order; the first that hits an entry
@@ -181,12 +185,19 @@ wins, and no hit leaves `canonical_key` null.
 |---|---|
 | `openai` | id as-is → dated snapshot suffix stripped (`gpt-4o-2024-08-06` → `gpt-4o`). `ft:` fine-tunes stay unmatched by design. |
 | `gemini` | strip the `models/` prefix |
-| `bedrock` | strip region prefix (`us.`, `eu.`), strip `-v1:0`, `.` → `/` |
+| `bedrock` | id as-is → region prefix (`us./eu./apac./global.`) stripped → each known region prefix added |
 | `openai_compatible` | id as-is → `{config.registryNamespace}/{id}` → leading vendor segment stripped |
 
 `config.registryNamespace` is a new optional provider config field, letting an
 Ollama or Groq provider declare which models.dev namespace it maps into rather
 than having the normalizer guess.
+
+Canonical keys are namespaced by the models.dev provider slug —
+`openai/gpt-4o`, `amazon-bedrock/us.deepseek.r1-v1:0`,
+`google/gemini-flash-latest`. An `openai_compatible` provider with no
+`registryNamespace` configured produces no candidates and stays unmatched,
+which is correct: the namespace cannot be guessed. Note that `ollama` has no
+models.dev namespace at all.
 
 ## 6. Sync
 

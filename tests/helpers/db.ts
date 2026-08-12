@@ -1,7 +1,10 @@
 import { sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 
-const TABLES = ['route_targets', 'virtual_models', 'api_keys', 'users', 'providers']
+const TABLES = [
+  'catalog_models', 'route_targets', 'virtual_models', 'api_keys', 'users',
+  'providers', 'registry_cache', 'settings',
+]
 
 export async function resetDb() {
   await db.execute(
