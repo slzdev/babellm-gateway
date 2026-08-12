@@ -4,6 +4,8 @@ import type {
   AttemptContext,
   ChatCompletion,
   ChatCompletionChunk,
+  DiscoveredModel,
+  ListModelsContext,
   ProviderAdapter,
   ProviderRuntime,
 } from '../types'
@@ -64,6 +66,21 @@ export function createOpenAIAdapter(
       const stream = await client.chat.completions.create(params, { signal: ctx.signal })
 
       for await (const chunk of stream) yield chunk
+    },
+
+    async listModels(ctx: ListModelsContext): Promise<DiscoveredModel[]> {
+      const page = await client.models.list({ signal: ctx.signal })
+      const models: DiscoveredModel[] = []
+
+      for await (const model of page) {
+        // Some openai_compatible clones return entries with no id at all.
+        if (typeof model?.id !== 'string' || model.id.length === 0) continue
+        // /v1/models reports id, created and owned_by — nothing the catalog
+        // can merge. Enrichment comes from the registry and seed layers.
+        models.push({ id: model.id, fields: {}, raw: model })
+      }
+
+      return models
     },
   }
 }
