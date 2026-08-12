@@ -14,7 +14,7 @@ const cursors = new Map<string, number>()
 
 // Kept well inside the exact-integer range so a long-lived process never
 // reaches the point where += 1 stops changing the value.
-const WRAP = 0x7fffffff
+export const WRAP = 0x7fffffff
 
 /** Returns the current cursor for a model, then advances it. */
 export function nextCursor(virtualModelId: string): number {
@@ -26,4 +26,9 @@ export function nextCursor(virtualModelId: string): number {
 /** Test-only. Nothing in the request path should ever clear cursors. */
 export function resetCursors(): void {
   cursors.clear()
+}
+
+/** Test-only. Lets a test drive the cursor to its wrap boundary directly. */
+export function seedCursor(virtualModelId: string, value: number): void {
+  cursors.set(virtualModelId, value)
 }

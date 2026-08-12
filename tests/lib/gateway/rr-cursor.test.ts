@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from 'vitest'
-import { nextCursor, resetCursors } from '@/lib/gateway/rr-cursor'
+import { nextCursor, resetCursors, seedCursor, WRAP } from '@/lib/gateway/rr-cursor'
 
 beforeEach(() => {
   resetCursors()
@@ -20,9 +20,10 @@ test('each virtual model keeps its own cursor', () => {
   expect(nextCursor('vm-1')).toBe(2)
 })
 
-test('the cursor wraps rather than growing without bound', () => {
-  // A long-lived process would otherwise walk a counter toward
-  // MAX_SAFE_INTEGER, where increments stop being exact.
-  for (let i = 0; i < 3; i += 1) nextCursor('vm-wrap')
-  expect(nextCursor('vm-wrap')).toBeLessThan(0x7fffffff)
+test('the cursor wraps at its bound rather than growing without limit', () => {
+  seedCursor('vm-wrap', WRAP - 1)
+
+  // Post-increment: this call returns the seeded value and stores the wrap.
+  expect(nextCursor('vm-wrap')).toBe(WRAP - 1)
+  expect(nextCursor('vm-wrap')).toBe(0)
 })
