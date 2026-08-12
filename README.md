@@ -13,9 +13,10 @@ new OpenAI({ baseURL: "https://gw.example.com/v1", apiKey: "sk-bab-…" })
 
 ## Status
 
-This is **Phase 1** of a four-phase build. It is a real gateway — the
-`openai` SDK talks to it end to end, including streaming and tool calls —
-but only a slice of the design is implemented. See
+This is **Phase 2** of a four-phase build. It is a real gateway — the
+`openai` SDK talks to it end to end, including streaming and tool calls, and
+a virtual model's targets are routed by policy with failover — but only a
+slice of the design is implemented. See
 [Not yet implemented](#not-yet-implemented) before relying on it for
 anything with real spend behind it.
 
@@ -90,6 +91,53 @@ cannot quietly erase your catalog or the overrides on it.
 unlisted `openai_compatible` endpoint has no models.dev namespace, so those
 models stay unenriched unless you override them by hand.
 
+## Routing
+
+A virtual model holds a list of route targets and the gateway uses all of
+them. `policy` decides the order it tries them in:
+
+| Policy | Order |
+|---|---|
+| `failover` | Priority order — lowest `priority` first, ties broken by creation time. |
+| `weighted` | A weighted draw without replacement, so the whole chain is weighted rather than just its head. A target with weight `0` or less sorts last; it is never dropped. |
+| `round_robin` | The same list, rotated one position per request. |
+
+`max_attempts` bounds the chain. The gateway tries at most
+`min(max_attempts, number of eligible targets)` of them and never tries the
+same target twice.
+
+A **retryable** failure moves to the next target: a 429, a 5xx, a timeout, a
+connection error. A **fatal** one stops immediately and the client sees it —
+a 400 or a 401 would fail the same way at every provider, so spending the
+rest of the chain on it only delays the answer. When the chain is exhausted
+the client gets the last provider's actual error rather than a blanket 502,
+so three rate-limited targets read as `429`. A target whose provider type has
+no adapter yet (`gemini`, `bedrock`) is skipped and the chain continues.
+
+Streaming requests fail over on the same loop, up to their first chunk: the
+response is not committed until that chunk is in hand. After it the response
+is locked to the target that produced it, and a later upstream failure ends
+the stream with an SSE `error` event rather than moving on.
+
+`x-babellm-provider` and `x-babellm-upstream-model` on the response name the
+target that actually served — which under failover is not the first one tried.
+
+Each settled request writes one JSON line to stdout: request id, key name,
+virtual model, status, outcome, latency, time-to-first-token for streams, and
+every attempt with its provider, upstream model, status and error. **That line
+is the only record.** There is no request history in the database and no log
+viewer; once the line scrolls out of your container log the request is
+unrecoverable.
+
+Two limitations worth planning around:
+
+- **There is no circuit breaker.** A provider that is hard down is re-attempted
+  on every request, so each request pays one wasted upstream call and its
+  timeout before failing over. Failover works; it is just not free.
+- **Round-robin state is per process.** The cursor lives in memory, so running
+  more than one instance skews the distribution — each process starts at zero
+  and they all favour the same target — and a restart resets it.
+
 ## Production deployment
 
 The app runs as a Docker image with `next start` — no serverless
@@ -137,22 +185,23 @@ schema changes) and `pnpm db:migrate` (apply pending migrations).
 
 ## Not yet implemented
 
-Phase 1 covers the schema, admin auth, provider/virtual-model/key CRUD, the
-`openai` and `openai_compatible` adapters, and `/v1/chat/completions` with
-streaming and tool calling against a single route target per virtual model.
-Everything below is **recorded but not yet acted on**, or not built at all:
+Phases 1 and 2 cover the schema, admin auth, provider/virtual-model/key CRUD,
+the model catalog, the `openai` and `openai_compatible` adapters, and
+`/v1/chat/completions` with streaming, tool calling, and policy-driven routing
+across every route target. Everything below is **recorded but not yet acted
+on**, or not built at all:
 
 - **Rate limits and spend budgets are enforced nowhere.** A key's
   `rpm_limit`, `tpm_limit`, `budget_monthly_usd`, and `budget_total_usd` can
   be set in the dashboard and are stored, but no request is ever rejected
   because of them. **A configured budget is not a spend cap** until Phase 4
   ships budget enforcement — do not treat it as one.
-- **Only the first route target is used.** Failover, weighted routing,
-  round robin, and the circuit breaker (Phase 2) do not exist yet; a
-  virtual model with multiple targets ignores all but the highest-priority
-  one.
-- **No request logging or log viewer** (Phase 2). Debugging a failed
-  request today means reading server logs, correlated by `x-request-id`.
+- **No circuit breaker.** Routing tries every policy's chain on every
+  request, so a provider that is down costs one wasted attempt each time
+  rather than being taken out of rotation. See [Routing](#routing).
+- **No stored request history and no log viewer.** Each request emits one
+  JSON line on stdout; nothing is written to the database. Debugging a past
+  request means searching your container logs by `x-request-id`.
 - **No Gemini or Bedrock adapters, no `/v1/models`, no `/v1/embeddings`**
   (Phase 3). Configuring a `gemini` or `bedrock` provider is accepted by
   the dashboard but every request to it returns `501 unsupported_operation`.
