@@ -1,65 +1,139 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
+import { CheckIcon, CopyIcon } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle, DialogTrigger,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createKeyAction, type CreateKeyState } from './actions'
 
-export function CreateKeyForm({ users }: { users: Array<{ id: string; name: string }> }) {
+export function CreateKeyDialog({ users }: { users: Array<{ id: string; name: string }> }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger render={<Button />}>Create key</DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <CreateKeyBody users={users} onDone={() => setOpen(false)} />
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** Inside the portal, so each open starts fresh — including the reveal step. */
+function CreateKeyBody({
+  users, onDone,
+}: {
+  users: Array<{ id: string; name: string }>
+  onDone: () => void
+}) {
   const [state, action, pending] = useActionState<CreateKeyState | undefined, FormData>(
     createKeyAction, undefined,
   )
 
-  return (
-    <div className="space-y-4 rounded-lg border p-4">
-      <h2 className="font-medium">Create an API key</h2>
+  // The plaintext key is returned once and never again, so this dialog never
+  // auto-closes on success — it swaps to a reveal the admin dismisses by hand.
+  if (state?.plaintextKey) {
+    return <KeyReveal plaintextKey={state.plaintextKey} onDone={onDone} />
+  }
 
-      <form action={action} className="grid gap-4 sm:grid-cols-3">
-        <div className="space-y-1">
+  return (
+    <form action={action} className="space-y-4">
+      <DialogHeader>
+        <DialogTitle>Create an API key</DialogTitle>
+        <DialogDescription>
+          Rate limits and budgets are recorded but not enforced until Phase 4.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
           <Label htmlFor="name">Name</Label>
           <Input id="name" name="name" required placeholder="production app" />
         </div>
-        <div className="space-y-1">
+        <div className="space-y-2">
           <Label htmlFor="userId">User</Label>
-          <select id="userId" name="userId" className="h-9 w-full rounded-md border bg-transparent px-3 text-sm">
+          <select
+            id="userId"
+            name="userId"
+            className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+          >
             <option value="">Unassigned</option>
             {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
           </select>
         </div>
-        <div className="space-y-1">
+        <div className="space-y-2">
           <Label htmlFor="expiresAt">Expires</Label>
           <Input id="expiresAt" name="expiresAt" type="date" />
         </div>
-        <div className="space-y-1">
+        <div className="space-y-2">
           <Label htmlFor="rpmLimit">Requests / min</Label>
           <Input id="rpmLimit" name="rpmLimit" type="number" min={1} />
         </div>
-        <div className="space-y-1">
+        <div className="space-y-2">
           <Label htmlFor="tpmLimit">Tokens / min</Label>
           <Input id="tpmLimit" name="tpmLimit" type="number" min={1} />
         </div>
-        <div className="space-y-1">
+        <div className="space-y-2">
           <Label htmlFor="budgetMonthlyUsd">Monthly budget (USD)</Label>
           <Input id="budgetMonthlyUsd" name="budgetMonthlyUsd" type="number" step="0.01" min={0} />
         </div>
-        <div className="space-y-1">
+        <div className="space-y-2">
           <Label htmlFor="budgetTotalUsd">Total budget (USD)</Label>
           <Input id="budgetTotalUsd" name="budgetTotalUsd" type="number" step="0.01" min={0} />
         </div>
-        <div className="sm:col-span-3">
-          <Button type="submit" disabled={pending}>{pending ? 'Creating…' : 'Create key'}</Button>
-        </div>
-      </form>
+      </div>
 
-      {state?.error ? <p role="alert" className="text-sm text-destructive">{state.error}</p> : null}
-
-      {state?.plaintextKey ? (
-        <div className="space-y-1 rounded-md border border-dashed p-3">
-          <p className="text-sm font-medium">Copy this key now — it is never shown again.</p>
-          <code className="block break-all font-mono text-sm">{state.plaintextKey}</code>
-        </div>
+      {state?.error ? (
+        <p role="alert" className="text-sm text-destructive">{state.error}</p>
       ) : null}
+
+      <DialogFooter>
+        <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+        <Button type="submit" disabled={pending}>{pending ? 'Creating…' : 'Create key'}</Button>
+      </DialogFooter>
+    </form>
+  )
+}
+
+function KeyReveal({ plaintextKey, onDone }: { plaintextKey: string; onDone: () => void }) {
+  const [copied, setCopied] = useState(false)
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(plaintextKey)
+      setCopied(true)
+      toast.success('Key copied to the clipboard.')
+    } catch {
+      // Clipboard access can be denied; the key is on screen either way.
+      toast.error('Could not copy — select the key and copy it by hand.')
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <DialogHeader>
+        <DialogTitle>API key created</DialogTitle>
+        <DialogDescription>
+          Copy it now — it is never shown again.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="flex items-start gap-2 rounded-md border border-dashed p-3">
+        <code className="flex-1 break-all font-mono text-sm">{plaintextKey}</code>
+        <Button type="button" variant="outline" size="icon-sm" onClick={copy} aria-label="Copy key">
+          {copied ? <CheckIcon /> : <CopyIcon />}
+        </Button>
+      </div>
+
+      <DialogFooter>
+        <Button type="button" onClick={onDone}>Done</Button>
+      </DialogFooter>
     </div>
   )
 }
