@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { loadSeed } from '@/lib/catalog/seed'
+import { loadSeed, loadSeedProviders } from '@/lib/catalog/seed'
 import { projectModelsDev } from '@/lib/catalog/registry'
 import fixture from '../../fixtures/models-dev.json'
 
@@ -32,4 +32,22 @@ test('the snapshot carries real pricing and limits', () => {
 
 test('loading is memoized so repeated syncs do not re-parse megabytes', () => {
   expect(loadSeed()).toBe(loadSeed())
+})
+
+test('the snapshot exposes its provider namespaces with display names', () => {
+  const namespaces = loadSeedProviders()
+
+  expect(namespaces.length).toBeGreaterThan(100)
+  expect(namespaces).toContainEqual({ slug: 'xai', name: 'xAI' })
+  expect(namespaces).toContainEqual({ slug: 'openai', name: 'OpenAI' })
+})
+
+test('provider namespaces come back sorted, so the picker lists them predictably', () => {
+  const slugs = loadSeedProviders().map((namespace) => namespace.slug)
+
+  expect(slugs).toEqual([...slugs].sort((a, b) => a.localeCompare(b)))
+})
+
+test('loading providers is memoized like the index it sits beside', () => {
+  expect(loadSeedProviders()).toBe(loadSeedProviders())
 })

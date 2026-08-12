@@ -48,3 +48,10 @@ export interface MergeResult {
   effective: EffectiveFields
   sources: FieldSources
 }
+
+/** One models.dev provider namespace, as offered by the admin picker. */
+export interface RegistryNamespace {
+  slug: string
+  /** Display name from the vendored snapshot. Null for a cache-only slug. */
+  name: string | null
+}
