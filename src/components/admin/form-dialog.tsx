@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useEffect, useId, useState } from 'react'
+import { useActionState, useEffect, useId, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -78,8 +78,17 @@ function FormDialogBody<S extends FormState>({
     action, undefined,
   )
 
+  // Fires once per action result. The ref is load-bearing: `onDone` is a new
+  // closure on every parent render, and useEffect re-runs on ANY dependency
+  // change — so without it, `setOpen(false)` (and the revalidation that
+  // follows every one of these actions) re-enters this effect while the popup
+  // is still mounted through its exit animation, and toasts a second time.
+  const handled = useRef<S | undefined>(undefined)
+
   useEffect(() => {
     if (!state || state.error) return
+    if (handled.current === state) return
+    handled.current = state
     toast.success(state.success ?? successMessage)
     // A save can succeed while the work it triggers (a re-sync) fails. That is
     // a second toast, not a reason to hold the dialog open.
