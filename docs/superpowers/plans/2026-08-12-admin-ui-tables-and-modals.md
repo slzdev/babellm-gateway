@@ -104,7 +104,7 @@ Create `src/components/admin/form-dialog.tsx`:
 ```tsx
 'use client'
 
-import { useActionState, useEffect, useId, useState } from 'react'
+import { useActionState, useEffect, useId, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -173,8 +173,17 @@ function FormDialogBody<S extends FormState>({
     action, undefined,
   )
 
+  // Fires once per action result. The ref is load-bearing: `onDone` is a new
+  // closure on every parent render, and useEffect re-runs on ANY dependency
+  // change — so without it, `setOpen(false)` (and the revalidation that
+  // follows every one of these actions) re-enters this effect while the popup
+  // is still mounted through its exit animation, and toasts a second time.
+  const handled = useRef<S | undefined>(undefined)
+
   useEffect(() => {
     if (!state || state.error) return
+    if (handled.current === state) return
+    handled.current = state
     toast.success(state.success ?? successMessage)
     // A save can succeed while the work it triggers (a re-sync) fails. That is
     // a second toast, not a reason to hold the dialog open.
@@ -245,7 +254,9 @@ export function FormDialog<S extends FormState>({
 }
 ```
 
-`useState` is already in the React import from Step 3. `onDone` is recreated each render and is a dependency of the effect in `FormDialogBody`, but the effect's guard (`!state || state.error`) means a re-render with unchanged `state` cannot re-fire the toast — the effect body only runs when `state` changes identity, which `useActionState` guarantees only on submit.
+`useState` is already in the React import from Step 3.
+
+`onDone` is recreated on every `FormDialog` render and is a dependency of the effect in `FormDialogBody`. The `!state || state.error` guard does **not** make that safe on its own — `useEffect` re-runs whenever any dependency changes identity, so a re-render with unchanged `state` would re-enter the effect and toast again. The `handled` ref in Step 3 is what makes the effect fire once per action result. Do not remove it, and do not "simplify" it back to a dependency-list-only guard.
 
 - [ ] **Step 5: Create the confirm dialog**
 
