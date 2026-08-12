@@ -273,6 +273,7 @@ ProviderForm / EditProviderForm (client)
 | `src/lib/catalog/seed.ts` | `loadSeedProviders()` |
 | `src/lib/catalog/config.ts` | `parseRegistryNamespace()` |
 | `src/lib/catalog/sync.ts` | `SyncSummary.matched` |
+| `src/lib/db/schema.ts` | optional `matched` on the `last_sync_summary` `$type<>` |
 | `src/lib/admin/providers.ts` | optional `matched` on the read type |
 | `src/app/(admin)/providers/registry-namespace-field.tsx` | new |
 | `src/app/(admin)/providers/provider-form.tsx` | add the field |
