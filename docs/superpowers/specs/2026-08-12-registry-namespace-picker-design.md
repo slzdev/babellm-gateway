@@ -105,11 +105,16 @@ Live slugs:
 ```sql
 SELECT DISTINCT split_part(k, '/', 1) AS slug
 FROM registry_cache, jsonb_object_keys(payload) k
+WHERE k LIKE '%/%'
 ```
 
+The `WHERE` clause matters: `split_part` returns the whole string when the
+delimiter is absent, so without it a malformed key would surface as a bogus
+namespace suggestion. A key that begins with `/` still yields an empty slug,
+which is dropped in the merge.
+
 Merges into a `Map<slug, name | null>` seeded from `loadSeedProviders()`, with
-cache-only slugs added nameless, returned sorted by slug ascending. A slug that
-is empty after `split_part` (a malformed key with no `/`) is dropped.
+cache-only slugs added nameless, returned sorted by slug ascending.
 
 Never throws: any error from the query is caught and the seed list is returned
 on its own, because `/providers` must not fail to render over a suggestion list.
