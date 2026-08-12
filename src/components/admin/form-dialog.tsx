@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useEffect, useId, useRef, useState } from 'react'
+import { useActionState, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -48,8 +48,15 @@ export function FormDialog<S extends FormState>({
   const [uncontrolled, setUncontrolled] = useState(false)
   const isControlled = open !== undefined
   const isOpen = isControlled ? open : uncontrolled
+  // Reported up from the body: true while a submit is in flight. Closing
+  // mid-submit doesn't just skip a success toast — on a failed submit the
+  // body unmounts before its effect can show the inline error, so the admin
+  // loses both the error message and everything they typed with no sign
+  // anything went wrong.
+  const [pending, setPending] = useState(false)
 
   function setOpen(next: boolean) {
+    if (!next && pending) return
     if (!isControlled) setUncontrolled(next)
     onOpenChange?.(next)
   }
@@ -57,8 +64,8 @@ export function FormDialog<S extends FormState>({
   return (
     <Dialog open={isOpen} onOpenChange={setOpen}>
       {trigger ? <DialogTrigger render={trigger as React.ReactElement} /> : null}
-      <DialogContent className={cn('sm:max-w-lg', className)}>
-        <FormDialogBody {...body} onDone={() => setOpen(false)} />
+      <DialogContent className={cn('sm:max-w-lg', className)} showCloseButton={!pending}>
+        <FormDialogBody {...body} onDone={() => setOpen(false)} onPendingChange={setPending} />
       </DialogContent>
     </Dialog>
   )
@@ -70,13 +77,21 @@ export function FormDialog<S extends FormState>({
  */
 function FormDialogBody<S extends FormState>({
   title, description, action, submitLabel, pendingLabel, successMessage,
-  children, extra, onDone,
+  children, extra, onDone, onPendingChange,
 }: Omit<FormDialogProps<S>, 'trigger' | 'open' | 'onOpenChange' | 'className'> & {
   onDone: () => void
+  onPendingChange: (pending: boolean) => void
 }) {
   const [state, formAction, pending] = useActionState<S | undefined, FormData>(
     action, undefined,
   )
+
+  // useLayoutEffect so the shell's close-gate is armed before the browser
+  // paints — no frame where a stray Escape or backdrop click could still
+  // close the dialog while the action is running.
+  useLayoutEffect(() => {
+    onPendingChange(pending)
+  }, [pending, onPendingChange])
 
   // Fires once per action result. The ref is load-bearing: `onDone` is a new
   // closure on every parent render, and useEffect re-runs on ANY dependency
@@ -117,7 +132,7 @@ function FormDialogBody<S extends FormState>({
       {extra}
 
       <DialogFooter>
-        <DialogClose render={<Button type="button" variant="outline" />}>
+        <DialogClose render={<Button type="button" variant="outline" disabled={pending} />}>
           Cancel
         </DialogClose>
         <Button type="submit" form={formId} disabled={pending}>

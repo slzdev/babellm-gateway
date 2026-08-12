@@ -30,7 +30,7 @@ export function CatalogRowActions({
         >
           <MoreHorizontalIcon />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" className="w-auto min-w-40">
           <DropdownMenuItem onClick={() => setOverriding(true)}>Edit overrides</DropdownMenuItem>
           <DropdownMenuItem onClick={() => setRouting(true)}>
             Route to a virtual model

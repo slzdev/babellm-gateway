@@ -60,7 +60,7 @@ export default async function ModelsPage() {
                 <TableHead className="text-right">Priority</TableHead>
                 <TableHead className="text-right">Weight</TableHead>
                 <TableHead>Enabled</TableHead>
-                <TableHead className="w-0" />
+                <TableHead className="w-0"><span className="sr-only">Actions</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

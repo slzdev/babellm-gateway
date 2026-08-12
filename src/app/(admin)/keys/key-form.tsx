@@ -14,26 +14,27 @@ import { createKeyAction, type CreateKeyState } from './actions'
 
 export function CreateKeyDialog({ users }: { users: Array<{ id: string; name: string }> }) {
   const [open, setOpen] = useState(false)
-  // Set once the plaintext key is on screen. The key is already persisted
-  // server-side and never shown again, so while this is true, Escape, the
-  // backdrop, and the X must not be able to close the dialog — only the
-  // reveal step's own Done button may.
-  const [revealed, setRevealed] = useState(false)
+  // True from the moment the create request goes in flight through until the
+  // reveal step is dismissed. The key is persisted server-side (and hashed,
+  // never shown again) as soon as the action starts running, not once the
+  // reveal paints — so Escape, the backdrop, and the X must not be able to
+  // close the dialog for the whole span, not just the tail end of it.
+  const [busy, setBusy] = useState(false)
 
   function handleOpenChange(next: boolean) {
-    if (!next && revealed) return
+    if (!next && busy) return
     setOpen(next)
   }
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger render={<Button />}>Create key</DialogTrigger>
-      <DialogContent className="sm:max-w-lg" showCloseButton={!revealed}>
+      <DialogContent className="sm:max-w-lg" showCloseButton={!busy}>
         <CreateKeyBody
           users={users}
-          onRevealed={() => setRevealed(true)}
+          onBusyChange={setBusy}
           onDone={() => {
-            setRevealed(false)
+            setBusy(false)
             setOpen(false)
           }}
         />
@@ -44,11 +45,11 @@ export function CreateKeyDialog({ users }: { users: Array<{ id: string; name: st
 
 /** Inside the portal, so each open starts fresh — including the reveal step. */
 function CreateKeyBody({
-  users, onDone, onRevealed,
+  users, onDone, onBusyChange,
 }: {
   users: Array<{ id: string; name: string }>
   onDone: () => void
-  onRevealed: () => void
+  onBusyChange: (busy: boolean) => void
 }) {
   const [state, action, pending] = useActionState<CreateKeyState | undefined, FormData>(
     createKeyAction, undefined,
@@ -56,12 +57,15 @@ function CreateKeyBody({
 
   // The plaintext key is returned once and never again, so this dialog never
   // auto-closes on success — it swaps to a reveal the admin dismisses by hand.
-  // useLayoutEffect (not useEffect) so the parent's close-gate is armed
-  // before the browser paints the reveal step — no frame where the X or a
-  // stray Escape could still close the dialog.
+  // useLayoutEffect (not useEffect) so the parent's close-gate is armed before
+  // the browser paints — both while the submit is in flight and through the
+  // reveal step, with no frame in between where the X or a stray Escape could
+  // slip through. An action error brings pending back to false and leaves
+  // plaintextKey unset, so busy drops back to false and the dialog is
+  // dismissible again.
   useLayoutEffect(() => {
-    if (state?.plaintextKey) onRevealed()
-  }, [state?.plaintextKey, onRevealed])
+    onBusyChange(pending || Boolean(state?.plaintextKey))
+  }, [pending, state?.plaintextKey, onBusyChange])
 
   if (state?.plaintextKey) {
     return <KeyReveal plaintextKey={state.plaintextKey} onDone={onDone} />

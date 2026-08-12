@@ -26,8 +26,12 @@ export function KeyRowActions({
       const formData = new FormData()
       formData.set('id', id)
       formData.set('enabled', String(!enabled))
-      await revokeKeyAction(formData)
-      toast.success(enabled ? 'Key revoked.' : 'Key restored.')
+      try {
+        await revokeKeyAction(formData)
+        toast.success(enabled ? 'Key revoked.' : 'Key restored.')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Could not update the key.')
+      }
     })
   }
 
@@ -39,7 +43,7 @@ export function KeyRowActions({
         >
           <MoreHorizontalIcon />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" className="w-auto min-w-40">
           <DropdownMenuItem disabled={pending} onClick={toggle}>
             {enabled ? 'Revoke' : 'Restore'}
           </DropdownMenuItem>

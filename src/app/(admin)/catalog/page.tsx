@@ -122,7 +122,7 @@ export default async function CatalogPage({
             <TableHead className="text-right">Context</TableHead>
             <TableHead className="text-right">In/out</TableHead>
             <TableHead>Status</TableHead>
-            <TableHead className="w-0" />
+            <TableHead className="w-0"><span className="sr-only">Actions</span></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

@@ -159,7 +159,7 @@ export function AddManualModelDialog({
 }) {
   return (
     <FormDialog<ActionState>
-      trigger={<Button variant="outline">Add model</Button>}
+      trigger={<Button size="sm">Add model</Button>}
       title="Add a model by hand"
       action={addManualModelAction}
       submitLabel="Add model"

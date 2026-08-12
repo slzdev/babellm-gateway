@@ -20,7 +20,7 @@ export function ModelSectionActions({ id, name }: { id: string; name: string }) 
         >
           <MoreHorizontalIcon />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" className="w-auto min-w-40">
           <DropdownMenuItem variant="destructive" onClick={() => setConfirming(true)}>
             Delete model
           </DropdownMenuItem>

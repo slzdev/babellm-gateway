@@ -65,7 +65,7 @@ export function ProviderRowActions({ provider }: { provider: ProviderListItem })
         >
           <MoreHorizontalIcon />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" className="w-auto min-w-40">
           <DropdownMenuItem onClick={() => setEditing(true)}>Edit</DropdownMenuItem>
           <DropdownMenuItem disabled={pending} onClick={sync}>Sync models</DropdownMenuItem>
           <DropdownMenuItem onClick={() => setTesting(true)}>Test connection</DropdownMenuItem>

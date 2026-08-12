@@ -43,7 +43,7 @@ export default async function KeysPage() {
             <TableHead>Limits</TableHead>
             <TableHead>Last used</TableHead>
             <TableHead>Status</TableHead>
-            <TableHead className="w-0" />
+            <TableHead className="w-0"><span className="sr-only">Actions</span></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

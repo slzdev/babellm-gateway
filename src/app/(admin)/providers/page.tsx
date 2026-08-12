@@ -73,7 +73,7 @@ export default async function ProvidersPage() {
             <TableHead className="text-right">Targets</TableHead>
             <TableHead>Models</TableHead>
             <TableHead>Status</TableHead>
-            <TableHead className="w-0" />
+            <TableHead className="w-0"><span className="sr-only">Actions</span></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

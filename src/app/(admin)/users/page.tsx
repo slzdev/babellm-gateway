@@ -27,7 +27,7 @@ export default async function UsersPage() {
             <TableHead>Name</TableHead>
             <TableHead>Email</TableHead>
             <TableHead>Notes</TableHead>
-            <TableHead className="w-0" />
+            <TableHead className="w-0"><span className="sr-only">Actions</span></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

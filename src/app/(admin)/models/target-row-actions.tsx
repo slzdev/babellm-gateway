@@ -46,7 +46,7 @@ export function TargetRowActions({
         >
           <MoreHorizontalIcon />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" className="w-auto min-w-40">
           <DropdownMenuItem onClick={() => setEditing(true)}>Edit</DropdownMenuItem>
           <DropdownMenuItem disabled={pending} onClick={toggle}>
             {target.enabled ? 'Disable' : 'Enable'}
