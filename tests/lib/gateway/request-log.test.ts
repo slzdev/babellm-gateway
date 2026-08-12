@@ -91,11 +91,16 @@ test('an unauthenticated request logs a null key rather than omitting it', () =>
   expect(line.model).toBeNull()
 })
 
-test('the log never carries anything key-shaped', () => {
-  // `key` is the API key's *name*. A regression here would write bearer
-  // tokens into whatever aggregates stdout.
-  const serialized = JSON.stringify(buildRequestLog(fields({ key: 'prod-app' })))
-  expect(serialized).not.toContain('sk-bab-')
+test('the line carries only the fields it declares, so nothing leaks through from the input', () => {
+  // buildRequestLog does not redact — it cannot, since it only ever sees a
+  // key's name. What it can guarantee is that it never spreads its input,
+  // which is the way anything sensitive would actually reach stdout.
+  const line = buildRequestLog(fields())
+
+  expect(Object.keys(line).sort()).toEqual([
+    'attempts', 'key', 'latency_ms', 'lvl', 'model', 'msg',
+    'outcome', 'request_id', 'status', 'stream',
+  ])
 })
 
 test('emit writes exactly one line of JSON', () => {
@@ -118,4 +123,13 @@ test('a failure to emit never escapes', () => {
   expect(() => emitRequestLog(fields())).not.toThrow()
   expect(log).toHaveBeenCalled()
   expect(error).toHaveBeenCalled()
+})
+
+test('a failure to report the failure never escapes either', () => {
+  // stdout and stderr are commonly the same pipe, so the fallback has to
+  // survive whatever killed the primary sink.
+  vi.spyOn(console, 'log').mockImplementation(() => { throw new Error('stdout is gone') })
+  vi.spyOn(console, 'error').mockImplementation(() => { throw new Error('stderr too') })
+
+  expect(() => emitRequestLog(fields())).not.toThrow()
 })

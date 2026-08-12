@@ -4,7 +4,11 @@ export type RequestOutcome = 'ok' | 'error' | 'client_closed' | 'stream_interrup
 
 export interface RequestLogFields {
   requestId: string
-  /** The API key's *name*. Never the key, its prefix, or its hash. */
+  /**
+   * The API key's *name*. Never the key, its prefix, or its hash. This
+   * module cannot enforce that — it only ever sees whatever string the
+   * caller passes as `key`. The caller is responsible for passing the name.
+   */
   key: string | null
   /** The virtual model the client asked for. Null if the request never parsed. */
   model: string | null
@@ -64,6 +68,14 @@ export function emitRequestLog(fields: RequestLogFields): void {
   try {
     console.log(JSON.stringify(buildRequestLog(fields)))
   } catch (err) {
-    console.error(`[gateway] failed to emit request log request_id=${fields.requestId}`, err)
+    // The fallback needs its own guard: stdout and stderr are frequently the
+    // same pipe, so whatever just broke console.log has usually broken this
+    // too. A request that succeeded must not be failed by its own logging,
+    // and that promise is worth more than the diagnostic.
+    try {
+      console.error(`[gateway] failed to emit request log request_id=${fields.requestId}`, err)
+    } catch {
+      // Nowhere left to report to.
+    }
   }
 }
