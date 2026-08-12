@@ -37,6 +37,17 @@ test('an unregioned bedrock id tries the known region prefixes', () => {
   ])
 })
 
+test('a vendor segment that is not a known region is left alone', () => {
+  // 'ap' is not a Bedrock region prefix — only us/eu/apac/global are.
+  expect(canonicalKeyCandidates('bedrock', 'ap.something.model-v1:0')).toEqual([
+    'amazon-bedrock/ap.something.model-v1:0',
+    'amazon-bedrock/us.ap.something.model-v1:0',
+    'amazon-bedrock/eu.ap.something.model-v1:0',
+    'amazon-bedrock/apac.ap.something.model-v1:0',
+    'amazon-bedrock/global.ap.something.model-v1:0',
+  ])
+})
+
 test('openai_compatible with no namespace configured produces no candidates', () => {
   // ollama has no models.dev namespace at all, and the namespace cannot be
   // guessed from a base URL. Unmatched is the correct outcome.
