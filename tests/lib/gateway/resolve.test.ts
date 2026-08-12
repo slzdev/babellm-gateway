@@ -25,13 +25,17 @@ async function seed() {
 test('returns candidates ordered by priority', async () => {
   const { fast, slow, model } = await seed()
   await db.insert(routeTargets).values([
-    { virtualModelId: model.id, providerId: slow.id, upstreamModel: 'slow-1', priority: 10 },
-    { virtualModelId: model.id, providerId: fast.id, upstreamModel: 'fast-1', priority: 1 },
+    { virtualModelId: model.id, providerId: slow.id, upstreamModel: 'slow-1', priority: 10, weight: 50 },
+    { virtualModelId: model.id, providerId: fast.id, upstreamModel: 'fast-1', priority: 1, weight: 200 },
   ])
 
   const { candidates } = await resolveVirtualModel('house-model')
   expect(candidates.map((c) => c.upstreamModel)).toEqual(['fast-1', 'slow-1'])
   expect(candidates[0].provider.name).toBe('fast-provider')
+  // priority and weight must survive the mapping — weighted selection
+  // (Phase 2) is built on this shape carrying weight through.
+  expect(candidates.map((c) => c.priority)).toEqual([1, 10])
+  expect(candidates.map((c) => c.weight)).toEqual([200, 50])
 })
 
 test('orders equal-priority targets deterministically', async () => {

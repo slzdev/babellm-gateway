@@ -11,6 +11,11 @@ export interface Candidate {
   targetId: string
   provider: ProviderRow
   upstreamModel: string
+  // Not used by Phase 1's single-target routing, but weighted selection
+  // (Phase 2) cannot be built without weight on this shape — carrying it
+  // now means adding it later isn't a signature change.
+  priority: number
+  weight: number
 }
 
 export interface ResolvedModel {
@@ -63,6 +68,8 @@ export async function resolveVirtualModel(name: string): Promise<ResolvedModel> 
       targetId: target.id,
       provider,
       upstreamModel: target.upstreamModel,
+      priority: target.priority,
+      weight: target.weight,
     })),
   }
 }
