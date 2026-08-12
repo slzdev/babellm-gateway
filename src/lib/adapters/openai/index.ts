@@ -9,6 +9,7 @@ import type {
   ProviderAdapter,
   ProviderRuntime,
 } from '../types'
+import { toProviderError } from './errors'
 
 export type OpenAIClientFactory = (opts: ClientOptions) => OpenAI
 
@@ -48,7 +49,11 @@ export function createOpenAIAdapter(
         stream: false as const,
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming
 
-      return client.chat.completions.create(params, { signal: ctx.signal })
+      try {
+        return await client.chat.completions.create(params, { signal: ctx.signal })
+      } catch (err) {
+        throw toProviderError(err)
+      }
     },
 
     async *chatStream(req, ctx): AsyncIterable<ChatCompletionChunk> {
@@ -63,9 +68,22 @@ export function createOpenAIAdapter(
         stream: true as const,
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming
 
-      const stream = await client.chat.completions.create(params, { signal: ctx.signal })
+      // Both the call that opens the stream and the iteration that drains it
+      // can fail, and they fail differently — the first before the gateway
+      // has committed a response, the second after. Both must arrive at the
+      // routing loop already interpreted.
+      let stream
+      try {
+        stream = await client.chat.completions.create(params, { signal: ctx.signal })
+      } catch (err) {
+        throw toProviderError(err)
+      }
 
-      for await (const chunk of stream) yield chunk
+      try {
+        for await (const chunk of stream) yield chunk
+      } catch (err) {
+        throw toProviderError(err)
+      }
     },
 
     async listModels(ctx: ListModelsContext): Promise<DiscoveredModel[]> {

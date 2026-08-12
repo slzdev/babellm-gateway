@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import {
   GatewayError,
+  ProviderError,
   UnsupportedOperationError,
   classifyProviderError,
   errorResponse,
@@ -73,4 +74,42 @@ test('an UnsupportedOperationError is fatal with status 501', () => {
 test('an abort is classified as retryable', () => {
   const err = new DOMException('aborted', 'AbortError')
   expect(classifyProviderError(err).retryable).toBe(true)
+})
+
+test('a ProviderError classifies as itself, without re-deriving anything', () => {
+  const classified = classifyProviderError(
+    new ProviderError({
+      status: 400,
+      code: 'invalid_argument',
+      type: 'invalid_request_error',
+      message: 'tools[0].parameters is not valid',
+      retryable: false,
+    }),
+  )
+
+  expect(classified).toEqual({
+    retryable: false,
+    status: 400,
+    type: 'invalid_request_error',
+    code: 'invalid_argument',
+    message: 'tools[0].parameters is not valid',
+  })
+})
+
+test('a retryable ProviderError stays retryable even at a 4xx status', () => {
+  // The whole point of moving classification into the adapter: only the
+  // adapter knows that this provider's 400 means "overloaded, try again".
+  const classified = classifyProviderError(
+    new ProviderError({ status: 400, message: 'overloaded', retryable: true }),
+  )
+
+  expect(classified.retryable).toBe(true)
+  expect(classified.status).toBe(400)
+})
+
+test('a ProviderError defaults its type from retryability', () => {
+  expect(new ProviderError({ status: 503, message: 'x', retryable: true }).type)
+    .toBe('api_error')
+  expect(new ProviderError({ status: 400, message: 'x', retryable: false }).type)
+    .toBe('invalid_request_error')
 })
