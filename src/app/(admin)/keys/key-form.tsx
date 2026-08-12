@@ -43,6 +43,10 @@ export function CreateKeyForm({ users }: { users: Array<{ id: string; name: stri
           <Label htmlFor="budgetMonthlyUsd">Monthly budget (USD)</Label>
           <Input id="budgetMonthlyUsd" name="budgetMonthlyUsd" type="number" step="0.01" min={0} />
         </div>
+        <div className="space-y-1">
+          <Label htmlFor="budgetTotalUsd">Total budget (USD)</Label>
+          <Input id="budgetTotalUsd" name="budgetTotalUsd" type="number" step="0.01" min={0} />
+        </div>
         <div className="sm:col-span-3">
           <Button type="submit" disabled={pending}>{pending ? 'Creating…' : 'Create key'}</Button>
         </div>
