@@ -49,7 +49,16 @@ test('omits stream_options when the provider config disables it', async () => {
     factory as never,
   )
   await collect(adapter.chatStream(request, ctx))
-  expect(create.mock.calls[0][0].stream_options).toBeUndefined()
+  expect(create.mock.calls[0][0]).not.toHaveProperty('stream_options')
+})
+
+test("a caller's own stream_options overrides the include_usage default", async () => {
+  const { create, factory } = streamingClient()
+  const adapter = createOpenAIAdapter(runtime, factory as never)
+  await collect(
+    adapter.chatStream({ ...request, stream_options: { include_usage: false } }, ctx),
+  )
+  expect(create.mock.calls[0][0].stream_options).toEqual({ include_usage: false })
 })
 
 test('emits every upstream chunk in order', async () => {
@@ -57,6 +66,14 @@ test('emits every upstream chunk in order', async () => {
   const adapter = createOpenAIAdapter(runtime, factory as never)
   const chunks = await collect(adapter.chatStream(request, ctx))
   expect(chunks).toHaveLength(fixture.length)
+
+  const finishReasons = chunks.map((c) => c.choices[0]?.finish_reason ?? null)
+  const expectedFinishReasons = (
+    fixture as { choices: { finish_reason: string | null }[] }[]
+  ).map((c) => c.choices[0]?.finish_reason ?? null)
+  expect(finishReasons).toEqual(expectedFinishReasons)
+  expect(chunks[0].choices[0]?.delta.role).toBe('assistant')
+  expect(chunks.at(-1)?.usage).toBeDefined()
 })
 
 test('tool call argument fragments reassemble into valid JSON', async () => {
