@@ -1,9 +1,8 @@
 'use client'
 
-import { useActionState } from 'react'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { FormDialog } from '@/components/admin/form-dialog'
 import type { AdapterType } from '@/lib/adapters/credentials'
 import type { ProviderListItem } from '@/lib/admin/providers'
 import { updateProviderAction, type ActionState } from './actions'
@@ -16,77 +15,77 @@ const CREDENTIAL_FIELDS: Record<AdapterType, string[]> = {
   bedrock: ['region', 'accessKeyId', 'secretAccessKey', 'sessionToken'],
 }
 
-export function EditProviderForm({ provider }: { provider: ProviderListItem }) {
-  const [state, action, pending] = useActionState<ActionState | undefined, FormData>(
-    updateProviderAction, undefined,
-  )
-
+export function EditProviderDialog({
+  provider, open, onOpenChange,
+}: {
+  provider: ProviderListItem
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   return (
-    <details>
-      <summary className="cursor-pointer text-sm text-muted-foreground">Edit</summary>
-      <form action={action} className="space-y-3 py-3">
-        <input type="hidden" name="id" value={provider.id} />
-        <input type="hidden" name="adapter" value={provider.adapter} />
+    <FormDialog<ActionState>
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`Edit ${provider.name}`}
+      description="Saving re-syncs this provider's models."
+      action={updateProviderAction}
+      submitLabel="Save and re-sync"
+      successMessage="Provider updated."
+    >
+      <input type="hidden" name="id" value={provider.id} />
+      <input type="hidden" name="adapter" value={provider.adapter} />
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label htmlFor={`name-${provider.id}`} className="text-xs">Name</Label>
-            <Input id={`name-${provider.id}`} name="name" defaultValue={provider.name} required />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor={`baseUrl-${provider.id}`} className="text-xs">Base URL</Label>
-            <Input
-              id={`baseUrl-${provider.id}`}
-              name="baseUrl"
-              defaultValue={provider.baseUrl ?? ''}
-            />
-          </div>
-          <RegistryNamespaceField
-            id={`ns-${provider.id}`}
-            adapter={provider.adapter}
-            defaultValue={provider.registryNamespace}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor={`name-${provider.id}`}>Name</Label>
+          <Input id={`name-${provider.id}`} name="name" defaultValue={provider.name} required />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`baseUrl-${provider.id}`}>Base URL</Label>
+          <Input
+            id={`baseUrl-${provider.id}`}
+            name="baseUrl"
+            defaultValue={provider.baseUrl ?? ''}
           />
         </div>
+        <RegistryNamespaceField
+          id={`ns-${provider.id}`}
+          adapter={provider.adapter}
+          defaultValue={provider.registryNamespace}
+        />
+      </div>
 
-        <fieldset className="space-y-3">
-          <legend className="text-xs text-muted-foreground">
-            Credentials — leave a field blank to keep its stored value.
-          </legend>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {CREDENTIAL_FIELDS[provider.adapter].map((field) => (
-              <div key={field} className="space-y-1">
-                <Label htmlFor={`${field}-${provider.id}`} className="text-xs">{field}</Label>
-                <Input
-                  id={`${field}-${provider.id}`}
-                  name={field}
-                  type={field.toLowerCase().includes('key') || field === 'sessionToken'
-                    ? 'password'
-                    : 'text'}
-                  autoComplete="off"
-                  placeholder={provider.maskedCredentials[field] ?? ''}
-                />
-              </div>
-            ))}
-          </div>
-          {provider.adapter === 'bedrock' ? (
-            <label className="flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                name="useInstanceRole"
-                defaultChecked={provider.maskedCredentials.useInstanceRole === 'true'}
+      <fieldset className="space-y-3">
+        <legend className="text-xs text-muted-foreground">
+          Credentials — leave a field blank to keep its stored value.
+        </legend>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {CREDENTIAL_FIELDS[provider.adapter].map((field) => (
+            <div key={field} className="space-y-2">
+              <Label htmlFor={`${field}-${provider.id}`}>{field}</Label>
+              <Input
+                id={`${field}-${provider.id}`}
+                name={field}
+                type={field.toLowerCase().includes('key') || field === 'sessionToken'
+                  ? 'password'
+                  : 'text'}
+                autoComplete="off"
+                placeholder={provider.maskedCredentials[field] ?? ''}
               />
-              Use the instance IAM role instead of access keys
-            </label>
-          ) : null}
-        </fieldset>
-
-        {state?.error ? <p role="alert" className="text-sm text-destructive">{state.error}</p> : null}
-        {state?.warning ? <p role="alert" className="text-sm text-amber-600">{state.warning}</p> : null}
-        {state?.success ? <p className="text-sm text-muted-foreground">{state.success}</p> : null}
-        <Button type="submit" size="sm" disabled={pending}>
-          {pending ? 'Saving…' : 'Save and re-sync'}
-        </Button>
-      </form>
-    </details>
+            </div>
+          ))}
+        </div>
+        {provider.adapter === 'bedrock' ? (
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              name="useInstanceRole"
+              defaultChecked={provider.maskedCredentials.useInstanceRole === 'true'}
+            />
+            Use the instance IAM role instead of access keys
+          </label>
+        ) : null}
+      </fieldset>
+    </FormDialog>
   )
 }

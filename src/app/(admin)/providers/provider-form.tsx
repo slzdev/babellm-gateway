@@ -1,26 +1,29 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { FormDialog } from '@/components/admin/form-dialog'
 import { createProviderAction, type ActionState } from './actions'
+import { CredentialField } from './provider-fields'
 import { RegistryNamespaceField } from './registry-namespace-field'
 import type { AdapterType } from '@/lib/adapters/credentials'
 
 const ADAPTERS: AdapterType[] = ['openai', 'openai_compatible', 'gemini', 'bedrock']
 
-export function ProviderForm() {
+export function CreateProviderDialog() {
   const [adapter, setAdapter] = useState<AdapterType>('openai')
-  const [state, action, pending] = useActionState<ActionState | undefined, FormData>(
-    createProviderAction,
-    undefined,
-  )
 
   return (
-    <form action={action} className="space-y-4 rounded-lg border p-4">
-      <h2 className="font-medium">Add a provider</h2>
-
+    <FormDialog<ActionState>
+      trigger={<Button>Add provider</Button>}
+      title="Add a provider"
+      description="Saving runs an immediate model sync."
+      action={createProviderAction}
+      submitLabel="Add provider"
+      successMessage="Provider created."
+    >
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="name">Name</Label>
@@ -47,43 +50,21 @@ export function ProviderForm() {
 
       {adapter === 'bedrock' ? (
         <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="region">Region</Label>
-            <Input id="region" name="region" required placeholder="us-east-1" />
-          </div>
+          <CredentialField id="region" name="region" label="Region" required placeholder="us-east-1" />
           <label className="flex items-end gap-2 text-sm">
             <input type="checkbox" name="useInstanceRole" /> Use the instance IAM role
           </label>
-          <div className="space-y-2">
-            <Label htmlFor="accessKeyId">Access key id</Label>
-            <Input id="accessKeyId" name="accessKeyId" />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="secretAccessKey">Secret access key</Label>
-            <Input id="secretAccessKey" name="secretAccessKey" type="password" />
-          </div>
+          <CredentialField id="accessKeyId" name="accessKeyId" label="Access key id" />
+          <CredentialField id="secretAccessKey" name="secretAccessKey" label="Secret access key" type="password" />
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="apiKey">API key</Label>
-            <Input id="apiKey" name="apiKey" type="password" required />
-          </div>
+          <CredentialField id="apiKey" name="apiKey" label="API key" type="password" required />
           {adapter === 'openai_compatible' ? (
-            <div className="space-y-2">
-              <Label htmlFor="baseUrl">Base URL</Label>
-              <Input id="baseUrl" name="baseUrl" required placeholder="https://api.x.ai/v1" />
-            </div>
+            <CredentialField id="baseUrl" name="baseUrl" label="Base URL" required placeholder="https://api.x.ai/v1" />
           ) : null}
         </div>
       )}
-
-      {state?.error ? <p role="alert" className="text-sm text-destructive">{state.error}</p> : null}
-      {state?.success ? <p className="text-sm text-muted-foreground">{state.success}</p> : null}
-
-      <Button type="submit" disabled={pending}>
-        {pending ? 'Saving…' : 'Add provider'}
-      </Button>
-    </form>
+    </FormDialog>
   )
 }

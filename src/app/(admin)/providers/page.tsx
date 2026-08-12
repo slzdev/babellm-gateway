@@ -1,14 +1,14 @@
 import { Badge } from '@/components/ui/badge'
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table'
+import { PageHeader } from '@/components/admin/page-header'
 import { listProviders, type ProviderListItem } from '@/lib/admin/providers'
 import { requireAdmin } from '@/lib/admin/session'
 import { listRegistryNamespaces } from '@/lib/catalog/namespaces'
-import { DeleteProviderButton } from './delete-provider-button'
-import { EditProviderForm } from './edit-provider-form'
-import { ProviderForm } from './provider-form'
+import { CreateProviderDialog } from './provider-form'
+import { ProviderRowActions } from './provider-row-actions'
 import { RegistryNamespaceDatalist } from './registry-namespace-field'
-import { SyncProviderButton } from './sync-provider-button'
-import { TestProviderButton } from './test-provider-button'
-import { ToggleProviderButton } from './toggle-provider-button'
 
 export const dynamic = 'force-dynamic'
 
@@ -61,67 +61,61 @@ export default async function ProvidersPage() {
   ])
 
   return (
-    <div className="space-y-8">
-      <h1 className="text-2xl font-semibold">Providers</h1>
+    <div className="space-y-6">
+      <PageHeader title="Providers" action={<CreateProviderDialog />} />
 
-      <table className="w-full text-sm">
-        <thead className="text-left text-muted-foreground">
-          <tr>
-            <th className="py-2">Name</th>
-            <th>Adapter</th>
-            <th>Credentials</th>
-            <th>Targets</th>
-            <th>Models</th>
-            <th>Status</th>
-            <th>Test connection</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead>Adapter</TableHead>
+            <TableHead>Credentials</TableHead>
+            <TableHead className="text-right">Targets</TableHead>
+            <TableHead>Models</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead className="w-0" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {providers.map((provider) => (
-            <tr key={provider.id} className="border-t align-top">
-              <td className="py-2 font-medium">
-                {provider.name}
-                <EditProviderForm provider={provider} />
-              </td>
-              <td>{provider.adapter}</td>
-              <td className="font-mono text-xs">
+            <TableRow key={provider.id} className="align-top">
+              <TableCell className="font-medium">{provider.name}</TableCell>
+              <TableCell className="text-muted-foreground">{provider.adapter}</TableCell>
+              <TableCell className="font-mono text-xs text-muted-foreground">
                 {Object.entries(provider.maskedCredentials)
                   .map(([key, value]) => `${key}=${value}`)
                   .join(' ')}
-              </td>
-              <td>{provider.targetCount}</td>
-              <td>
+              </TableCell>
+              <TableCell className="text-right tabular-nums">{provider.targetCount}</TableCell>
+              <TableCell className="whitespace-normal">
                 <a href={`/catalog?provider=${provider.id}`} className="underline">
                   {provider.catalogModelCount}
                 </a>
                 <div className="text-xs text-muted-foreground">
                   <SyncStatus provider={provider} />
                 </div>
-              </td>
-              <td>
+              </TableCell>
+              <TableCell>
                 <Badge variant={provider.enabled ? 'default' : 'secondary'}>
                   {provider.enabled ? 'enabled' : 'disabled'}
                 </Badge>
-              </td>
-              <td>
-                <TestProviderButton providerId={provider.id} />
-              </td>
-              <td className="text-right whitespace-nowrap">
-                <SyncProviderButton id={provider.id} />
-                <ToggleProviderButton id={provider.id} enabled={provider.enabled} />
-                <DeleteProviderButton id={provider.id} />
-              </td>
-            </tr>
+              </TableCell>
+              <TableCell className="text-right">
+                <ProviderRowActions provider={provider} />
+              </TableCell>
+            </TableRow>
           ))}
           {providers.length === 0 ? (
-            <tr><td colSpan={8} className="py-6 text-muted-foreground">No providers yet.</td></tr>
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                No providers yet.
+              </TableCell>
+            </TableRow>
           ) : null}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
 
       <RegistryNamespaceDatalist namespaces={namespaces} />
-      <ProviderForm />
     </div>
   )
 }
