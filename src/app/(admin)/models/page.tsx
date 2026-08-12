@@ -6,6 +6,7 @@ import { requireAdmin } from '@/lib/admin/session'
 import { deleteModelAction, removeTargetAction } from './actions'
 import { AddTargetForm, CreateModelForm } from './model-form'
 import { PolicySelect } from './policy-select'
+import { TargetEnabledToggle } from './target-enabled-toggle'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,7 +32,10 @@ export default async function ModelsPage() {
 
           <table className="w-full text-sm">
             <thead className="text-left text-muted-foreground">
-              <tr><th className="py-1">Provider</th><th>Upstream model</th><th>Priority</th><th>Weight</th><th /></tr>
+              <tr>
+                <th className="py-1">Provider</th><th>Upstream model</th><th>Priority</th>
+                <th>Weight</th><th>Enabled</th><th /><th />
+              </tr>
             </thead>
             <tbody>
               {model.targets.map((target) => (
@@ -40,6 +44,14 @@ export default async function ModelsPage() {
                   <td className="font-mono text-xs">{target.upstreamModel}</td>
                   <td>{target.priority}</td>
                   <td>{target.weight}</td>
+                  <td>
+                    <Badge variant={target.enabled ? 'default' : 'secondary'}>
+                      {target.enabled ? 'enabled' : 'disabled'}
+                    </Badge>
+                  </td>
+                  <td className="text-right">
+                    <TargetEnabledToggle id={target.id} enabled={target.enabled} />
+                  </td>
                   <td className="text-right">
                     <form action={removeTargetAction}>
                       <input type="hidden" name="id" value={target.id} />
@@ -49,7 +61,7 @@ export default async function ModelsPage() {
                 </tr>
               ))}
               {model.targets.length === 0 ? (
-                <tr><td colSpan={5} className="py-3 text-muted-foreground">No targets — requests to this model will fail with 503.</td></tr>
+                <tr><td colSpan={7} className="py-3 text-muted-foreground">No targets — requests to this model will fail with 503.</td></tr>
               ) : null}
             </tbody>
           </table>

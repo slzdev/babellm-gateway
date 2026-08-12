@@ -120,11 +120,16 @@ export async function addRouteTarget(input: RouteTargetInput): Promise<RouteTarg
     throw new Error('Target weight must be a positive integer.')
   }
 
+  const priority = input.priority ?? 0
+  if (!Number.isInteger(priority)) {
+    throw new Error('Target priority must be an integer.')
+  }
+
   const [row] = await db.insert(routeTargets).values({
     virtualModelId: input.virtualModelId,
     providerId: input.providerId,
     upstreamModel,
-    priority: input.priority ?? 0,
+    priority,
     weight,
     enabled: input.enabled ?? true,
   }).returning()
@@ -133,4 +138,10 @@ export async function addRouteTarget(input: RouteTargetInput): Promise<RouteTarg
 
 export async function removeRouteTarget(id: string): Promise<void> {
   await db.delete(routeTargets).where(eq(routeTargets.id, id))
+}
+
+export async function setRouteTargetEnabled(id: string, enabled: boolean): Promise<void> {
+  const [row] = await db.update(routeTargets).set({ enabled })
+    .where(eq(routeTargets.id, id)).returning()
+  if (!row) throw new Error('Route target not found.')
 }

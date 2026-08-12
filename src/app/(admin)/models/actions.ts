@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { requireAdmin } from '@/lib/admin/session'
 import {
   addRouteTarget, createVirtualModel, deleteVirtualModel,
-  removeRouteTarget, updateVirtualModel, type RoutingPolicy,
+  removeRouteTarget, setRouteTargetEnabled, updateVirtualModel, type RoutingPolicy,
 } from '@/lib/admin/models'
 
 export interface ActionState {
@@ -53,6 +53,12 @@ export async function addTargetAction(
 export async function setPolicyAction(id: string, policy: RoutingPolicy): Promise<void> {
   await requireAdmin()
   await updateVirtualModel(id, { policy })
+  revalidatePath('/models')
+}
+
+export async function toggleTargetAction(id: string, enabled: boolean): Promise<void> {
+  await requireAdmin()
+  await setRouteTargetEnabled(id, enabled)
   revalidatePath('/models')
 }
 

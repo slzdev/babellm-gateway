@@ -4,7 +4,7 @@ import { routeTargets, virtualModels } from '@/lib/db/schema'
 import { createProvider } from '@/lib/admin/providers'
 import {
   addRouteTarget, createVirtualModel, deleteVirtualModel,
-  listVirtualModels, removeRouteTarget, updateVirtualModel,
+  listVirtualModels, removeRouteTarget, setRouteTargetEnabled, updateVirtualModel,
 } from '@/lib/admin/models'
 import { resetDb } from '../../helpers/db'
 
@@ -94,4 +94,28 @@ test('deleting a virtual model removes its targets', async () => {
   await deleteVirtualModel(model.id)
   expect(await db.select().from(routeTargets)).toHaveLength(0)
   expect(await db.select().from(virtualModels)).toHaveLength(0)
+})
+
+test('a route target can be disabled and re-enabled', async () => {
+  const p = await provider()
+  const model = await createVirtualModel({ name: 'house-model' })
+  const target = await addRouteTarget({
+    virtualModelId: model.id, providerId: p.id, upstreamModel: 'x',
+  })
+
+  await setRouteTargetEnabled(target.id, false)
+  expect((await listVirtualModels())[0].targets[0].enabled).toBe(false)
+
+  await setRouteTargetEnabled(target.id, true)
+  expect((await listVirtualModels())[0].targets[0].enabled).toBe(true)
+})
+
+test('rejects a target with a non-integer priority', async () => {
+  const p = await provider()
+  const model = await createVirtualModel({ name: 'house-model' })
+  await expect(
+    addRouteTarget({
+      virtualModelId: model.id, providerId: p.id, upstreamModel: 'x', priority: 1.5,
+    }),
+  ).rejects.toThrow(/priority/i)
 })
