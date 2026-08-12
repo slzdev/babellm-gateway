@@ -42,6 +42,8 @@ test('rewriting does not mutate the upstream object', () => {
     id: 'chatcmpl-upstream', object: 'chat.completion.chunk', created: 7, model: 'gpt-4o-mini',
     choices: [],
   }
+  const snapshot = structuredClone(chunk)
   rewriteChunk(chunk as never, opts)
   expect(chunk.id).toBe('chatcmpl-upstream')
+  expect(chunk).toEqual(snapshot)
 })

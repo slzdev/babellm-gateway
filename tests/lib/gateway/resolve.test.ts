@@ -34,6 +34,28 @@ test('returns candidates ordered by priority', async () => {
   expect(candidates[0].provider.name).toBe('fast-provider')
 })
 
+test('orders equal-priority targets deterministically', async () => {
+  const { fast, slow, model } = await seed()
+
+  // A single multi-row insert: both rows share one transaction timestamp,
+  // and both take the default priority — so only the id tiebreaker can order them.
+  const inserted = await db.insert(routeTargets).values([
+    { virtualModelId: model.id, providerId: fast.id, upstreamModel: 'a-1' },
+    { virtualModelId: model.id, providerId: slow.id, upstreamModel: 'b-1' },
+  ]).returning()
+
+  const first = await resolveVirtualModel('house-model')
+  const second = await resolveVirtualModel('house-model')
+
+  expect(first.candidates.map((c) => c.targetId)).toEqual(
+    second.candidates.map((c) => c.targetId),
+  )
+  expect(first.candidates).toHaveLength(2)
+
+  const expectedOrder = [...inserted].sort((a, b) => (a.id < b.id ? -1 : 1)).map((t) => t.id)
+  expect(first.candidates.map((c) => c.targetId)).toEqual(expectedOrder)
+})
+
 test('excludes disabled targets and targets on disabled providers', async () => {
   const { fast, slow, model } = await seed()
   await db.update(providers).set({ enabled: false }).where(eq(providers.id, slow.id))

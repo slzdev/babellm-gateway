@@ -46,7 +46,7 @@ export async function resolveVirtualModel(name: string): Promise<ResolvedModel> 
         eq(providers.enabled, true),
       ),
     )
-    .orderBy(asc(routeTargets.priority), asc(routeTargets.createdAt))
+    .orderBy(asc(routeTargets.priority), asc(routeTargets.createdAt), asc(routeTargets.id))
 
   if (rows.length === 0) {
     throw new GatewayError({
