@@ -21,3 +21,23 @@ export function readRegistryNamespace(config: string): string | null {
   const parsed = parseProviderConfig(config)
   return typeof parsed.registryNamespace === 'string' ? parsed.registryNamespace : null
 }
+
+/**
+ * Validates a namespace typed into a provider form. A models.dev provider slug
+ * is a single path segment — in the key `anyapi/xai/grok-4.3` the slug is
+ * `anyapi` and the rest is the model id — so a value carrying a slash or a
+ * space can never match. `xai/` would quietly build `xai//grok-4.3` and enrich
+ * nothing, which is exactly the silent failure this field exists to prevent.
+ */
+export function parseRegistryNamespace(raw: string): string | null {
+  const value = raw.trim()
+  if (!value) return null
+
+  if (/[\s/]/.test(value)) {
+    throw new Error(
+      `"${value}" is not a valid registry namespace: it must be a single models.dev provider slug, with no slashes or spaces.`,
+    )
+  }
+
+  return value
+}
