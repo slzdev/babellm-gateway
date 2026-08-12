@@ -20,6 +20,7 @@
 - **Verification before any completion claim:** `pnpm test`, `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm build` must all pass before the final task is called done. Individual tasks run at minimum `pnpm test`.
 - **Commit after every task**, with the test and implementation files in the same commit.
 - **The catalog is advisory.** No task may add a foreign key from `route_targets` to `catalog_models`, and no task may make the gateway request path read the catalog.
+- **Layering (carried from the Phase 1 plan):** the gateway never imports from the dashboard. The reverse is permitted — the dashboard may import gateway primitives. No dashboard code (React, session handling, Server Actions) may be reachable from the streaming path. `src/lib/settings.ts` sits outside `lib/admin` precisely so `lib/catalog` can read it without depending on the dashboard's data layer.
 - **models.dev facts established by inspecting the live document** (2026-08-12): 183 provider namespaces, 6280 models, 3.6 MB raw / 1.58 MB projected. Shape is `{ [slug]: { id, name, models: { [modelId]: { id, family, temperature, tool_call, modalities: {input[], output[]}, limit: {context, output}, cost: {input, output, cache_read} } } } }`. There is **no** chat/embedding marker field.
 
 ## File Structure
@@ -35,7 +36,7 @@
 | `src/lib/catalog/seed.ts` | Loads the vendored snapshot through the registry projection. |
 | `src/lib/catalog/seed/models.json` | Vendored, generated. Do not hand-edit. |
 | `src/lib/catalog/sync.ts` | Sync orchestration, advisory locking, bookkeeping. |
-| `src/lib/admin/settings.ts` | Typed read/write over the `settings` key-value table. |
+| `src/lib/settings.ts` | Typed read/write over the `settings` key-value table. |
 | `src/lib/admin/catalog.ts` | Catalog queries, overrides, manual rows, for the UI. |
 | `scripts/refresh-seed.mjs` | Regenerates the vendored snapshot. |
 | `src/app/(admin)/catalog/*` | Catalog page, actions, client components. |
@@ -772,15 +773,15 @@ git commit -m "feat(catalog): per-adapter canonical key candidates"
 ### Task 4: Settings, models.dev projection, and the cached registry client
 
 **Files:**
-- Create: `src/lib/admin/settings.ts`
+- Create: `src/lib/settings.ts`
 - Create: `src/lib/catalog/registry.ts`
 - Create: `tests/fixtures/models-dev.json`
-- Test: `tests/lib/admin/settings.test.ts`
+- Test: `tests/lib/settings.test.ts`
 - Test: `tests/lib/catalog/registry.test.ts`
 
 **Interfaces:**
 - Consumes: `settings`, `registryCache` from `@/lib/db/schema` (Task 1); `CatalogFields`, `ModelKind`, `Modalities` from `@/lib/catalog/types` (Task 2).
-- Produces: `CatalogSettings`, `getCatalogSettings()`, `setCatalogSettings(patch)`, `DEFAULT_REGISTRY_URL` from `@/lib/admin/settings`; `RegistryIndex`, `RegistryStatus`, `RegistryLoad`, `projectModelsDev(doc)`, `kindFromModelsDev(model)`, `loadRegistry(opts)`, `REGISTRY_MAX_AGE_MS` from `@/lib/catalog/registry`.
+- Produces: `CatalogSettings`, `getCatalogSettings()`, `setCatalogSettings(patch)`, `DEFAULT_REGISTRY_URL` from `@/lib/settings`; `RegistryIndex`, `RegistryStatus`, `RegistryLoad`, `projectModelsDev(doc)`, `kindFromModelsDev(model)`, `loadRegistry(opts)`, `REGISTRY_MAX_AGE_MS` from `@/lib/catalog/registry`.
 
 - [ ] **Step 1: Write the fixture**
 
@@ -847,14 +848,14 @@ Create `tests/fixtures/models-dev.json` — a trimmed excerpt of the real docume
 
 - [ ] **Step 2: Write the failing settings test**
 
-Create `tests/lib/admin/settings.test.ts`:
+Create `tests/lib/settings.test.ts`:
 
 ```ts
 import { beforeEach, expect, test } from 'vitest'
 import {
   DEFAULT_REGISTRY_URL, getCatalogSettings, setCatalogSettings,
-} from '@/lib/admin/settings'
-import { resetDb } from '../../helpers/db'
+} from '@/lib/settings'
+import { resetDb } from '../helpers/db'
 
 beforeEach(resetDb)
 
@@ -891,12 +892,12 @@ test('a malformed or empty registry URL is refused', async () => {
 
 - [ ] **Step 3: Run it to verify it fails**
 
-Run: `pnpm test tests/lib/admin/settings.test.ts`
-Expected: FAIL — cannot resolve `@/lib/admin/settings`.
+Run: `pnpm test tests/lib/settings.test.ts`
+Expected: FAIL — cannot resolve `@/lib/settings`.
 
 - [ ] **Step 4: Write the settings module**
 
-Create `src/lib/admin/settings.ts`:
+Create `src/lib/settings.ts`:
 
 ```ts
 import 'server-only'
@@ -960,7 +961,7 @@ export async function setCatalogSettings(
 
 - [ ] **Step 5: Run the settings test to verify it passes**
 
-Run: `pnpm test tests/lib/admin/settings.test.ts`
+Run: `pnpm test tests/lib/settings.test.ts`
 Expected: PASS, 5 tests.
 
 - [ ] **Step 6: Write the failing registry test**
@@ -971,7 +972,7 @@ Create `tests/lib/catalog/registry.test.ts`:
 import { beforeEach, expect, test, vi } from 'vitest'
 import { db } from '@/lib/db'
 import { registryCache } from '@/lib/db/schema'
-import { setCatalogSettings } from '@/lib/admin/settings'
+import { setCatalogSettings } from '@/lib/settings'
 import {
   REGISTRY_MAX_AGE_MS, kindFromModelsDev, loadRegistry, projectModelsDev,
 } from '@/lib/catalog/registry'
@@ -1158,7 +1159,7 @@ Create `src/lib/catalog/registry.ts`:
 ```ts
 import 'server-only'
 import { eq } from 'drizzle-orm'
-import { getCatalogSettings } from '@/lib/admin/settings'
+import { getCatalogSettings } from '@/lib/settings'
 import { db } from '@/lib/db'
 import { registryCache } from '@/lib/db/schema'
 import type { CatalogFields, Modalities, ModelKind } from './types'
@@ -1331,7 +1332,7 @@ Expected: PASS, 16 tests.
 - [ ] **Step 10: Commit**
 
 ```bash
-git add src/lib/admin/settings.ts src/lib/catalog/registry.ts tests/lib/admin/settings.test.ts tests/lib/catalog/registry.test.ts tests/fixtures/models-dev.json
+git add src/lib/settings.ts src/lib/catalog/registry.ts tests/lib/settings.test.ts tests/lib/catalog/registry.test.ts tests/fixtures/models-dev.json
 git commit -m "feat(catalog): models.dev projection with a cached, opt-in registry client"
 ```
 
@@ -2930,7 +2931,7 @@ import { requireAdmin } from '@/lib/admin/session'
 import {
   addManualModel, clearOverrideField, deleteCatalogModel, setOverride,
 } from '@/lib/admin/catalog'
-import { setCatalogSettings } from '@/lib/admin/settings'
+import { setCatalogSettings } from '@/lib/settings'
 import { loadRegistry } from '@/lib/catalog/registry'
 import { syncAllProviders } from '@/lib/catalog/sync'
 import type { CatalogFields } from '@/lib/catalog/types'
@@ -3252,7 +3253,7 @@ import { Input } from '@/components/ui/input'
 import { listCatalog, type CatalogListItem } from '@/lib/admin/catalog'
 import { listProviders } from '@/lib/admin/providers'
 import { requireAdmin } from '@/lib/admin/session'
-import { getCatalogSettings } from '@/lib/admin/settings'
+import { getCatalogSettings } from '@/lib/settings'
 import { loadRegistry } from '@/lib/catalog/registry'
 import { modelKinds, type ModelKind } from '@/lib/catalog/types'
 import { deleteCatalogModelAction } from './actions'
@@ -4302,7 +4303,13 @@ git commit -m "feat(catalog): model picker, editable route targets and unknown-m
 
 The shortcut is a second entry point into `addRouteTarget`, never a parallel implementation — every validation and default stays in one place.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the contract test**
+
+This one is not TDD — the behaviour it covers already exists. It is a
+**contract test**: it pins the defaults the shortcut inherits from
+`addRouteTarget`, so a later change to those defaults breaks here rather than
+silently changing what the shortcut creates. Write it, run it, and expect it to
+pass on the first run. Do not manufacture a failing state for it.
 
 Append to `tests/lib/admin/catalog.test.ts`:
 
@@ -4331,15 +4338,12 @@ test('routing from a catalog row reuses addRouteTarget', async () => {
 
 Add `addRouteTarget` to that file's imports from `@/lib/admin/models`.
 
-- [ ] **Step 2: Run it to verify it fails**
+- [ ] **Step 2: Run it to verify it passes**
 
 Run: `pnpm test tests/lib/admin/catalog.test.ts`
-Expected: FAIL — `addRouteTarget` is not imported yet in that file.
-
-- [ ] **Step 3: Run it again after adding the import to verify it passes**
-
-Run: `pnpm test tests/lib/admin/catalog.test.ts`
-Expected: PASS. This test pins the contract the shortcut depends on: the defaults come from `addRouteTarget`, not from the form.
+Expected: PASS on the first run, including the new test. A failure here means
+`addRouteTarget`'s defaults are not what the shortcut assumes — investigate
+rather than adjusting the assertion to match.
 
 - [ ] **Step 4: Add the shortcut action**
 
