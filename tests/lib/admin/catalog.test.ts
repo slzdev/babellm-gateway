@@ -1,7 +1,6 @@
 import { beforeEach, expect, test, vi } from 'vitest'
-import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { catalogModels, providers, routeTargets, virtualModels } from '@/lib/db/schema'
+import { providers, routeTargets, virtualModels } from '@/lib/db/schema'
 import { encryptJson } from '@/lib/crypto'
 import type { DiscoveredModel, ProviderAdapter } from '@/lib/adapters/types'
 import { syncProvider } from '@/lib/catalog/sync'
