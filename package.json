@@ -13,7 +13,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "db:deploy": "node scripts/migrate.mjs"
+    "db:deploy": "node scripts/migrate.mjs",
+    "seed:refresh": "node scripts/refresh-seed.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
