@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { useActionState, useLayoutEffect, useState } from 'react'
 import { CheckIcon, CopyIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -14,12 +14,29 @@ import { createKeyAction, type CreateKeyState } from './actions'
 
 export function CreateKeyDialog({ users }: { users: Array<{ id: string; name: string }> }) {
   const [open, setOpen] = useState(false)
+  // Set once the plaintext key is on screen. The key is already persisted
+  // server-side and never shown again, so while this is true, Escape, the
+  // backdrop, and the X must not be able to close the dialog — only the
+  // reveal step's own Done button may.
+  const [revealed, setRevealed] = useState(false)
+
+  function handleOpenChange(next: boolean) {
+    if (!next && revealed) return
+    setOpen(next)
+  }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger render={<Button />}>Create key</DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
-        <CreateKeyBody users={users} onDone={() => setOpen(false)} />
+      <DialogContent className="sm:max-w-lg" showCloseButton={!revealed}>
+        <CreateKeyBody
+          users={users}
+          onRevealed={() => setRevealed(true)}
+          onDone={() => {
+            setRevealed(false)
+            setOpen(false)
+          }}
+        />
       </DialogContent>
     </Dialog>
   )
@@ -27,10 +44,11 @@ export function CreateKeyDialog({ users }: { users: Array<{ id: string; name: st
 
 /** Inside the portal, so each open starts fresh — including the reveal step. */
 function CreateKeyBody({
-  users, onDone,
+  users, onDone, onRevealed,
 }: {
   users: Array<{ id: string; name: string }>
   onDone: () => void
+  onRevealed: () => void
 }) {
   const [state, action, pending] = useActionState<CreateKeyState | undefined, FormData>(
     createKeyAction, undefined,
@@ -38,6 +56,13 @@ function CreateKeyBody({
 
   // The plaintext key is returned once and never again, so this dialog never
   // auto-closes on success — it swaps to a reveal the admin dismisses by hand.
+  // useLayoutEffect (not useEffect) so the parent's close-gate is armed
+  // before the browser paints the reveal step — no frame where the X or a
+  // stray Escape could still close the dialog.
+  useLayoutEffect(() => {
+    if (state?.plaintextKey) onRevealed()
+  }, [state?.plaintextKey, onRevealed])
+
   if (state?.plaintextKey) {
     return <KeyReveal plaintextKey={state.plaintextKey} onDone={onDone} />
   }
