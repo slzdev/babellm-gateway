@@ -1196,8 +1196,15 @@ export function ProviderRowActions({ provider }: { provider: ProviderListItem })
 
   function toggle() {
     startTransition(async () => {
-      await toggleProviderAction(provider.id, !provider.enabled)
-      toast.success(provider.enabled ? 'Provider disabled.' : 'Provider enabled.')
+      // The deleted toggle-provider-button.tsx caught here. Folding the button
+      // into a menu item must not quietly drop that: without the catch, a
+      // failed toggle is an unhandled rejection with no user feedback at all.
+      try {
+        await toggleProviderAction(provider.id, !provider.enabled)
+        toast.success(provider.enabled ? 'Provider disabled.' : 'Provider enabled.')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Could not update the provider.')
+      }
     })
   }
 
@@ -1707,7 +1714,7 @@ In `edit-target-form.tsx`, take `open`/`onOpenChange` props, drop the `<details>
 
 - [ ] **Step 4: Create the target row actions**
 
-Create `src/app/(admin)/models/target-row-actions.tsx` following the exact pattern of `UserRowActions` from Task 2 Step 2: a `⋯` `DropdownMenuTrigger`, items **Edit** (sets `editing`), **Enable**/**Disable** (calls `toggleTargetAction(id, !enabled)` inside `useTransition`, toasts), a separator, and destructive **Remove**; then `EditTargetDialog` and a `ConfirmAction` as siblings. The confirm's `onConfirm` builds a `FormData` with `id` and awaits `removeTargetAction(formData)`; `successMessage` is `'Target removed.'`.
+Create `src/app/(admin)/models/target-row-actions.tsx` following the exact pattern of `UserRowActions` from Task 2 Step 2: a `⋯` `DropdownMenuTrigger`, items **Edit** (sets `editing`), **Enable**/**Disable** (calls `toggleTargetAction(id, !enabled)` inside `useTransition`, wrapped in try/catch that toasts the error — a bare await is an unhandled rejection with no user feedback), a separator, and destructive **Remove**; then `EditTargetDialog` and a `ConfirmAction` as siblings. The confirm's `onConfirm` builds a `FormData` with `id` and awaits `removeTargetAction(formData)`; `successMessage` is `'Target removed.'`.
 
 - [ ] **Step 5: Create the model section actions**
 
