@@ -1,4 +1,4 @@
-import { beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { chatRequest, fakeAdapterDeps, seedGateway } from '../helpers/gateway'
@@ -21,6 +21,11 @@ function streamOf(chunks: unknown[]) {
 beforeEach(async () => {
   process.env.ENCRYPTION_KEY = 'e'.repeat(64)
   await resetDb()
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 test('responds with an SSE content type and no-transform caching', async () => {

@@ -1,4 +1,4 @@
-import { beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { db } from '@/lib/db'
@@ -20,6 +20,11 @@ const upstreamCompletion = {
 beforeEach(async () => {
   process.env.ENCRYPTION_KEY = 'd'.repeat(64)
   await resetDb()
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 test('returns a completion with gateway identity', async () => {

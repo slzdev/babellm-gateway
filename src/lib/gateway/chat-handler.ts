@@ -6,8 +6,9 @@ import type { ProviderRow } from '@/lib/db/schema'
 import { chatCompletionRequestSchema } from '@/lib/schemas/chat'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
 import { GatewayError, RoutedError, errorResponse } from './errors'
-import { execute } from './execute'
+import { execute, type AttemptRecord } from './execute'
 import { newCompletionId, rewriteCompletion } from './identity'
+import { emitRequestLog, type RequestOutcome } from './request-log'
 import { resolveVirtualModel, type Candidate } from './resolve'
 import { selectOrder } from './select'
 import { sseResponse, startChatStream } from './sse'
@@ -58,10 +59,40 @@ export async function handleChatCompletions(
   deps: ChatHandlerDeps = defaultDeps,
 ): Promise<Response> {
   const requestId = newCompletionId().replace('chatcmpl-', 'req_')
+  const startedAt = Date.now()
+
+  // Tracked outside the try so the log line can still say who was calling
+  // and for what when the request never got as far as an attempt.
+  let keyName: string | null = null
+  let modelName: string | null = null
+  let stream = false
+
+  function log(
+    status: number,
+    outcome: RequestOutcome,
+    attempts: AttemptRecord[],
+    ttftMs?: number,
+  ) {
+    emitRequestLog({
+      requestId,
+      key: keyName,
+      model: modelName,
+      stream,
+      status,
+      outcome,
+      latencyMs: Date.now() - startedAt,
+      ...(ttftMs === undefined ? {} : { ttftMs }),
+      attempts,
+    })
+  }
 
   try {
     const apiKey = await resolveApiKey(extractBearerToken(request))
+    keyName = apiKey.name
     const body = await parseBody(request)
+    modelName = body.model
+    stream = body.stream === true
+
     const { model, candidates } = await resolveVirtualModel(body.model)
     const chain = selectOrder(candidates, model)
 
@@ -71,24 +102,37 @@ export async function handleChatCompletions(
 
     const identity = { id: newCompletionId(), model: body.model }
 
-    if (body.stream) {
+    if (stream) {
       // startChatStream pulls the first chunk, so a failure inside `run` is
       // still a failure before the response is committed — which is what
       // makes failover safe for streams.
       const result = await execute(chain, requestId, request.signal, deps, (adapter, ctx) =>
         startChatStream(adapter.chatStream(body, ctx)),
       )
-      return sseResponse(result.value, identity, attemptHeaders(result.candidate, requestId))
+      // execute resolves only once the first chunk is in hand, so this is
+      // time-to-first-token without any plumbing into the stream itself.
+      const ttftMs = Date.now() - startedAt
+
+      return sseResponse(
+        result.value,
+        identity,
+        attemptHeaders(result.candidate, requestId),
+        (outcome) => log(200, outcome, result.attempts, ttftMs),
+      )
     }
 
     const result = await execute(chain, requestId, request.signal, deps, (adapter, ctx) =>
       adapter.chat(body, ctx),
     )
 
+    log(200, 'ok', result.attempts)
     return Response.json(rewriteCompletion(result.value, identity), {
       headers: attemptHeaders(result.candidate, requestId),
     })
   } catch (err) {
+    const status = err instanceof GatewayError ? err.status : 500
+    log(status, 'error', err instanceof RoutedError ? err.attempts : [])
+
     // Under failover the interesting provider is the last one tried, which
     // only the routed error knows.
     const headers: HeadersInit =
