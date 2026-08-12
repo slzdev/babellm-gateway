@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { providers, routeTargets, virtualModels } from '@/lib/db/schema'
+import { catalogModels, providers, routeTargets, virtualModels } from '@/lib/db/schema'
 import {
   createProvider, deleteProvider, listProviders, updateProvider,
 } from '@/lib/admin/providers'
@@ -90,4 +91,34 @@ test('deleting an unreferenced provider succeeds', async () => {
   })
   await deleteProvider(provider.id)
   expect(await db.select().from(providers)).toHaveLength(0)
+})
+
+test('listProviders reports catalog counts and sync bookkeeping', async () => {
+  const provider = await createProvider({
+    name: 'openai-prod', adapter: 'openai', credentials: { apiKey: 'sk-x' },
+    config: { registryNamespace: 'openai' },
+  })
+  await db.insert(catalogModels).values([
+    { providerId: provider.id, modelId: 'gpt-4o' },
+    { providerId: provider.id, modelId: 'gpt-4o-mini' },
+  ])
+  await db.update(providers).set({
+    lastSyncedAt: new Date('2026-08-12T09:00:00Z'),
+    lastSyncStatus: 'ok',
+    lastSyncSummary: { added: 2, updated: 0, missing: 0, total: 2 },
+  }).where(eq(providers.id, provider.id))
+
+  const [item] = await listProviders()
+  expect(item.catalogModelCount).toBe(2)
+  expect(item.registryNamespace).toBe('openai')
+  expect(item.lastSyncStatus).toBe('ok')
+  expect(item.lastSyncSummary).toEqual({ added: 2, updated: 0, missing: 0, total: 2 })
+})
+
+test('a provider with no catalog rows reports zero, not undefined', async () => {
+  await createProvider({ name: 'fresh', adapter: 'openai', credentials: { apiKey: 'sk-x' } })
+  const [item] = await listProviders()
+  expect(item.catalogModelCount).toBe(0)
+  expect(item.lastSyncedAt).toBeNull()
+  expect(item.registryNamespace).toBeNull()
 })

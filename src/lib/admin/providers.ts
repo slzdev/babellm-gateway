@@ -1,7 +1,9 @@
 import 'server-only'
-import { asc, eq } from 'drizzle-orm'
+import { asc, count, eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { providers, routeTargets, type ProviderRow } from '@/lib/db/schema'
+import {
+  catalogModels, providers, routeTargets, type ProviderRow,
+} from '@/lib/db/schema'
 import { decryptJson, encryptJson } from '@/lib/crypto'
 import { credentialSchemas, maskCredentials, type AdapterType } from '@/lib/adapters/credentials'
 import { createAdapter } from '@/lib/adapters/registry'
@@ -23,6 +25,12 @@ export interface ProviderListItem {
   enabled: boolean
   maskedCredentials: Record<string, string>
   targetCount: number
+  catalogModelCount: number
+  registryNamespace: string | null
+  lastSyncedAt: Date | null
+  lastSyncStatus: 'ok' | 'failed' | 'unsupported' | null
+  lastSyncError: string | null
+  lastSyncSummary: { added: number; updated: number; missing: number; total: number } | null
 }
 
 function validate(adapter: AdapterType, credentials: unknown, baseUrl?: string | null) {
@@ -42,7 +50,19 @@ function validate(adapter: AdapterType, credentials: unknown, baseUrl?: string |
 
 export async function listProviders(): Promise<ProviderListItem[]> {
   const rows = await db.select().from(providers).orderBy(asc(providers.name))
-  const targets = await db.select().from(routeTargets)
+
+  const targetCounts = await db
+    .select({ providerId: routeTargets.providerId, count: count() })
+    .from(routeTargets)
+    .groupBy(routeTargets.providerId)
+
+  const catalogCounts = await db
+    .select({ providerId: catalogModels.providerId, count: count() })
+    .from(catalogModels)
+    .groupBy(catalogModels.providerId)
+
+  const targetsById = new Map(targetCounts.map((r) => [r.providerId, r.count]))
+  const catalogById = new Map(catalogCounts.map((r) => [r.providerId, r.count]))
 
   return rows.map((row) => ({
     id: row.id,
@@ -53,8 +73,23 @@ export async function listProviders(): Promise<ProviderListItem[]> {
     maskedCredentials: maskCredentials(
       decryptJson<Record<string, unknown>>(row.credentials),
     ),
-    targetCount: targets.filter((t) => t.providerId === row.id).length,
+    targetCount: targetsById.get(row.id) ?? 0,
+    catalogModelCount: catalogById.get(row.id) ?? 0,
+    registryNamespace: readRegistryNamespace(row.config),
+    lastSyncedAt: row.lastSyncedAt,
+    lastSyncStatus: row.lastSyncStatus,
+    lastSyncError: row.lastSyncError,
+    lastSyncSummary: row.lastSyncSummary ?? null,
   }))
+}
+
+function readRegistryNamespace(config: string): string | null {
+  try {
+    const parsed = JSON.parse(config) as { registryNamespace?: unknown }
+    return typeof parsed.registryNamespace === 'string' ? parsed.registryNamespace : null
+  } catch {
+    return null
+  }
 }
 
 export async function createProvider(input: ProviderInput): Promise<ProviderRow> {

@@ -6,10 +6,15 @@ import {
   createProvider, deleteProvider, testProvider, updateProvider,
 } from '@/lib/admin/providers'
 import { adapterTypes, type AdapterType } from '@/lib/adapters/credentials'
+import { syncProvider, type SyncResult } from '@/lib/catalog/sync'
 
 export interface ActionState {
   error?: string
   success?: string
+  // A save can succeed while the re-sync it triggers fails (e.g. a rotated key
+  // is still bad). That is not a save failure, so it gets its own field rather
+  // than overloading `error`.
+  warning?: string
 }
 
 function credentialsFrom(formData: FormData, adapter: AdapterType) {
@@ -86,4 +91,65 @@ export async function testProviderAction(
     String(formData.get('upstreamModel') ?? ''),
   )
   return result.ok ? { success: result.message } : { error: result.message }
+}
+
+export async function syncProviderAction(id: string): Promise<SyncResult> {
+  await requireAdmin()
+  const result = await syncProvider(id)
+  revalidatePath('/providers')
+  revalidatePath('/catalog')
+  return result
+}
+
+export async function updateProviderAction(
+  _prev: ActionState | undefined,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin()
+  const id = String(formData.get('id'))
+  const rawAdapter = String(formData.get('adapter'))
+  if (!(adapterTypes as readonly string[]).includes(rawAdapter)) {
+    return { error: `Unknown adapter: ${rawAdapter}` }
+  }
+  const adapter = rawAdapter as AdapterType
+
+  const credentials = credentialsFrom(formData, adapter)
+  const namespace = String(formData.get('registryNamespace') ?? '').trim()
+
+  try {
+    await updateProvider(id, {
+      name: String(formData.get('name') ?? ''),
+      adapter,
+      baseUrl: (formData.get('baseUrl') as string) || null,
+      // An empty credential form means "keep what is stored" — the browser is
+      // never sent the current secret, so a blank field cannot mean "erase".
+      ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
+      config: namespace ? { registryNamespace: namespace } : {},
+    })
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Could not update the provider.' }
+  }
+
+  revalidatePath('/providers')
+  revalidatePath('/catalog')
+
+  // The save above has already succeeded — a re-sync failure (e.g. the rotated
+  // key is still rejected) must not roll it back or be reported as a save
+  // failure. It is surfaced as a separate warning instead.
+  try {
+    const result = await syncProvider(id)
+    if (result.status === 'failed') {
+      return {
+        success: 'Provider updated.',
+        warning: `Re-sync failed: ${result.error ?? 'unknown error'}`,
+      }
+    }
+  } catch (err) {
+    return {
+      success: 'Provider updated.',
+      warning: `Re-sync failed: ${err instanceof Error ? err.message : 'unknown error'}`,
+    }
+  }
+
+  return { success: 'Provider updated.' }
 }

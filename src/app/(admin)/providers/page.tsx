@@ -1,12 +1,25 @@
 import { Badge } from '@/components/ui/badge'
-import { listProviders } from '@/lib/admin/providers'
+import { listProviders, type ProviderListItem } from '@/lib/admin/providers'
 import { requireAdmin } from '@/lib/admin/session'
 import { DeleteProviderButton } from './delete-provider-button'
+import { EditProviderForm } from './edit-provider-form'
 import { ProviderForm } from './provider-form'
+import { SyncProviderButton } from './sync-provider-button'
 import { TestProviderButton } from './test-provider-button'
 import { ToggleProviderButton } from './toggle-provider-button'
 
 export const dynamic = 'force-dynamic'
+
+function SyncStatus({ provider }: { provider: ProviderListItem }) {
+  if (!provider.lastSyncedAt) return <>never synced</>
+
+  const when = provider.lastSyncedAt.toISOString()
+  if (provider.lastSyncStatus === 'ok' && provider.lastSyncSummary) {
+    const { added, updated, missing } = provider.lastSyncSummary
+    return <>synced {when} · +{added} new ~{updated} updated{missing > 0 ? ` !${missing} missing` : ''}</>
+  }
+  return <span className="text-destructive">{provider.lastSyncStatus}: {provider.lastSyncError}</span>
+}
 
 export default async function ProvidersPage() {
   await requireAdmin()
@@ -23,6 +36,7 @@ export default async function ProvidersPage() {
             <th>Adapter</th>
             <th>Credentials</th>
             <th>Targets</th>
+            <th>Models</th>
             <th>Status</th>
             <th>Test connection</th>
             <th />
@@ -30,8 +44,11 @@ export default async function ProvidersPage() {
         </thead>
         <tbody>
           {providers.map((provider) => (
-            <tr key={provider.id} className="border-t">
-              <td className="py-2 font-medium">{provider.name}</td>
+            <tr key={provider.id} className="border-t align-top">
+              <td className="py-2 font-medium">
+                {provider.name}
+                <EditProviderForm provider={provider} />
+              </td>
               <td>{provider.adapter}</td>
               <td className="font-mono text-xs">
                 {Object.entries(provider.maskedCredentials)
@@ -39,6 +56,14 @@ export default async function ProvidersPage() {
                   .join(' ')}
               </td>
               <td>{provider.targetCount}</td>
+              <td>
+                <a href={`/catalog?provider=${provider.id}`} className="underline">
+                  {provider.catalogModelCount}
+                </a>
+                <div className="text-xs text-muted-foreground">
+                  <SyncStatus provider={provider} />
+                </div>
+              </td>
               <td>
                 <Badge variant={provider.enabled ? 'default' : 'secondary'}>
                   {provider.enabled ? 'enabled' : 'disabled'}
@@ -48,13 +73,14 @@ export default async function ProvidersPage() {
                 <TestProviderButton providerId={provider.id} />
               </td>
               <td className="text-right whitespace-nowrap">
+                <SyncProviderButton id={provider.id} />
                 <ToggleProviderButton id={provider.id} enabled={provider.enabled} />
                 <DeleteProviderButton id={provider.id} />
               </td>
             </tr>
           ))}
           {providers.length === 0 ? (
-            <tr><td colSpan={7} className="py-6 text-muted-foreground">No providers yet.</td></tr>
+            <tr><td colSpan={8} className="py-6 text-muted-foreground">No providers yet.</td></tr>
           ) : null}
         </tbody>
       </table>
