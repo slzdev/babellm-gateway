@@ -1,16 +1,15 @@
 import 'server-only'
 import { z } from 'zod'
 import { createAdapter as defaultCreateAdapter } from '@/lib/adapters/registry'
-import type { AttemptContext, ProviderAdapter } from '@/lib/adapters/types'
+import type { ProviderAdapter } from '@/lib/adapters/types'
 import type { ProviderRow } from '@/lib/db/schema'
 import { chatCompletionRequestSchema } from '@/lib/schemas/chat'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
 import { GatewayError, classifyProviderError, errorResponse } from './errors'
+import { attemptContext } from './execute'
 import { newCompletionId, rewriteCompletion } from './identity'
 import { resolveVirtualModel, type Candidate } from './resolve'
 import { sseResponse, startChatStream } from './sse'
-
-const DEFAULT_TIMEOUT_MS = 120_000
 
 export interface ChatHandlerDeps {
   createAdapter: (provider: ProviderRow) => ProviderAdapter
@@ -43,22 +42,6 @@ async function parseBody(request: Request) {
     })
   }
   return result.data
-}
-
-export function attemptContext(
-  candidate: Candidate,
-  requestId: string,
-  clientSignal: AbortSignal,
-): AttemptContext {
-  const config = JSON.parse(candidate.provider.config) as { timeoutMs?: number }
-  return {
-    upstreamModel: candidate.upstreamModel,
-    requestId,
-    signal: AbortSignal.any([
-      clientSignal,
-      AbortSignal.timeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-    ]),
-  }
 }
 
 export function attemptHeaders(candidate: Candidate, requestId: string): HeadersInit {

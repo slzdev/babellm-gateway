@@ -120,6 +120,34 @@ export function classifyProviderError(err: unknown): ClassifiedError {
   }
 }
 
+/**
+ * A gateway error that also carries the attempt chain that produced it, so a
+ * failed request can still report which providers were tried and why. The
+ * attempt shape is structural rather than imported, to keep errors.ts free of
+ * a dependency on the routing loop.
+ */
+export interface AttemptSummary {
+  n: number
+  targetId: string
+  provider: string
+  model: string
+  status: number
+  latencyMs: number
+  error?: string
+}
+
+export class RoutedError extends GatewayError {
+  readonly attempts: AttemptSummary[]
+  readonly lastProvider: string | null
+
+  constructor(init: GatewayErrorInit & { attempts: AttemptSummary[]; lastProvider?: string | null }) {
+    super(init)
+    this.name = 'RoutedError'
+    this.attempts = init.attempts
+    this.lastProvider = init.lastProvider ?? null
+  }
+}
+
 export function errorBody(err: unknown) {
   if (err instanceof GatewayError) {
     return {

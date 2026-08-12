@@ -1,0 +1,154 @@
+import 'server-only'
+import type { AttemptContext, ProviderAdapter } from '@/lib/adapters/types'
+import type { ProviderRow } from '@/lib/db/schema'
+import {
+  RoutedError,
+  classifyProviderError,
+  type ClassifiedError,
+} from './errors'
+import type { Candidate } from './resolve'
+
+const DEFAULT_TIMEOUT_MS = 120_000
+
+export interface AttemptRecord {
+  n: number
+  targetId: string
+  provider: string
+  model: string
+  status: number
+  latencyMs: number
+  /** The classified code and message. Absent when the attempt succeeded. */
+  error?: string
+}
+
+export interface ExecuteResult<T> {
+  value: T
+  /** The target that actually served, which under failover is not the first. */
+  candidate: Candidate
+  attempts: AttemptRecord[]
+}
+
+export interface ExecuteDeps {
+  createAdapter: (provider: ProviderRow) => ProviderAdapter
+}
+
+export function attemptContext(
+  candidate: Candidate,
+  requestId: string,
+  clientSignal: AbortSignal,
+): AttemptContext {
+  const config = JSON.parse(candidate.provider.config) as { timeoutMs?: number }
+  return {
+    upstreamModel: candidate.upstreamModel,
+    requestId,
+    signal: AbortSignal.any([
+      clientSignal,
+      AbortSignal.timeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    ]),
+  }
+}
+
+function record(
+  index: number,
+  candidate: Candidate,
+  latencyMs: number,
+  classified?: ClassifiedError,
+): AttemptRecord {
+  return {
+    n: index + 1,
+    targetId: candidate.targetId,
+    provider: candidate.provider.name,
+    model: candidate.upstreamModel,
+    status: classified?.status ?? 200,
+    latencyMs,
+    ...(classified
+      ? {
+          error: classified.code
+            ? `${classified.code}: ${classified.message}`
+            : classified.message,
+        }
+      : {}),
+  }
+}
+
+function routed(
+  classified: ClassifiedError,
+  attempts: AttemptRecord[],
+  candidate: Candidate | undefined,
+): RoutedError {
+  return new RoutedError({
+    status: classified.status,
+    type: classified.type,
+    code: classified.code,
+    message: classified.message,
+    attempts,
+    lastProvider: candidate?.provider.name ?? null,
+  })
+}
+
+/**
+ * Walks the attempt chain until something succeeds.
+ *
+ * Generic over `run` so streaming and non-streaming share one loop: the
+ * streaming caller passes a `run` that pulls the first chunk, which is what
+ * makes the failover boundary and the HTTP commit boundary the same line of
+ * code rather than two that have to be kept in step.
+ */
+export async function execute<T>(
+  chain: Candidate[],
+  requestId: string,
+  clientSignal: AbortSignal,
+  deps: ExecuteDeps,
+  run: (adapter: ProviderAdapter, ctx: AttemptContext) => Promise<T>,
+): Promise<ExecuteResult<T>> {
+  const attempts: AttemptRecord[] = []
+  let last: RoutedError | undefined
+
+  for (const [index, candidate] of chain.entries()) {
+    const startedAt = Date.now()
+
+    let adapter: ProviderAdapter
+    try {
+      adapter = deps.createAdapter(candidate.provider)
+    } catch (err) {
+      // A provider the gateway cannot even construct an adapter for — an
+      // unimplemented adapter type, or missing credentials — is one target's
+      // problem, not the request's. Skip it and let a sibling serve. If the
+      // whole chain is unconstructable, `last` still surfaces the real
+      // reason (501 unsupported_operation, rather than an opaque 500).
+      const classified = classifyProviderError(err)
+      attempts.push(record(index, candidate, Date.now() - startedAt, classified))
+      last = routed(classified, attempts, candidate)
+      continue
+    }
+
+    try {
+      const value = await run(adapter, attemptContext(candidate, requestId, clientSignal))
+      attempts.push(record(index, candidate, Date.now() - startedAt))
+      return { value, candidate, attempts }
+    } catch (err) {
+      const classified = classifyProviderError(err)
+      attempts.push(record(index, candidate, Date.now() - startedAt, classified))
+      last = routed(classified, attempts, candidate)
+
+      // Failing over onto a request nobody is waiting for wastes an upstream
+      // call and, worse, can leave a second provider streaming into a closed
+      // socket.
+      if (!classified.retryable || clientSignal.aborted) throw last
+    }
+  }
+
+  // Reached only when every attempt was retryable. The client gets the last
+  // provider's actual complaint — three rate-limited providers should read as
+  // 429, not as a blanket 502 that clients handle as a gateway bug.
+  throw (
+    last ??
+    new RoutedError({
+      status: 503,
+      type: 'api_error',
+      code: 'no_targets_available',
+      message: 'No route targets were available to serve this request.',
+      attempts,
+    })
+  )
+}
