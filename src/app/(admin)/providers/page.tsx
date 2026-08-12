@@ -22,8 +22,8 @@ function RegistryMatch({ matched, total }: { matched?: number; total: number }) 
   if (matched === 0) {
     return (
       <div className="text-destructive">
-        ⚠ 0 of {total} matched models.dev — set a registry namespace to get pricing
-        and context limits
+        ⚠ 0 of {total} matched models.dev — no pricing or context limits; check this
+        provider&apos;s registry namespace
       </div>
     )
   }

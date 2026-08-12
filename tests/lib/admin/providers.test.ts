@@ -154,14 +154,14 @@ test('listProviders reports catalog counts and sync bookkeeping', async () => {
   await db.update(providers).set({
     lastSyncedAt: new Date('2026-08-12T09:00:00Z'),
     lastSyncStatus: 'ok',
-    lastSyncSummary: { added: 2, updated: 0, missing: 0, total: 2 },
+    lastSyncSummary: { added: 2, updated: 0, missing: 0, matched: 1, total: 2 },
   }).where(eq(providers.id, provider.id))
 
   const [item] = await listProviders()
   expect(item.catalogModelCount).toBe(2)
   expect(item.registryNamespace).toBe('openai')
   expect(item.lastSyncStatus).toBe('ok')
-  expect(item.lastSyncSummary).toEqual({ added: 2, updated: 0, missing: 0, total: 2 })
+  expect(item.lastSyncSummary).toEqual({ added: 2, updated: 0, missing: 0, matched: 1, total: 2 })
 })
 
 test('a provider with no catalog rows reports zero, not undefined', async () => {

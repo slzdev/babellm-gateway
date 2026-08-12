@@ -169,8 +169,9 @@ consistently.
 
 `RegistryNamespaceField` renders a `<Label>`, an `<Input list={REGISTRY_NAMESPACE_LIST_ID}
 name="registryNamespace">`, and the help text. Its placeholder is
-`REGISTRY_NAMESPACE[adapter]`, falling back to `xai` when that is `null` — so
-the placeholder always shows what leaving the field blank will do.
+`REGISTRY_NAMESPACE[adapter]` where the adapter has a default, and an
+`e.g.`-prefixed example (`e.g. xai`) where it does not — because for that
+adapter blank means no enrichment at all, not the example shown.
 `normalize.ts` has no `server-only` import, so a client component may read
 `REGISTRY_NAMESPACE` from it.
 

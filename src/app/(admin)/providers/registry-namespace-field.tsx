@@ -48,7 +48,7 @@ export function RegistryNamespaceField({ id, adapter, defaultValue }: {
         name="registryNamespace"
         list={REGISTRY_NAMESPACE_LIST_ID}
         defaultValue={defaultValue ?? ''}
-        placeholder={fallback ?? 'xai'}
+        placeholder={fallback ?? 'e.g. xai'}
       />
       <p className="text-xs text-muted-foreground">
         models.dev namespace for enriching this provider&apos;s models with pricing and
