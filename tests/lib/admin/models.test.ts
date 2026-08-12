@@ -24,9 +24,13 @@ test('creates a virtual model with failover as the default policy', async () => 
   expect(model.enabled).toBe(true)
 })
 
-test('rejects a duplicate virtual model name', async () => {
+test('rejects a duplicate virtual model name with a readable message', async () => {
   await createVirtualModel({ name: 'house-model' })
-  await expect(createVirtualModel({ name: 'house-model' })).rejects.toThrow()
+  // Provokes a real Postgres unique-constraint violation (23505) on
+  // virtual_models.name, rather than a pre-check — this pins that the raw
+  // pg error never reaches the caller.
+  await expect(createVirtualModel({ name: 'house-model' }))
+    .rejects.toThrow(/a virtual model named "house-model" already exists/i)
 })
 
 test('rejects a virtual model name that is empty or whitespace', async () => {

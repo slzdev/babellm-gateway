@@ -160,17 +160,40 @@ export async function routeToModelAction(
   const existingId = String(formData.get('virtualModelId') ?? '')
   const newName = String(formData.get('newModelName') ?? '').trim()
 
-  try {
-    let virtualModelId = existingId
-    if (!virtualModelId) {
-      if (!newName) throw new Error('Pick a virtual model, or name a new one.')
+  let virtualModelId = existingId
+  // Tracked separately from existingId so the catch below can tell "the
+  // model already existed" apart from "we just created it" — only the
+  // latter needs the dropdown-refresh-and-reselect message.
+  let createdName: string | null = null
+
+  if (!virtualModelId) {
+    if (!newName) return { error: 'Pick a virtual model, or name a new one.' }
+    try {
       const created = await createVirtualModel({ name: newName })
       virtualModelId = created.id
+      createdName = created.name
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Could not create the virtual model.' }
     }
+  }
 
+  try {
     await addRouteTarget({ virtualModelId, providerId, upstreamModel })
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Could not create the route.' }
+    const reason = err instanceof Error ? err.message : 'Could not create the route.'
+    if (createdName) {
+      // The virtual model was already created and is not rolled back — leave
+      // it in place and revalidate so it shows up in the dropdown, then tell
+      // the user to select it instead of retyping the name (which would now
+      // collide).
+      revalidatePath('/catalog')
+      revalidatePath('/models')
+      return {
+        error: `Created virtual model "${createdName}", but could not add the route: ${reason} `
+          + `Select "${createdName}" from the list above and try again.`,
+      }
+    }
+    return { error: reason }
   }
 
   revalidatePath('/catalog')

@@ -72,18 +72,37 @@ export async function listVirtualModels(): Promise<VirtualModelListItem[]> {
   }))
 }
 
+/**
+ * node-postgres surfaces a Postgres error as a plain object with a `code`,
+ * but drizzle wraps it in a DrizzleQueryError and moves the original onto
+ * `.cause` — so the 23505 (unique_violation) can be on the error itself or
+ * one `.cause` down, depending on which layer threw.
+ */
+function isUniqueViolation(err: unknown): boolean {
+  const hasCode = (e: unknown): e is { code: string } =>
+    typeof e === 'object' && e !== null && 'code' in e
+  if (hasCode(err) && err.code === '23505') return true
+  const cause = err instanceof Error ? err.cause : undefined
+  return hasCode(cause) && cause.code === '23505'
+}
+
 export async function createVirtualModel(input: VirtualModelInput): Promise<VirtualModelRow> {
   const name = input.name.trim()
   if (!name) throw new Error('A virtual model name is required.')
 
-  const [row] = await db.insert(virtualModels).values({
-    name,
-    description: input.description ?? null,
-    policy: input.policy ?? 'failover',
-    maxAttempts: input.maxAttempts ?? 3,
-    enabled: input.enabled ?? true,
-  }).returning()
-  return row
+  try {
+    const [row] = await db.insert(virtualModels).values({
+      name,
+      description: input.description ?? null,
+      policy: input.policy ?? 'failover',
+      maxAttempts: input.maxAttempts ?? 3,
+      enabled: input.enabled ?? true,
+    }).returning()
+    return row
+  } catch (err) {
+    if (isUniqueViolation(err)) throw new Error(`A virtual model named "${name}" already exists.`)
+    throw err
+  }
 }
 
 export async function updateVirtualModel(

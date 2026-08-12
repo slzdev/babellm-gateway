@@ -75,8 +75,9 @@ field with the first non-null value winning:
 | Seed | A models.dev snapshot vendored into the repo, so a first boot with no network still has context windows and prices. Refresh with `pnpm seed:refresh`. |
 
 Syncing is explicit: a **Sync models** button per provider, **Sync all** on the
-catalog page, and an automatic sync whenever a provider's credentials are
-edited. Nothing runs on a timer.
+catalog page, and an automatic sync whenever you edit a provider (any field,
+not just credentials — saving a provider always re-syncs it). Nothing runs on
+a timer.
 
 The catalog is advisory. Route targets remain free text — the picker suggests
 models and warns about names it does not recognise, but never blocks a save, and
