@@ -80,11 +80,14 @@ Syncing is explicit: a **Sync models** action in each provider's row menu, a
 edit a provider (any field, not just credentials — saving a provider always
 re-syncs it). Nothing runs on a timer.
 
-The catalog is advisory. Route targets remain free text — the picker suggests
-models and warns about names it does not recognise, but never blocks a save, and
-the gateway request path never reads the catalog. A model that stops being
-returned is marked *missing* rather than deleted, so a provider having a bad day
-cannot quietly erase your catalog or the overrides on it.
+The catalog is advisory for virtual models: route targets remain free text — the
+picker suggests models and warns about names it does not recognise, but never
+blocks a save, and routing through a virtual model never reads the catalog. It
+is authoritative for [direct addressing](#direct-addressing), which can only
+reach a model the catalog lists. A model that stops being returned is marked
+*missing* rather than deleted, so a provider having a bad day cannot quietly
+erase your catalog or the overrides on it — nor take a directly addressed model
+off the air.
 
 `openai_compatible` providers can set a **registry namespace** (`groq`,
 `openrouter`, …) so their models match models.dev entries. A self-hosted or
@@ -121,6 +124,32 @@ the stream with an SSE `error` event rather than moving on.
 
 `x-babellm-provider` and `x-babellm-upstream-model` on the response name the
 target that actually served — which under failover is not the first one tried.
+
+### Direct addressing
+
+A request does not have to go through a virtual model. `<provider>:<model>`
+reaches any model on the **Catalog** page directly:
+
+```ts
+client.chat.completions.create({ model: "xai:grok-4.5", messages })
+```
+
+The prefix is the provider's name as it appears on the Providers page, and
+everything after the **first** colon is the model id — so a fine-tune keeps its
+own colons (`openai:ft:gpt-4o:acme::abc123`).
+
+The name is looked up as a virtual model first, and only falls through to a
+direct address when nothing matches. Naming a virtual model `xai:grok-4.5`
+therefore shadows the direct route rather than being unreachable behind it,
+which is the supported way to put a policy in front of a name your clients
+already send.
+
+A direct address is one target and one attempt: there is no failover, because
+there is nothing to fail over to. Model ids are checked against the catalog, so
+a typo comes back as `404 model_not_found` without a round trip to the
+provider — sync a provider before addressing its models directly. A model whose
+catalog row is marked *missing* still routes; a disabled provider answers
+`503 no_targets_available`.
 
 Each settled request writes one JSON line to stdout: request id, key name,
 virtual model, status, outcome, latency, time-to-first-token for streams, and

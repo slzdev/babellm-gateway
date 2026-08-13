@@ -9,7 +9,7 @@ import { GatewayError, RoutedError, errorResponse } from './errors'
 import { execute, type AttemptRecord } from './execute'
 import { newCompletionId, rewriteCompletion } from './identity'
 import { emitRequestLog, type RequestOutcome } from './request-log'
-import { resolveVirtualModel, type Candidate } from './resolve'
+import { resolveModel, type Candidate } from './resolve'
 import { selectOrder } from './select'
 import { sseResponse, startChatStream } from './sse'
 
@@ -93,7 +93,7 @@ export async function handleChatCompletions(
     modelName = body.model
     stream = body.stream === true
 
-    const { model, candidates } = await resolveVirtualModel(body.model)
+    const { model, candidates } = await resolveModel(body.model)
     const chain = selectOrder(candidates, model)
 
     void touchApiKey(apiKey.id).catch((err) =>
