@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useEffect, useRef } from 'react'
+import { useActionState, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,6 +22,12 @@ export function SettingsForm({ model }: { model: VirtualModelListItem }) {
   const [state, formAction, pending] = useActionState<ActionState | undefined, FormData>(
     updateModelAction, undefined,
   )
+
+  // Controlled, unlike its uncontrolled neighbours: saving revalidates and hands
+  // the Select a different `defaultValue` on a form that hasn't remounted, which
+  // Base UI warns about. Holding the value here also keeps the hint in sync with
+  // the pick instead of with the last save.
+  const [policy, setPolicy] = useState<RoutingPolicy>(model.policy)
 
   // One toast per result. Without the ref the effect re-fires on the render
   // that revalidation causes and toasts twice — the same guard FormDialogBody
@@ -56,7 +62,13 @@ export function SettingsForm({ model }: { model: VirtualModelListItem }) {
 
         <div className="space-y-2">
           <Label htmlFor="policy">Load balancing</Label>
-          <Select name="policy" defaultValue={model.policy}>
+          <Select
+            name="policy"
+            value={policy}
+            // Base UI types the change value as nullable for clearable selects;
+            // this one has no empty item, so a null can only be spurious.
+            onValueChange={(value) => { if (value) setPolicy(value) }}
+          >
             <SelectTrigger id="policy" className="w-full">
               <SelectValue />
             </SelectTrigger>
@@ -67,7 +79,7 @@ export function SettingsForm({ model }: { model: VirtualModelListItem }) {
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            {POLICIES.find((p) => p.value === model.policy)?.hint}
+            {POLICIES.find((p) => p.value === policy)?.hint}
           </p>
         </div>
 
