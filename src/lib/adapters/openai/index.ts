@@ -14,6 +14,9 @@ import { toProviderError } from './errors'
 // adapter module rather than reaching past it.
 export type { OpenAIClientFactory }
 
+const FLAVOR_HINT =
+  'If this provider only implements the Responses API, set its API flavor to "responses" on the Providers page.'
+
 export function createOpenAIAdapter(
   runtime: ProviderRuntime,
   createClient?: OpenAIClientFactory,
@@ -34,7 +37,7 @@ export function createOpenAIAdapter(
       try {
         return await client.chat.completions.create(params, { signal: ctx.signal })
       } catch (err) {
-        throw toProviderError(err)
+        throw toProviderError(err, FLAVOR_HINT)
       }
     },
 
@@ -58,13 +61,13 @@ export function createOpenAIAdapter(
       try {
         stream = await client.chat.completions.create(params, { signal: ctx.signal })
       } catch (err) {
-        throw toProviderError(err)
+        throw toProviderError(err, FLAVOR_HINT)
       }
 
       try {
         for await (const chunk of stream) yield chunk
       } catch (err) {
-        throw toProviderError(err)
+        throw toProviderError(err, FLAVOR_HINT)
       }
     },
 
