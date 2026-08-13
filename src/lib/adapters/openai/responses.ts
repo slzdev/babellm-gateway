@@ -13,6 +13,13 @@ import type {
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { toProviderError } from './errors'
 
+// The symmetric misconfiguration to the Chat Completions hint below: a
+// provider set to `responses` that in fact only speaks Chat Completions. The
+// dashboard makes this exactly as reachable as the reverse mistake, so it
+// gets the same treatment.
+const FLAVOR_HINT =
+  'If this provider only implements the Chat Completions API, set its API flavor to "chat_completions" on the Providers page.'
+
 /**
  * A provider that serves /v1/responses but not /v1/chat/completions. It holds
  * no translation logic of its own — that lives in the pure module, which is
@@ -38,7 +45,7 @@ export function createResponsesAdapter(
         )
         return fromResponse(result as OpenAI.Responses.Response)
       } catch (err) {
-        throw toProviderError(err)
+        throw toProviderError(err, FLAVOR_HINT)
       }
     },
 
@@ -57,7 +64,7 @@ export function createResponsesAdapter(
           { signal: ctx.signal },
         )
       } catch (err) {
-        throw toProviderError(err)
+        throw toProviderError(err, FLAVOR_HINT)
       }
 
       try {
@@ -66,7 +73,7 @@ export function createResponsesAdapter(
           req,
         )
       } catch (err) {
-        throw toProviderError(err)
+        throw toProviderError(err, FLAVOR_HINT)
       }
     },
 

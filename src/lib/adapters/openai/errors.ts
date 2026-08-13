@@ -28,7 +28,7 @@ export function toProviderError(err: unknown, hint?: string): ProviderError {
       // is absent rather than the model, which is the single most likely
       // configuration mistake this gateway produces. The caller supplies the
       // instruction; only the status decides whether it is relevant.
-      message: status === 404 && hint ? `${err.message} ${hint}` : err.message,
+      message: status === 404 && hint ? `${err.message}. ${hint}` : err.message,
       retryable,
     })
   }

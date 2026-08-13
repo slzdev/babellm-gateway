@@ -109,6 +109,19 @@ test('an upstream API error is normalised into a ProviderError', async () => {
   })
 })
 
+test('a 404 from a Responses provider carries the flavor hint', async () => {
+  const create = vi.fn().mockRejectedValue(
+    new OpenAI.APIError(404, { message: 'Not Found' }, 'Not Found', undefined),
+  )
+  const factory = vi.fn().mockReturnValue({ responses: { create } })
+  const adapter = createResponsesAdapter(runtime, factory as never)
+
+  await expect(adapter.chat(body, ctx)).rejects.toMatchObject({
+    status: 404,
+    message: expect.stringContaining('chat_completions'),
+  })
+})
+
 test('throws when the credentials have no apiKey', () => {
   const { factory } = fakeClient()
   expect(() =>
