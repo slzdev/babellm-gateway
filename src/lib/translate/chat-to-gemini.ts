@@ -1,14 +1,17 @@
 import {
   FunctionCallingConfigMode,
   ThinkingLevel,
+  type Candidate,
   type Content,
   type FunctionDeclaration,
   type GenerateContentConfig,
   type GenerateContentParameters,
+  type GenerateContentResponse,
+  type GenerateContentResponseUsageMetadata,
   type Part,
   type ToolConfig,
 } from '@google/genai'
-import type { ProviderConfig } from '@/lib/adapters/types'
+import type { ChatCompletion, ChatCompletionChunk, ProviderConfig } from '@/lib/adapters/types'
 import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
 
 /**
@@ -389,4 +392,139 @@ export function droppedParams(req: ChatCompletionRequest): string[] {
   }
 
   return dropped
+}
+
+type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } }
+
+const CONTENT_FILTER_REASONS = new Set([
+  'SAFETY',
+  'PROHIBITED_CONTENT',
+  'BLOCKLIST',
+  'SPII',
+  'IMAGE_SAFETY',
+  'RECITATION',
+])
+
+/**
+ * Shared with the stream translator, which derives the same reason from the
+ * candidate carried on a terminal chunk.
+ */
+function finishReasonFor(
+  reason: string | undefined,
+  hasToolCalls: boolean,
+): 'stop' | 'length' | 'tool_calls' | 'content_filter' {
+  if (hasToolCalls) return 'tool_calls'
+  if (reason === 'MAX_TOKENS') return 'length'
+  if (reason && CONTENT_FILTER_REASONS.has(reason)) return 'content_filter'
+  return 'stop'
+}
+
+/**
+ * Gemini's functionCall.id is optional. Synthesizing one is safe here in a way
+ * it is not when reading a client's tool result: this id is the gateway's own
+ * output, and the next turn resolves it back to a name through the assistant
+ * message the gateway itself produced. Namespaced by choice so `n > 1` cannot
+ * collide.
+ */
+function synthesizedCallId(choiceIndex: number, callIndex: number): string {
+  return `call_${choiceIndex}_${callIndex}`
+}
+
+function toToolCalls(candidate: Candidate, choiceIndex: number): ToolCall[] {
+  const calls: ToolCall[] = []
+  for (const part of candidate.content?.parts ?? []) {
+    if (!part.functionCall) continue
+    calls.push({
+      id: part.functionCall.id ?? synthesizedCallId(choiceIndex, calls.length),
+      type: 'function',
+      function: {
+        name: part.functionCall.name ?? '',
+        arguments: JSON.stringify(part.functionCall.args ?? {}),
+      },
+    })
+  }
+  return calls
+}
+
+/**
+ * OpenAI's completion_tokens includes reasoning tokens; Gemini's
+ * candidatesTokenCount does not. Getting this wrong would under-report
+ * completion tokens on every thinking request, and cost is computed from these.
+ */
+function toUsage(usage: GenerateContentResponseUsageMetadata) {
+  const promptTokens = usage.promptTokenCount ?? 0
+  const thoughts = usage.thoughtsTokenCount ?? 0
+  const completionTokens = (usage.candidatesTokenCount ?? 0) + thoughts
+
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: usage.totalTokenCount ?? promptTokens + completionTokens,
+    ...(thoughts > 0 ? { completion_tokens_details: { reasoning_tokens: thoughts } } : {}),
+    ...(usage.cachedContentTokenCount
+      ? { prompt_tokens_details: { cached_tokens: usage.cachedContentTokenCount } }
+      : {}),
+  }
+}
+
+function toChoice(candidate: Candidate, position: number) {
+  const index = candidate.index ?? position
+  const toolCalls = toToolCalls(candidate, index)
+  let content = ''
+  let reasoning = ''
+
+  for (const part of candidate.content?.parts ?? []) {
+    if (part.functionCall || typeof part.text !== 'string') continue
+    if (part.thought) reasoning += part.text
+    else content += part.text
+  }
+
+  return {
+    index,
+    message: {
+      role: 'assistant' as const,
+      content: content.length > 0 ? content : null,
+      // Non-standard, and deliberately so: it is the convention DeepSeek, vLLM
+      // and OpenRouter already use, which is why real clients render it.
+      ...(reasoning.length > 0 ? { reasoning_content: reasoning } : {}),
+      ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+    },
+    finish_reason: finishReasonFor(candidate.finishReason, toolCalls.length > 0),
+    logprobs: null,
+  }
+}
+
+function createdAt(createTime: string | undefined): number {
+  const parsed = createTime ? Date.parse(createTime) : Number.NaN
+  return Number.isNaN(parsed) ? Math.floor(Date.now() / 1000) : Math.floor(parsed / 1000)
+}
+
+export function fromGenerateContent(
+  res: GenerateContentResponse,
+  model: string,
+): ChatCompletion {
+  const candidates = res.candidates ?? []
+
+  // A prompt Google refuses outright comes back with no candidates at all.
+  // Surfacing it as a filtered choice rather than an exception matches how
+  // OpenAI's own filter reads, and — more importantly — stops the routing loop
+  // failing over to a provider that would filter it too.
+  const choices =
+    candidates.length > 0
+      ? candidates.map(toChoice)
+      : [{
+          index: 0,
+          message: { role: 'assistant' as const, content: null },
+          finish_reason: res.promptFeedback?.blockReason ? 'content_filter' : 'stop',
+          logprobs: null,
+        }]
+
+  return {
+    id: res.responseId ?? '',
+    object: 'chat.completion',
+    created: createdAt(res.createTime),
+    model: res.modelVersion ?? model,
+    choices,
+    ...(res.usageMetadata ? { usage: toUsage(res.usageMetadata) } : {}),
+  } as ChatCompletion
 }
