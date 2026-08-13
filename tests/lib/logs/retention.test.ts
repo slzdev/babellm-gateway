@@ -46,6 +46,19 @@ test('zero retention disables pruning entirely', async () => {
   expect((await postgresStore.query({ limit: 10 })).rows).toHaveLength(1)
 })
 
+test('prunes data in a non-active store rather than only the currently-configured one', async () => {
+  // request_logs/request_payloads hold captured prompt and completion
+  // content. Switching the active store to stdout must not leave that data
+  // unpruned forever just because reads no longer go through postgres.
+  await writeOne('old')
+  await setLoggingSettings({ store: 'stdout' })
+  clearRequestLogStoreCache()
+
+  const later = new Date(Date.now() + 31 * DAY)
+  expect(await pruneRequestLogs(later)).toBe(1)
+  expect((await postgresStore.query({ limit: 10 })).rows).toHaveLength(0)
+})
+
 test('skips the run when another instance holds the lock', async () => {
   await writeOne('old')
   const holder = await db.$client.connect()

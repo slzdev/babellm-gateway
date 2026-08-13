@@ -159,6 +159,12 @@ test('a mid-stream failure is logged as stream_interrupted despite the 200', asy
   const page = await postgresStore.query({ limit: 10 })
   expect(page.rows).toHaveLength(1)
   expect(page.rows[0]).toMatchObject({ status: 200, outcome: 'stream_interrupted' })
+
+  // The error that killed the stream must be carried into the row, not left
+  // null next to an outcome that otherwise gives no reason.
+  const detail = await postgresStore.get(page.rows[0].requestId)
+  expect(detail?.errorType).not.toBeNull()
+  expect(detail?.errorMessage).toContain('connection reset')
 })
 
 test('a write failure never reaches the client', async () => {

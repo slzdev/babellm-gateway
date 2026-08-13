@@ -24,7 +24,12 @@ function statusVariant(status: number) {
 function cost(value: string | null) {
   // A null cost is not a free request — it is a request the catalog could not
   // price. Saying "unpriced" is the whole reason the column is nullable.
-  return value === null ? 'unpriced' : `$${Number(value).toFixed(6)}`
+  //
+  // Full nine-decimal precision, matching the detail page: the column is
+  // numeric(18,9) specifically so sub-micro-dollar requests keep a value
+  // instead of rounding to a lying $0.000000, and this page must agree with
+  // the detail page on what a given row costs.
+  return value === null ? 'unpriced' : `$${Number(value).toFixed(9)}`
 }
 
 export default async function LogsPage({
@@ -67,7 +72,16 @@ export default async function LogsPage({
         </div>
       ) : null}
 
-      {!view.readable ? (
+      {view.error ? (
+        <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-8 text-center">
+          <p className="font-medium">The log store could not be read.</p>
+          <p className="text-sm text-muted-foreground">
+            Something went wrong reaching the configured log store. This is usually
+            transient — reload the page, or check the gateway&apos;s own server logs if it
+            keeps happening.
+          </p>
+        </div>
+      ) : !view.readable ? (
         <div className="space-y-2 rounded-md border px-4 py-8 text-center">
           <p className="font-medium">
             The <span className="font-mono">{view.storeName}</span> store cannot be read back.

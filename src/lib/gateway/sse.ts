@@ -1,6 +1,6 @@
 import type { ChatCompletionChunk } from '@/lib/adapters/types'
 import type { LogUsage } from '@/lib/logs/types'
-import { classifyProviderError } from './errors'
+import { classifyProviderError, type ClassifiedError } from './errors'
 import { rewriteChunk, type IdentityOptions } from './identity'
 import { usageFrom } from './usage'
 
@@ -81,6 +81,10 @@ export interface StreamCapture {
   bytes: number
   /** True once the text hit the byte cap and stopped accumulating. */
   truncated: boolean
+  /** The classified error that killed the stream, so the settle callback —
+   * and the row it logs — can say why. Null on every outcome but
+   * stream_interrupted. */
+  error: ClassifiedError | null
 }
 
 export interface CaptureOptions {
@@ -111,7 +115,7 @@ export function sseResponse(
 
   // Accumulated as the stream is relayed, so the settle callback — whichever
   // of the three paths reaches it — reports what actually got through.
-  const captured: StreamCapture = { usage: null, text: '', bytes: 0, truncated: false }
+  const captured: StreamCapture = { usage: null, text: '', bytes: 0, truncated: false, error: null }
 
   function settle(outcome: StreamOutcome) {
     if (settled) return
@@ -137,6 +141,9 @@ export function sseResponse(
       } catch (err) {
         if (cancelled) return
         const classified = classifyProviderError(err)
+        // Set before settle(), which hands `captured` straight to onSettle
+        // synchronously — the log entry needs this in place by then.
+        captured.error = classified
         settle('stream_interrupted')
         controller.enqueue(
           event({

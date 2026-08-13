@@ -27,6 +27,23 @@ function money(value: string | null) {
   return value === null ? 'unpriced' : `$${Number(value).toFixed(9)}`
 }
 
+/**
+ * capPayload stores one of two truncation envelopes under the same
+ * `truncated: true` flag: an oversized payload (a real preview, clipped to
+ * the byte cap) and an unserializable one (a cyclic or otherwise
+ * un-JSON-able value, stored as nothing at all). They need different
+ * explanations — "exceeded the configured size cap" is simply false for the
+ * second case.
+ */
+function truncationNote(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null
+  const envelope = value as { truncated?: unknown; error?: unknown }
+  if (envelope.truncated !== true) return null
+  return envelope.error === 'unserializable'
+    ? 'This value could not be serialized to JSON and was not stored.'
+    : 'This payload exceeded the configured size cap and was stored as a truncated preview.'
+}
+
 function Json({ label, value }: { label: string; value: unknown }) {
   return (
     <Collapsible className="rounded-md border">
@@ -177,14 +194,14 @@ export default async function LogDetailPage({
         <h2 className="text-sm font-semibold">Payloads</h2>
         {log.payload ? (
           <div className="space-y-2">
-            {log.payload.truncated ? (
-              <p className="text-xs text-muted-foreground">
-                This payload exceeded the configured size cap and was stored as a
-                truncated preview.
-              </p>
-            ) : null}
             <Json label="Request" value={log.payload.request} />
+            {truncationNote(log.payload.request) ? (
+              <p className="text-xs text-muted-foreground">{truncationNote(log.payload.request)}</p>
+            ) : null}
             <Json label="Response" value={log.payload.response} />
+            {truncationNote(log.payload.response) ? (
+              <p className="text-xs text-muted-foreground">{truncationNote(log.payload.response)}</p>
+            ) : null}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">

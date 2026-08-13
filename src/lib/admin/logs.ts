@@ -28,6 +28,14 @@ function cursor(value: string | undefined): string | undefined {
   return value && UUID_RE.test(value) ? value : undefined
 }
 
+// apiKeyId is a uuid column too — the same "drop rather than reach the
+// store" contract cursor() enforces, since api_keys.id is a uuid and a
+// non-uuid `key` would otherwise reach `eq(requestLogs.apiKeyId, …)` and
+// throw "invalid input syntax for type uuid".
+function key(value: string | undefined): string | undefined {
+  return value && UUID_RE.test(value) ? value : undefined
+}
+
 export interface LogSearchParams {
   range?: string
   key?: string
@@ -54,9 +62,11 @@ export function parseLogFilter(
   const after = cursor(params.after)
   const before = cursor(params.before)
 
+  const apiKeyId = key(params.key)
+
   return {
     ...(window === null ? {} : { from: new Date(now.getTime() - window) }),
-    ...(params.key ? { apiKeyId: params.key } : {}),
+    ...(apiKeyId ? { apiKeyId } : {}),
     ...(model ? { model } : {}),
     ...(status && STATUS_CLASSES.includes(status as StatusClass)
       ? { statusClass: status as StatusClass }
@@ -76,17 +86,33 @@ export interface LogsView {
   configured: string
   fallback: 'unknown_driver' | 'settings_error' | null
   page: LogPage | null
+  /** True when resolving the store or querying it threw. Distinct from
+   * `readable: false` — that is an expected state (a write-only driver like
+   * stdout), this is the store failing to answer at all. The page renders it
+   * as its own banner rather than the generic Next.js error screen (spec
+   * §9: "query() fails → error state on the page, not a crash"). */
+  error: boolean
 }
 
 export async function loadLogs(filter: LogFilter): Promise<LogsView> {
-  const { store, configured, fallback } = await resolveRequestLogStore()
-  // Narrowing on the discriminant, so an unreadable store is a branch here
-  // rather than a query() that throws in production.
-  const page = store.readable ? await store.query(filter) : null
-  return { readable: store.readable, storeName: store.name, configured, fallback, page }
+  try {
+    const { store, configured, fallback } = await resolveRequestLogStore()
+    // Narrowing on the discriminant, so an unreadable store is a branch here
+    // rather than a query() that throws in production.
+    const page = store.readable ? await store.query(filter) : null
+    return { readable: store.readable, storeName: store.name, configured, fallback, page, error: false }
+  } catch (err) {
+    console.error('[gateway] could not load request logs', err)
+    return { readable: false, storeName: 'unknown', configured: 'unknown', fallback: null, page: null, error: true }
+  }
 }
 
 export async function loadLogDetail(requestId: string): Promise<LogDetail | null> {
-  const { store } = await resolveRequestLogStore()
-  return store.readable ? store.get(requestId) : null
+  try {
+    const { store } = await resolveRequestLogStore()
+    return store.readable ? await store.get(requestId) : null
+  } catch (err) {
+    console.error('[gateway] could not load request log detail', err)
+    return null
+  }
 }

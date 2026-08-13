@@ -91,9 +91,13 @@ export function computeCost(
   const cachedRate = prices.cachedInputPerMtok ?? prices.inputPerMtok
 
   const inputUsd = usd(billablePrompt, prices.inputPerMtok)
-  const cachedUsd = cached > 0 ? usd(cached, cachedRate) : null
+  // A priceable request always gets a real cached figure, even when no
+  // tokens were cached — `usd(0, rate)` is a legitimate zero. `null` stays
+  // reserved for "the catalog could not price this" (the branches above),
+  // never repurposed for "this component happened to be zero".
+  const cachedUsd = usd(cached, cachedRate)
   const outputUsd = usd(usage.completionTokens ?? 0, prices.outputPerMtok)
-  const totalUsd = (Number(inputUsd) + Number(cachedUsd ?? 0) + Number(outputUsd)).toFixed(SCALE)
+  const totalUsd = (Number(inputUsd) + Number(cachedUsd) + Number(outputUsd)).toFixed(SCALE)
 
   return { inputUsd, cachedUsd, outputUsd, totalUsd, pricing: prices }
 }

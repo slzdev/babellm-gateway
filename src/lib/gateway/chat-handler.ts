@@ -10,7 +10,7 @@ import { capPayload } from '@/lib/logs/payload'
 import type { LogPayload, LogUsage, RequestOutcome } from '@/lib/logs/types'
 import { computeCost, priceFor } from '@/lib/pricing'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
-import { GatewayError, RoutedError, errorResponse } from './errors'
+import { GatewayError, RoutedError, errorResponse, type ClassifiedError } from './errors'
 import { execute, type AttemptRecord } from './execute'
 import { newCompletionId, rewriteCompletion } from './identity'
 import { resolveModel, type Candidate } from './resolve'
@@ -108,9 +108,20 @@ function errorMessage(message: string): string {
     : message
 }
 
+// A ClassifiedError (from sse.ts's stream_interrupted path) is a plain
+// object, not an Error instance, so it needs its own check rather than
+// falling through to the generic branch below and being mislabeled
+// "internal_error".
+function isClassifiedError(err: unknown): err is ClassifiedError {
+  return typeof err === 'object' && err !== null && 'retryable' in err && 'message' in err
+}
+
 function errorFields(err: unknown) {
   if (err === undefined) return {}
   if (err instanceof GatewayError) {
+    return { errorType: err.type, errorCode: err.code, errorMessage: errorMessage(err.message) }
+  }
+  if (isClassifiedError(err)) {
     return { errorType: err.type, errorCode: err.code, errorMessage: errorMessage(err.message) }
   }
   return {
@@ -246,7 +257,13 @@ export async function handleChatCompletions(
       // time-to-first-token without any plumbing into the stream itself.
       const ttftMs = Date.now() - startedAt
       dropped = droppedFor(result.candidate, body)
-      const { settings } = await resolveRequestLogStore()
+      // Resolved only when its value is actually used: for the default case
+      // (capture off) this settings lookup would otherwise sit unconditionally
+      // between execute() and the response, adding to time-to-first-token for
+      // a value the `capturePayloads ? … : undefined` below throws away.
+      const captureOptions = capturePayloads
+        ? { maxBytes: (await resolveRequestLogStore()).settings.payloadMaxBytes }
+        : undefined
 
       return sseResponse(
         result.value,
@@ -257,6 +274,7 @@ export async function handleChatCompletions(
             ttftMs,
             candidate: result.candidate,
             usage: capture.usage,
+            error: capture.error ?? undefined,
             response: capturePayloads
               ? {
                   id: identity.id,
@@ -271,7 +289,7 @@ export async function handleChatCompletions(
               : null,
             responseTruncated: capture.truncated,
           }),
-        capturePayloads ? { maxBytes: settings.payloadMaxBytes } : undefined,
+        captureOptions,
       )
     }
 

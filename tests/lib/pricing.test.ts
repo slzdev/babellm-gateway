@@ -103,6 +103,18 @@ test('a measured zero on one side still prices normally', () => {
   expect(cost?.outputUsd).toBe('0.000000000')
 })
 
+test('a priceable request with no cached tokens records a real zero, not null', () => {
+  const cost = computeCost(
+    { inputPerMtok: '1.000000', cachedInputPerMtok: '0.250000', outputPerMtok: '1.000000' },
+    usage({ cachedTokens: null }),
+  )
+  // null stays reserved for "the catalog could not price this" — a
+  // measured absence of cache hits is a real, priced zero, the same way a
+  // measured zero on prompt or completion tokens prices normally.
+  expect(cost?.cachedUsd).toBe('0.000000000')
+  expect(cost?.cachedUsd).not.toBeNull()
+})
+
 test('the snapshot records the rates actually used', () => {
   const prices = { inputPerMtok: '1.000000', cachedInputPerMtok: null, outputPerMtok: '3.000000' }
   expect(computeCost(prices, usage())?.pricing).toEqual(prices)

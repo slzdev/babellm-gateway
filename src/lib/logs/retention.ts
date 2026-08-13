@@ -1,7 +1,7 @@
 import 'server-only'
 import { db, pool } from '@/lib/db'
 import { settings } from '@/lib/db/schema'
-import { resolveRequestLogStore } from './registry'
+import { DRIVERS, resolveRequestLogStore } from './registry'
 
 /** Arbitrary constant; only has to be stable and unique to this job across
  * everything that talks to this database. Deliberately different from the
@@ -13,11 +13,19 @@ const HOUR_MS = 60 * 60 * 1000
 /**
  * Deletes expired request logs.
  *
+ * Prunes every registered driver, not just the one currently configured for
+ * reads: switching the active store must not silently stop retention on data
+ * that still exists in a store the gateway simply isn't reading from anymore.
+ * request_logs/request_payloads hold captured prompt and completion content,
+ * so leaving them unpruned after a store switch would be a data-retention
+ * bug, not a cosmetic one. A driver with no retention concept (stdout)
+ * contributes 0 and is otherwise harmless in the loop.
+ *
  * Returns the number of rows removed, or null when the run was skipped —
  * retention is disabled, or another instance is already pruning.
  */
 export async function pruneRequestLogs(now: Date = new Date()): Promise<number | null> {
-  const { store, settings: config } = await resolveRequestLogStore()
+  const { settings: config } = await resolveRequestLogStore()
   if (config.retentionDays <= 0) return null
 
   // pg_try_advisory_lock / pg_advisory_unlock are scoped to the session that
@@ -40,7 +48,10 @@ export async function pruneRequestLogs(now: Date = new Date()): Promise<number |
 
     try {
       const cutoff = new Date(now.getTime() - config.retentionDays * 24 * HOUR_MS)
-      const deleted = await store.prune(cutoff)
+      let deleted = 0
+      for (const driver of Object.values(DRIVERS)) {
+        deleted += await driver.prune(cutoff)
+      }
 
       await db
         .insert(settings)
