@@ -5,7 +5,6 @@ import { postgresStore } from '@/lib/logs/postgres'
 import { ensurePartitions } from '@/lib/logs/partitions'
 import { uuidv7 } from '@/lib/uuid'
 import type { RequestLogEntry } from '@/lib/logs/types'
-import type { LoggingSettings } from '@/lib/settings'
 import { resetDb } from '../../helpers/db'
 
 beforeEach(resetDb)
@@ -172,10 +171,7 @@ test('paging crosses a partition boundary', async () => {
 
 test('maintain provisions the current month and drops what fell out of the window', async () => {
   const now = new Date('2030-06-15T00:00:00Z')
-  // `retentionMonths` is Task 7's rename of `LoggingSettings.retentionDays`,
-  // not landed yet — this cast is the forward reference the brief calls for,
-  // not a weakening of the assertion.
-  const settings = { store: 'postgres', retentionMonths: 2, payloadMaxBytes: 1024 } as unknown as LoggingSettings
+  const settings = { store: 'postgres', retentionMonths: 2, payloadMaxBytes: 1024 }
 
   await postgresStore.maintain(new Date('2030-01-15T00:00:00Z'), settings)
   const result = await postgresStore.maintain(now, settings)

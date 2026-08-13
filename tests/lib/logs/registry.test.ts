@@ -119,7 +119,7 @@ test('a resolution in flight when the cache is cleared does not repopulate it', 
   // still awaiting the pre-write settings read. That resolution must not
   // silently republish stale state once it finally settles.
   let resolveSettings: (value: LoggingSettings) => void = () => {}
-  const staleSettings: LoggingSettings = { store: 'stdout', retentionDays: 30, payloadMaxBytes: 262_144 }
+  const staleSettings: LoggingSettings = { store: 'stdout', retentionMonths: 3, payloadMaxBytes: 262_144 }
   const spy = vi
     .spyOn(settingsModule, 'getLoggingSettings')
     .mockImplementationOnce(() => new Promise((resolve) => { resolveSettings = resolve }))

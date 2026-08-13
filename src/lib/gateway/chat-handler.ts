@@ -9,6 +9,7 @@ import { logRequest, resolveRequestLogStore } from '@/lib/logs'
 import { capPayload } from '@/lib/logs/payload'
 import type { LogPayload, LogUsage, RequestOutcome } from '@/lib/logs/types'
 import { computeCost, priceFor } from '@/lib/pricing'
+import { uuidv7 } from '@/lib/uuid'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
 import { GatewayError, RoutedError, errorResponse, type ClassifiedError } from './errors'
 import { execute, type AttemptRecord } from './execute'
@@ -135,7 +136,11 @@ export async function handleChatCompletions(
   request: Request,
   deps: ChatHandlerDeps = defaultDeps,
 ): Promise<Response> {
-  const requestId = newCompletionId().replace('chatcmpl-', 'req_')
+  // The request's one identifier: returned as x-request-id, printed on the
+  // stdout line, stored as the log's primary key, and — because it is a v7
+  // uuid — the partition that log row lands in. Minted here rather than at
+  // insert, because the header goes out long before the row is written.
+  const requestId = uuidv7()
   const startedAt = Date.now()
 
   // Tracked outside the try so the log line can still say who was calling
@@ -201,7 +206,7 @@ export async function handleChatCompletions(
         : null
 
     await logRequest({
-      requestId,
+      id: requestId,
       keyId,
       keyName,
       model: modelName,

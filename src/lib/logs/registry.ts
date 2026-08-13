@@ -1,7 +1,7 @@
 import 'server-only'
 import * as settings from '@/lib/settings'
 import {
-  DEFAULT_PAYLOAD_MAX_BYTES, DEFAULT_RETENTION_DAYS, type LoggingSettings,
+  DEFAULT_PAYLOAD_MAX_BYTES, DEFAULT_RETENTION_MONTHS, type LoggingSettings,
 } from '@/lib/settings'
 import { postgresStore } from './postgres'
 import { stdoutStore } from './stdout'
@@ -86,7 +86,7 @@ async function resolve(): Promise<StoreResolution> {
       fallback: 'settings_error',
       settings: {
         store: stdoutStore.name,
-        retentionDays: DEFAULT_RETENTION_DAYS,
+        retentionMonths: DEFAULT_RETENTION_MONTHS,
         payloadMaxBytes: DEFAULT_PAYLOAD_MAX_BYTES,
       },
     }

@@ -1,32 +1,37 @@
 import { beforeEach, expect, test } from 'vitest'
-import { getLoggingSettings, setLoggingSettings } from '@/lib/settings'
+import { DEFAULT_RETENTION_MONTHS, getLoggingSettings, setLoggingSettings } from '@/lib/settings'
 import { resetDb } from '../helpers/db'
 
 beforeEach(resetDb)
 
-test('defaults to the postgres store with 30 day retention', async () => {
+test('defaults to the postgres store with 3 month retention', async () => {
   expect(await getLoggingSettings()).toEqual({
     store: 'postgres',
-    retentionDays: 30,
+    retentionMonths: 3,
     payloadMaxBytes: 262144,
   })
 })
 
 test('persists a patch and leaves the rest alone', async () => {
   await setLoggingSettings({ store: 'stdout' })
-  expect(await getLoggingSettings()).toMatchObject({ store: 'stdout', retentionDays: 30 })
+  expect(await getLoggingSettings()).toMatchObject({ store: 'stdout', retentionMonths: 3 })
 
-  await setLoggingSettings({ retentionDays: 7 })
-  expect(await getLoggingSettings()).toMatchObject({ store: 'stdout', retentionDays: 7 })
+  await setLoggingSettings({ retentionMonths: 7 })
+  expect(await getLoggingSettings()).toMatchObject({ store: 'stdout', retentionMonths: 7 })
 })
 
-test('accepts zero retention, which means never prune', async () => {
-  await setLoggingSettings({ retentionDays: 0 })
-  expect((await getLoggingSettings()).retentionDays).toBe(0)
+test('retention is stored in months and rejects fractions and negatives', async () => {
+  expect((await setLoggingSettings({ retentionMonths: 6 })).retentionMonths).toBe(6)
+  expect((await setLoggingSettings({ retentionMonths: 0 })).retentionMonths).toBe(0)
+  await expect(setLoggingSettings({ retentionMonths: -1 })).rejects.toThrow(/whole number of months/)
+  await expect(setLoggingSettings({ retentionMonths: 1.5 })).rejects.toThrow(/whole number of months/)
 })
 
-test('rejects a negative retention and a non-positive payload cap', async () => {
-  await expect(setLoggingSettings({ retentionDays: -1 })).rejects.toThrow(/retention/i)
+test('retention falls back to the default when unset', async () => {
+  expect((await getLoggingSettings()).retentionMonths).toBe(DEFAULT_RETENTION_MONTHS)
+})
+
+test('rejects a non-positive payload cap', async () => {
   await expect(setLoggingSettings({ payloadMaxBytes: 0 })).rejects.toThrow(/payload/i)
 })
 

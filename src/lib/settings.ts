@@ -57,19 +57,27 @@ export async function setCatalogSettings(
 }
 
 export const DEFAULT_LOG_STORE = 'postgres'
-export const DEFAULT_RETENTION_DAYS = 30
+export const DEFAULT_RETENTION_MONTHS = 3
 export const DEFAULT_PAYLOAD_MAX_BYTES = 262_144
 
 export interface LoggingSettings {
   store: string
-  /** 0 disables pruning. */
-  retentionDays: number
+  /**
+   * Calendar months kept: the current one plus the `retentionMonths - 1`
+   * before it. `0` keeps everything.
+   *
+   * Months rather than days because a monthly partition can only be discarded
+   * whole. A day-granular setting would either lie — 30 keeping up to 60 days
+   * of prompt content — or need a row-level DELETE path kept alive purely to
+   * honour the last few days.
+   */
+  retentionMonths: number
   payloadMaxBytes: number
 }
 
 const LOG_KEYS = {
   store: 'logs.store',
-  retentionDays: 'logs.retention_days',
+  retentionMonths: 'logs.retention_months',
   payloadMaxBytes: 'logs.payload_max_bytes',
 } as const
 
@@ -78,13 +86,13 @@ export async function getLoggingSettings(): Promise<LoggingSettings> {
   const byKey = new Map(rows.map((row) => [row.key, row.value]))
 
   const store = byKey.get(LOG_KEYS.store)
-  const retention = byKey.get(LOG_KEYS.retentionDays)
+  const retention = byKey.get(LOG_KEYS.retentionMonths)
   const cap = byKey.get(LOG_KEYS.payloadMaxBytes)
 
   return {
     store: typeof store === 'string' && store.length > 0 ? store : DEFAULT_LOG_STORE,
-    retentionDays:
-      typeof retention === 'number' && retention >= 0 ? retention : DEFAULT_RETENTION_DAYS,
+    retentionMonths:
+      typeof retention === 'number' && retention >= 0 ? retention : DEFAULT_RETENTION_MONTHS,
     payloadMaxBytes:
       typeof cap === 'number' && cap > 0 ? cap : DEFAULT_PAYLOAD_MAX_BYTES,
   }
@@ -100,11 +108,11 @@ export async function setLoggingSettings(
     if (!store) throw new Error('A log store is required.')
     writes.push([LOG_KEYS.store, store])
   }
-  if (patch.retentionDays !== undefined) {
-    if (!Number.isInteger(patch.retentionDays) || patch.retentionDays < 0) {
-      throw new Error('Log retention must be a whole number of days, or 0 to keep everything.')
+  if (patch.retentionMonths !== undefined) {
+    if (!Number.isInteger(patch.retentionMonths) || patch.retentionMonths < 0) {
+      throw new Error('Log retention must be a whole number of months, or 0 to keep everything.')
     }
-    writes.push([LOG_KEYS.retentionDays, patch.retentionDays])
+    writes.push([LOG_KEYS.retentionMonths, patch.retentionMonths])
   }
   if (patch.payloadMaxBytes !== undefined) {
     if (!Number.isInteger(patch.payloadMaxBytes) || patch.payloadMaxBytes < 1) {

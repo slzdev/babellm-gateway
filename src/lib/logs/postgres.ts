@@ -192,11 +192,7 @@ export const postgresStore: ReadableRequestLogStore = {
    */
   async maintain(now: Date, settings: LoggingSettings): Promise<MaintenanceResult> {
     const created = await ensurePartitions(pool, now)
-    // Task 7 renames `LoggingSettings.retentionDays` to `retentionMonths`;
-    // until that lands, widen locally rather than reading a field the type
-    // doesn't have yet.
-    const retentionMonths = (settings as LoggingSettings & { retentionMonths: number }).retentionMonths
-    const dropped = await dropExpiredPartitions(pool, now, retentionMonths)
+    const dropped = await dropExpiredPartitions(pool, now, settings.retentionMonths)
     return { created, dropped }
   },
 }
