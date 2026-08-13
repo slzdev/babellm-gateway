@@ -38,3 +38,27 @@ test('null and undefined pass through as null', () => {
   expect(capPayload(undefined, 1024)).toEqual({ value: null, truncated: false })
   expect(capPayload(null, 1024)).toEqual({ value: null, truncated: false })
 })
+
+test('multi-byte characters are not split at the boundary', () => {
+  const body = { messages: [{ role: 'user', content: '😀'.repeat(500) }] }
+  const capped = capPayload(body, 50) as { value: { preview: string }; truncated: boolean }
+  expect(Buffer.byteLength(capped.value.preview ?? '', 'utf8')).toBeLessThanOrEqual(50)
+})
+
+test('preview contains no replacement character', () => {
+  const body = { messages: [{ role: 'user', content: '😀'.repeat(500) }] }
+  const capped = capPayload(body, 50) as { value: { preview: string }; truncated: boolean }
+  expect(capped.value.preview).not.toContain('�')
+})
+
+test('byte cap holds across all offsets within a multi-byte character', () => {
+  const emoji = '😀' // 4-byte UTF-8 character
+  const body = { messages: [{ role: 'user', content: emoji.repeat(100) }] }
+
+  // Test caps from 40 to 47, covering various offsets within a 4-byte character
+  for (let cap = 40; cap <= 47; cap++) {
+    const capped = capPayload(body, cap) as { value: { preview: string }; truncated: boolean }
+    const byteLength = Buffer.byteLength(capped.value.preview ?? '', 'utf8')
+    expect(byteLength).toBeLessThanOrEqual(cap)
+  }
+})

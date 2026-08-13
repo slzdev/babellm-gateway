@@ -1,4 +1,16 @@
 /**
+ * Cuts at a UTF-8 character boundary at or below maxBytes. Slicing blind and
+ * letting the decoder clean up does not work: a partial sequence becomes
+ * U+FFFD, which re-encodes to three bytes and can push the preview back over
+ * the cap it was supposed to enforce.
+ */
+function sliceToBoundary(buffer: Buffer, maxBytes: number): string {
+  let end = Math.min(maxBytes, buffer.length)
+  while (end > 0 && end < buffer.length && (buffer[end] & 0xc0) === 0x80) end--
+  return buffer.subarray(0, end).toString('utf8')
+}
+
+/**
  * Bounds what a payload can cost in the database.
  *
  * An oversized payload is replaced rather than clipped: a truncated JSON
@@ -29,7 +41,7 @@ export function capPayload(
       bytes,
       // Sliced on bytes, not characters, so a multi-byte character near the
       // boundary cannot push the preview back over the cap.
-      preview: Buffer.from(serialized, 'utf8').subarray(0, maxBytes).toString('utf8'),
+      preview: sliceToBoundary(Buffer.from(serialized, 'utf8'), maxBytes),
     },
     truncated: true,
   }
