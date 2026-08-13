@@ -670,31 +670,48 @@ export async function resetDb() {
 export { db as testDb }
 ```
 
-- [ ] **Step 2: Verify the partitions module's own tests pass, twice in a row**
+- [ ] **Step 2: Scope one Task 3 assertion to the months it owns**
+
+Seeding the real current month changes what `dropExpiredPartitions` sweeps, and one Task 3 test asserts the swept list *exactly*:
+
+```ts
+expect(dropped).toEqual([
+  'request_logs_2030_01', 'request_logs_2030_02', 'request_logs_2030_03',
+])
+```
+
+That was written when the catalog held only what the test itself created. With the fixture seeding the real current month and its lead — months that are years older than the test's `now` of 2030-06 — those get swept too, and the list is seven names, not three. The assertion is asserting the fixture's contents, not `dropExpiredPartitions`' behaviour.
+
+In `tests/lib/logs/partitions.test.ts`, in the test named `dropExpiredPartitions keeps the current month and N-1 before it`, replace that assertion with:
+
+```ts
+  // Scoped to the months this test created. The fixture also seeds the real
+  // current month and its lead, which are years older than this test's `now`
+  // and are therefore swept as well. Asserting the whole list would be
+  // asserting what the fixture happens to contain rather than what the
+  // function under test decides.
+  expect(dropped.filter((name) => name.startsWith('request_logs_2030_'))).toEqual([
+    'request_logs_2030_01', 'request_logs_2030_02', 'request_logs_2030_03',
+  ])
+```
+
+Change nothing else in that file. The exactness that matters — that it drops 01–03 and *only* 01–03 of the months the test owns, in order — is preserved; the three assertions below it on `left` are already tolerant and stay as they are.
+
+- [ ] **Step 3: Verify the partitions file passes twice in a row**
 
 ```bash
 pnpm vitest run tests/lib/logs/partitions.test.ts
 pnpm vitest run tests/lib/logs/partitions.test.ts
 ```
 
-Expected: PASS, 14 tests, **both times**. The second run is the whole point of this task — it is the run that failed before the sweep existed. A single green run does not demonstrate the fix.
+Expected: PASS, 14 tests, **both times**. The second run is the whole point of this task — it is the run that failed before the sweep existed. A single green run does not demonstrate the fix, because a single green run is exactly what hid the defect.
 
-- [ ] **Step 3: Confirm the database is left in the expected state**
-
-```bash
-docker exec babellm-test-postgres-test-1 psql -U babellm -d babellm_test -tA -c \
-  "SELECT c.relname FROM pg_inherits i
-     JOIN pg_class p ON p.oid = i.inhparent
-     JOIN pg_class c ON c.oid = i.inhrelid
-    WHERE p.relname = 'request_logs' ORDER BY 1"
-```
-
-Expected: exactly four partitions — the current month and the next three — and no 2029/2030/2031/2032 leftovers, no `request_logs_archive`.
+Do **not** additionally assert that the database ends with the current month plus three. `resetDb` runs *before* each test, not after the last one, and the final test in this file calls `dropExpiredPartitions` — so the end-of-run partition set is whatever that test left behind. The invariant this task establishes is "every test starts from a known set", and two consecutive green runs is what demonstrates it.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add tests/helpers/db.ts
+git add tests/helpers/db.ts tests/lib/logs/partitions.test.ts
 git commit -m "test: restore the request_log partition set on reset"
 ```
 
