@@ -61,6 +61,19 @@ test('an unknown driver name falls back to stdout and says so', async () => {
   expect(resolved.fallback).toBe('unknown_driver')
 })
 
+test('a driver name that collides with Object.prototype falls back to stdout, not the prototype value', async () => {
+  // DRIVERS is a plain object literal, so a bare `DRIVERS[name]` lookup
+  // resolves "constructor" to the `Object` function via the prototype
+  // chain instead of `undefined`.
+  await setLoggingSettings({ store: 'constructor' })
+  clearRequestLogStoreCache()
+
+  const resolved = await resolveRequestLogStore()
+  expect(resolved.store.name).toBe('stdout')
+  expect(resolved.configured).toBe('constructor')
+  expect(resolved.fallback).toBe('unknown_driver')
+})
+
 test('a failed settings read falls back to stdout and caches the fallback', async () => {
   const spy = vi
     .spyOn(settingsModule, 'getLoggingSettings')

@@ -78,7 +78,7 @@ export function GovernanceForm({
       <div className="space-y-2">
         <Label htmlFor="retentionDays">Retention (days)</Label>
         <Input
-          id="retentionDays" name="retentionDays" type="number" min={0}
+          id="retentionDays" name="retentionDays" type="number" min={0} required
           defaultValue={retentionDays}
         />
         <p className="text-xs text-muted-foreground">

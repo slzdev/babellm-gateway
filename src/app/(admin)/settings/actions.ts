@@ -19,13 +19,27 @@ export async function saveLoggingSettingsAction(
   // setLoggingSettings deliberately skips this check — the Select only ever
   // offers known drivers, but a direct POST could send anything, and a typo
   // here should not silently start dropping every request log.
-  if (!(store in DRIVERS)) {
+  //
+  // `Object.hasOwn`, not `in`: DRIVERS is a plain object literal, so `in`
+  // walks the prototype chain and treats "constructor", "toString", etc. as
+  // present.
+  if (!Object.hasOwn(DRIVERS, store)) {
     return { error: `Unknown log store: "${store}".` }
   }
+
+  const retentionRaw = formData.get('retentionDays')
+  if (typeof retentionRaw !== 'string' || retentionRaw.trim() === '') {
+    return { error: 'Retention is required — enter 0 to keep everything.' }
+  }
+  const retentionDays = Number(retentionRaw)
+  if (!Number.isFinite(retentionDays)) {
+    return { error: 'Retention must be a number.' }
+  }
+
   try {
     await setLoggingSettings({
       store,
-      retentionDays: Number(formData.get('retentionDays')),
+      retentionDays,
       payloadMaxBytes: Number(formData.get('payloadMaxBytes')),
     })
   } catch (err) {

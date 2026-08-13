@@ -92,7 +92,15 @@ async function resolve(): Promise<StoreResolution> {
     }
   }
 
-  const store = DRIVERS[loggingSettings.store]
+  // `Object.hasOwn`, not a bare lookup: DRIVERS is a plain object literal, so
+  // a name like "constructor" or "toString" resolves via the prototype chain
+  // to a builtin (e.g. the `Object` function) instead of `undefined` — which
+  // is truthy, so a falsy check alone would hand back a non-driver as if it
+  // were one. This is the layer that must not be fooled: `store` here can
+  // come from anywhere logs.store can be set, not only this task's form.
+  const store = Object.hasOwn(DRIVERS, loggingSettings.store)
+    ? DRIVERS[loggingSettings.store]
+    : undefined
   if (!store) {
     console.error(
       `[gateway] no request log driver named "${loggingSettings.store}"; logging to stdout`,
