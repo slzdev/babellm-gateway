@@ -9,11 +9,13 @@ import { updateTargetAction, type ActionState } from './actions'
 
 export function EditTargetDialog({
   target,
+  virtualModelId,
   groups,
   open,
   onOpenChange,
 }: {
   target: { id: string; upstreamModel: string; priority: number; weight: number }
+  virtualModelId: string
   groups: PickerGroup[]
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -28,6 +30,7 @@ export function EditTargetDialog({
       successMessage="Target updated."
     >
       <input type="hidden" name="id" value={target.id} />
+      <input type="hidden" name="virtualModelId" value={virtualModelId} />
       <div className="space-y-2">
         <Label htmlFor={`edit-model-${target.id}`}>Upstream model</Label>
         <ModelCombobox

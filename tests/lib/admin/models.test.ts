@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { routeTargets, virtualModels } from '@/lib/db/schema'
 import { createProvider } from '@/lib/admin/providers'
 import {
-  addRouteTarget, createVirtualModel, deleteVirtualModel,
+  addRouteTarget, createVirtualModel, deleteVirtualModel, getVirtualModel,
   listVirtualModels, removeRouteTarget, setRouteTargetEnabled, updateRouteTarget, updateVirtualModel,
 } from '@/lib/admin/models'
 import { resetDb } from '../../helpers/db'
@@ -182,6 +182,62 @@ test('an edit is validated the same way an insert is', async () => {
     .rejects.toThrow(/positive integer/i)
   await expect(updateRouteTarget(target.id, { priority: 1.5 }))
     .rejects.toThrow(/integer/i)
+})
+
+test('renaming onto an existing name is refused with a readable message', async () => {
+  await createVirtualModel({ name: 'taken' })
+  const model = await createVirtualModel({ name: 'mine' })
+
+  await expect(updateVirtualModel(model.id, { name: 'taken' }))
+    .rejects.toThrow(/a virtual model named "taken" already exists/i)
+})
+
+test('rejects a max attempts value below one', async () => {
+  const model = await createVirtualModel({ name: 'house-model' })
+  await expect(updateVirtualModel(model.id, { maxAttempts: 0 }))
+    .rejects.toThrow(/max attempts/i)
+})
+
+test('rejects a non-integer max attempts value', async () => {
+  const model = await createVirtualModel({ name: 'house-model' })
+  await expect(updateVirtualModel(model.id, { maxAttempts: 2.5 }))
+    .rejects.toThrow(/max attempts/i)
+})
+
+test('fetches one virtual model with its targets ordered by priority', async () => {
+  const [a, b] = [await provider('alpha'), await provider('beta')]
+  const model = await createVirtualModel({
+    name: 'house-model', description: 'the default', policy: 'weighted',
+  })
+
+  await addRouteTarget({
+    virtualModelId: model.id, providerId: b.id, upstreamModel: 'b-1', priority: 5,
+  })
+  await addRouteTarget({
+    virtualModelId: model.id, providerId: a.id, upstreamModel: 'a-1', priority: 1,
+  })
+
+  const found = await getVirtualModel(model.id)
+  expect(found?.name).toBe('house-model')
+  expect(found?.description).toBe('the default')
+  expect(found?.policy).toBe('weighted')
+  expect(found?.targets.map((t) => t.upstreamModel)).toEqual(['a-1', 'b-1'])
+  expect(found?.targets[0].providerName).toBe('alpha')
+})
+
+test('fetching a virtual model returns only its own targets', async () => {
+  const p = await provider()
+  const mine = await createVirtualModel({ name: 'mine' })
+  const other = await createVirtualModel({ name: 'other' })
+  await addRouteTarget({ virtualModelId: mine.id, providerId: p.id, upstreamModel: 'a' })
+  await addRouteTarget({ virtualModelId: other.id, providerId: p.id, upstreamModel: 'b' })
+
+  const found = await getVirtualModel(mine.id)
+  expect(found?.targets.map((t) => t.upstreamModel)).toEqual(['a'])
+})
+
+test('fetching a virtual model that does not exist returns null', async () => {
+  expect(await getVirtualModel('00000000-0000-0000-0000-000000000000')).toBeNull()
 })
 
 test('editing a target that does not exist is refused', async () => {

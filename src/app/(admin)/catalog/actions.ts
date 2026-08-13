@@ -219,5 +219,8 @@ export async function routeToModelAction(
 
   revalidatePath('/catalog')
   revalidatePath('/models')
+  // The route just landed in this model's targets table, which the model's
+  // own page renders.
+  revalidatePath(`/models/${virtualModelId}`)
   return { success: 'Route created.' }
 }
