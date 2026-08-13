@@ -172,19 +172,26 @@ provider:
   the request log line — `logit_bias`, `logprobs`, `top_logprobs`,
   `frequency_penalty`, `presence_penalty` and `seed` are dropped the same way,
   as is an `input_audio` content part (reported as `audio_content`). Sending
-  `n: 1`, `frequency_penalty: 0`, or `presence_penalty: 0` is **not**
-  reported — those values already match what the Responses API does on its
-  own, and reporting them would put a line in the header on nearly every
-  request and bury the cases that actually change the answer. An absent
-  header therefore means "nothing that would change the answer was dropped,"
-  not "nothing was dropped."
+  `n: 1`, `frequency_penalty: 0`, `presence_penalty: 0`, `stop: []`,
+  `logprobs: false`, or `logit_bias: {}` is **not** reported — those values
+  already match what the Responses API does on its own, and reporting them
+  would put a line in the header on nearly every request and bury the cases
+  that actually change the answer. An absent header therefore means "nothing
+  that would change the answer was dropped," not "nothing was dropped."
 - **The deprecated functions API is not structurally supported.** A
   `role: 'function'` message carries only a `name` and no call id, so it
   cannot become a `function_call_output` the way a `role: 'tool'` message can.
-  The gateway instead carries the result through as a `developer` message
-  reading `[function result: <name>] <content>`, and reports
-  `legacy_function_message` in the dropped-params header. Use `tools` and
-  `tool_call_id` instead.
+  The gateway instead carries the result through as a `user` message reading
+  `[function result: <name>] <content>` — `user`, not `developer`, because the
+  content is third-party data and `developer` is a high-authority instruction
+  channel — and reports `legacy_function_message` in the dropped-params
+  header. Use `tools` and `tool_call_id` instead.
+- **A `tool` message without a `tool_call_id` is carried the same way.**
+  `tool_call_id` is optional in the request schema, so a valid request can
+  omit it; emitting a `function_call_output` with a fabricated `call_id`
+  would send a dangling reference upstream, so the result is carried as a
+  `user` message reading `[tool result] <content>` instead, and reports
+  `tool_message_without_call_id` in the dropped-params header.
 - **Reasoning travels one way.** Reasoning summaries are surfaced as
   `message.reasoning_content` (and `delta.reasoning_content` when streaming) —
   a de-facto convention rather than part of the OpenAI API — but are never fed
@@ -196,8 +203,9 @@ Summaries are requested only when the client sends `reasoning_effort`, because
 asking a non-reasoning model for them is an error. To request them regardless,
 set `requestReasoningSummary: true` in the provider's config.
 
-A provider on the wrong flavor fails fast: `/v1/chat/completions` returns `404`
-from the upstream, and the error names the setting.
+A provider on the wrong flavor fails fast in either direction: a `404` from the
+upstream, whichever flavor is misconfigured, comes back with the error naming
+the setting to change.
 
 Each settled request writes one JSON line to stdout: request id, key name,
 virtual model, status, outcome, latency, time-to-first-token for streams, and

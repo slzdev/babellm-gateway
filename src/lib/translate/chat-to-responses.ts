@@ -33,6 +33,27 @@ const INERT: Record<string, unknown> = {
   presence_penalty: 0,
 }
 
+/**
+ * `stop: []`, `logprobs: false` and `logit_bias: {}` are just as inert as the
+ * values in INERT above — frameworks send them unprompted — but they can't
+ * live in a simple equality map because "empty" takes a different shape per
+ * type. Checked structurally instead of growing INERT into something clever.
+ */
+function isInert(name: string, value: unknown): boolean {
+  if (name in INERT && value === INERT[name]) return true
+  if (value === false) return true
+  if (Array.isArray(value) && value.length === 0) return true
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0
+  ) {
+    return true
+  }
+  return false
+}
+
 function hasAudioPart(req: ChatCompletionRequest): boolean {
   return req.messages.some(
     (message) =>
@@ -47,7 +68,7 @@ export function droppedParams(req: ChatCompletionRequest): string[] {
   for (const name of UNMAPPABLE) {
     const value = (req as Record<string, unknown>)[name]
     if (value === undefined || value === null) continue
-    if (name in INERT && value === INERT[name]) continue
+    if (isInert(name, value)) continue
     dropped.push(name)
   }
 
@@ -55,6 +76,10 @@ export function droppedParams(req: ChatCompletionRequest): string[] {
 
   if (req.messages.some((message) => message.role === 'function')) {
     dropped.push('legacy_function_message')
+  }
+
+  if (req.messages.some((message) => message.role === 'tool' && !message.tool_call_id)) {
+    dropped.push('tool_message_without_call_id')
   }
 
   return dropped
@@ -97,9 +122,22 @@ function toInput(messages: ChatMessage[]): ResponseInputItem[] {
 
   for (const message of messages) {
     if (message.role === 'tool') {
+      // `tool_call_id` is optional in the schema, so a valid request can omit
+      // it. Without a call id there is nothing for a function_call_output to
+      // correlate to, and emitting one with a fabricated id would send a
+      // dangling reference upstream — the same defect the legacy `function`
+      // branch below exists to avoid. Carry the result as data instead.
+      if (!message.tool_call_id) {
+        input.push({
+          role: 'user',
+          content: `[tool result] ${textOf(message.content)}`,
+        } as ResponseInputItem)
+        continue
+      }
+
       input.push({
         type: 'function_call_output',
-        call_id: message.tool_call_id ?? '',
+        call_id: message.tool_call_id,
         output: textOf(message.content),
       } as ResponseInputItem)
       continue
@@ -110,10 +148,16 @@ function toInput(messages: ChatMessage[]): ResponseInputItem[] {
     // `function_call_output` to correlate to. Emitting one with a fabricated
     // id would send an item upstream referencing nothing, so the result is
     // carried as text instead: the model still sees what the function
-    // returned, and droppedParams reports that the structure was lost.
+    // returned, and droppedParams reports that the structure was lost. The
+    // carrier is `user`, not `developer`: a function result is third-party
+    // data — whatever an external API returned — and `developer` is the
+    // high-authority instruction channel. Giving untrusted content that
+    // authority would turn a prompt-injection payload into an instruction the
+    // model is told to weigh heavily, which the Chat Completions original
+    // never granted it.
     if (message.role === 'function') {
       input.push({
-        role: 'developer',
+        role: 'user',
         content: `[function result: ${message.name ?? 'unknown'}] ${textOf(message.content)}`,
       } as ResponseInputItem)
       continue
@@ -254,6 +298,10 @@ function toUsage(usage: ResponseUsage) {
     prompt_tokens: usage.input_tokens,
     completion_tokens: usage.output_tokens,
     total_tokens: usage.total_tokens,
+    // `output_tokens_details` and `input_tokens_details` are non-optional in
+    // ResponseUsage's types, which makes these guards look like dead code —
+    // but this module exists to talk to minimal clones that omit them, so at
+    // runtime the fields can genuinely be absent. Load-bearing; do not delete.
     ...(usage.output_tokens_details
       ? {
           completion_tokens_details: {
@@ -337,7 +385,11 @@ export async function* fromResponseStream(
   const toolIndexByOutput = new Map<number, number>()
   let nextToolIndex = 0
   let rolePending = true
-  let created = 0
+  // `identity.ts`'s rewriteChunk overwrites `id` and `model` on every chunk
+  // but not `created` — it is the one metadata field left as this translator
+  // sets it. A clone that omits `response.created` would otherwise leave
+  // every chunk stamped with the epoch instead of a plausible timestamp.
+  let created = Math.floor(Date.now() / 1000)
   let model = ''
 
   // Responses always reports usage on completion, so `include_usage` needs no
@@ -380,6 +432,13 @@ export async function* fromResponseStream(
         yield chunk({ refusal: event.delta })
         break
 
+      // Both arms concatenate onto the same field, but a buffered response
+      // (reasoningTextOf, above) prefers the summary and falls back to raw
+      // text only when no summary exists. A provider that streams both a
+      // summary and raw reasoning text therefore doubles the content here in
+      // a way the non-streaming path never would. There is no correct
+      // streaming fix — the translator cannot know in advance whether a
+      // summary is still coming — so this is recorded rather than patched.
       case 'response.reasoning_summary_text.delta':
       case 'response.reasoning_text.delta':
         yield chunk({ reasoning_content: event.delta })
@@ -402,6 +461,12 @@ export async function* fromResponseStream(
 
       case 'response.function_call_arguments.delta': {
         const index = toolIndexByOutput.get(event.output_index)
+        // No `response.output_item.added` was seen for this output_index, so
+        // there is no call_id/name to synthesise an opening fragment from —
+        // dropping is the only option. The consequence: no tool_calls
+        // fragment is ever emitted for this call, nextToolIndex stays at 0,
+        // finishReason falls through to 'stop', and the client receives an
+        // empty assistant message where a tool call was intended.
         if (index === undefined) break
         yield chunk({ tool_calls: [{ index, function: { arguments: event.delta } }] })
         break
@@ -428,6 +493,13 @@ export async function* fromResponseStream(
         throw new Error(
           event.response.error?.message ?? 'The upstream response failed.',
         )
+
+      // `error` is a top-level stream event, not a response status — a clone
+      // can emit it mid-stream instead of `response.failed`. Dropping it ends
+      // the stream cleanly, so a truncated answer would reach the client as a
+      // successful 200 and log as one.
+      case 'error':
+        throw new Error(event.message || 'The upstream stream reported an error.')
 
       default:
         // Everything else is deliberately dropped. The `.done` events restate

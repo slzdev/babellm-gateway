@@ -168,8 +168,39 @@ test('a legacy function message is carried as text rather than a dangling call_i
 
   expect(params.input).toEqual([
     { role: 'user', content: 'weather?' },
-    { role: 'developer', content: '[function result: get_weather] 18C' },
+    // `user`, not `developer`: a function result is third-party data, and
+    // `developer` is a high-authority instruction channel a prompt-injection
+    // payload should never ride on.
+    { role: 'user', content: '[function result: get_weather] 18C' },
   ])
+})
+
+test('a tool message without a tool_call_id is carried as text, not a dangling call_id', () => {
+  const params = toResponsesRequest(
+    request({
+      messages: [{ role: 'tool', content: '{"temp":21}' }],
+    } as never),
+    'm',
+  )
+
+  expect(params.input).toEqual([
+    { role: 'user', content: '[tool result] {"temp":21}' },
+  ])
+})
+
+test('no function_call_output is emitted for a tool message without a call id', () => {
+  const params = toResponsesRequest(
+    request({ messages: [{ role: 'tool', content: 'x' }] } as never),
+    'm',
+  )
+  const items = params.input as { type?: string }[]
+  expect(items.some((item) => item.type === 'function_call_output')).toBe(false)
+})
+
+test('droppedParams reports a tool message without a call id', () => {
+  expect(
+    droppedParams(request({ messages: [{ role: 'tool', content: 'x' }] } as never)),
+  ).toEqual(['tool_message_without_call_id'])
 })
 
 test('no function_call_output is emitted for a legacy function message', () => {
@@ -313,6 +344,12 @@ test('droppedParams names the parameters that were discarded', () => {
 test('droppedParams stays silent about inert defaults', () => {
   expect(droppedParams(request({
     n: 1, frequency_penalty: 0, presence_penalty: 0, temperature: 0.7,
+  } as never))).toEqual([])
+})
+
+test('droppedParams stays silent about other inert-shaped defaults', () => {
+  expect(droppedParams(request({
+    stop: [], logprobs: false, logit_bias: {},
   } as never))).toEqual([])
 })
 
@@ -595,4 +632,20 @@ test('a failed response throws so the routing loop can classify it', async () =>
       { type: 'response.failed', response: { id: 'r', created_at: 1, model: 'm', status: 'failed', error: { code: 'server_error', message: 'upstream exploded' }, output: [] } },
     ]),
   ).rejects.toThrow('upstream exploded')
+})
+
+test('a top-level error stream event throws rather than ending the stream silently', async () => {
+  await expect(
+    collectStream([
+      { type: 'error', code: 'server_error', message: 'stream aborted upstream', param: null, sequence_number: 1 },
+    ]),
+  ).rejects.toThrow('stream aborted upstream')
+})
+
+test('created falls back to the current time when response.created never arrives', async () => {
+  const before = Math.floor(Date.now() / 1000)
+  const chunks = await collectStream([
+    { type: 'response.output_text.delta', output_index: 0, item_id: 'm1', delta: 'hi' },
+  ])
+  expect(chunks[0].created).toBeGreaterThanOrEqual(before)
 })
