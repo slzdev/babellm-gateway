@@ -4,7 +4,7 @@ import type { RequestLogEntry } from '@/lib/logs/types'
 
 function entry(overrides: Partial<RequestLogEntry> = {}): RequestLogEntry {
   return {
-    requestId: 'req_1', keyId: null, keyName: 'prod', model: 'house-model',
+    id: 'a3f8b1c2-4d5e-7f60-8a9b-0c1d2e3f4a5b', keyId: null, keyName: 'prod', model: 'house-model',
     stream: false, status: 200, outcome: 'ok', latencyMs: 42, attempts: [],
     ...overrides,
   }
@@ -12,7 +12,7 @@ function entry(overrides: Partial<RequestLogEntry> = {}): RequestLogEntry {
 
 test('a plain request keeps the shape the aggregator already parses', () => {
   expect(buildRequestLog(entry())).toMatchObject({
-    lvl: 'info', msg: 'gateway.request', request_id: 'req_1',
+    lvl: 'info', msg: 'gateway.request', request_id: 'a3f8b1c2-4d5e-7f60-8a9b-0c1d2e3f4a5b',
     key: 'prod', model: 'house-model', stream: false,
     status: 200, outcome: 'ok', latency_ms: 42, attempts: [],
   })
