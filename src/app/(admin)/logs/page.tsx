@@ -114,7 +114,7 @@ export default async function LogsPage({
               {view.page?.rows.map((row) => (
                 <TableRow key={row.id} className="cursor-pointer">
                   <TableCell className="whitespace-nowrap">
-                    <Link href={`/logs/${row.requestId}`} className="hover:underline">
+                    <Link href={`/logs/${row.id}`} className="hover:underline">
                       {row.createdAt.toISOString().slice(0, 19).replace('T', ' ')}
                     </Link>
                   </TableCell>

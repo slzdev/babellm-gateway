@@ -62,11 +62,11 @@ function Json({ label, value }: { label: string; value: unknown }) {
 export default async function LogDetailPage({
   params,
 }: {
-  params: Promise<{ requestId: string }>
+  params: Promise<{ id: string }>
 }) {
   await requireAdmin()
-  const { requestId } = await params
-  const log = await loadLogDetail(decodeURIComponent(requestId))
+  const { id } = await params
+  const log = await loadLogDetail(decodeURIComponent(id))
   if (!log) notFound()
 
   // `payload.truncated` has three sources, only two of which stamp an
@@ -95,7 +95,7 @@ export default async function LogDetailPage({
         </Link>
 
         <PageHeader
-          title={log.requestId}
+          title={log.id}
           description={`${log.createdAt.toISOString().replace('T', ' ').slice(0, 19)} · ${log.model ?? 'unknown model'}`}
         />
       </div>

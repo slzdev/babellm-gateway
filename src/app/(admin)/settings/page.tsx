@@ -10,24 +10,26 @@ import { GovernanceForm } from './governance-form'
 
 export const dynamic = 'force-dynamic'
 
-/** Renders the `logs.last_prune` settings row. No row yet (a fresh install,
- * or retention has always been disabled) reads as "never" rather than a
+/** Renders the `logs.last_maintenance` settings row. No row yet — a fresh
+ * install whose first run has not finished — reads as "never" rather than a
  * blank line. */
-function prune(value: { at: string; deleted: number } | null): string {
+function maintenance(
+  value: { at: string; created: string[]; dropped: string[] } | null,
+): string {
   if (!value) return 'never'
   const at = value.at.slice(0, 19).replace('T', ' ')
-  return `${at} — ${value.deleted} row${value.deleted === 1 ? '' : 's'} deleted`
+  return `${at} — ${value.created.length} created, ${value.dropped.length} dropped`
 }
 
 export default async function SettingsPage() {
   await requireAdmin()
-  const [settings, resolved, [lastPrune]] = await Promise.all([
+  const [settings, resolved, [lastRun]] = await Promise.all([
     getLoggingSettings(),
     resolveRequestLogStore(),
     db
       .select({ value: settingsTable.value })
       .from(settingsTable)
-      .where(eq(settingsTable.key, 'logs.last_prune'))
+      .where(eq(settingsTable.key, 'logs.last_maintenance'))
       .limit(1),
   ])
 
@@ -48,13 +50,15 @@ export default async function SettingsPage() {
           <GovernanceForm
             drivers={drivers}
             store={settings.store}
-            retentionDays={settings.retentionDays}
+            retentionMonths={settings.retentionMonths}
             payloadMaxBytes={settings.payloadMaxBytes}
             activeStore={resolved.store.name}
             ttlSeconds={LOG_SETTINGS_TTL_MS / 1000}
           />
           <p className="pt-6 text-xs text-muted-foreground">
-            Retention last ran: {prune(lastPrune?.value as { at: string; deleted: number } | undefined ?? null)}
+            Maintenance last ran: {maintenance(
+              lastRun?.value as { at: string; created: string[]; dropped: string[] } | undefined ?? null,
+            )}
           </p>
         </TabsContent>
       </Tabs>

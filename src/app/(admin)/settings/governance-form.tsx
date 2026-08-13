@@ -13,14 +13,14 @@ import { saveLoggingSettingsAction, type ActionState } from './actions'
 export function GovernanceForm({
   drivers,
   store,
-  retentionDays,
+  retentionMonths,
   payloadMaxBytes,
   activeStore,
   ttlSeconds,
 }: {
   drivers: Array<{ name: string; readable: boolean }>
   store: string
-  retentionDays: number
+  retentionMonths: number
   payloadMaxBytes: number
   activeStore: string
   ttlSeconds: number
@@ -76,14 +76,16 @@ export function GovernanceForm({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="retentionDays">Retention (days)</Label>
+        <Label htmlFor="retentionMonths">Retention (months)</Label>
         <Input
-          id="retentionDays" name="retentionDays" type="number" min={0} required
-          defaultValue={retentionDays}
+          id="retentionMonths" name="retentionMonths" type="number" min={0} required
+          defaultValue={retentionMonths}
         />
         <p className="text-xs text-muted-foreground">
-          Logs older than this are deleted hourly. Set 0 to keep everything, which
-          means you are responsible for the table&apos;s growth.
+          Logs are stored one month per table and discarded a whole month at a time,
+          daily. A value of N keeps the current month and the N−1 before it, so the
+          youngest logs are always kept in full. Set 0 to keep everything, which means
+          you are responsible for the database&apos;s growth.
         </p>
       </div>
 

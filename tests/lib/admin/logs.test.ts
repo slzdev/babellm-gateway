@@ -120,8 +120,14 @@ test('loadLogs reports no error on the happy path', async () => {
 test('loadLogDetail returns null rather than throwing when the store fails', async () => {
   const spy = vi.spyOn(postgresStore, 'get').mockRejectedValue(new Error('connection reset'))
   try {
-    await expect(loadLogDetail('req_x')).resolves.toBeNull()
+    await expect(loadLogDetail('01912c3e-1234-7abc-8def-0123456789ab')).resolves.toBeNull()
   } finally {
     spy.mockRestore()
   }
+})
+
+test('loadLogDetail returns null for a malformed id rather than throwing', async () => {
+  // store.get validates the uuid shape itself, so this exercises the same
+  // "hand-edited URL renders notFound(), not a 500" contract end to end.
+  await expect(loadLogDetail('req_x')).resolves.toBeNull()
 })

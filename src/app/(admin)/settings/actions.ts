@@ -27,19 +27,19 @@ export async function saveLoggingSettingsAction(
     return { error: `Unknown log store: "${store}".` }
   }
 
-  const retentionRaw = formData.get('retentionDays')
+  const retentionRaw = formData.get('retentionMonths')
   if (typeof retentionRaw !== 'string' || retentionRaw.trim() === '') {
     return { error: 'Retention is required — enter 0 to keep everything.' }
   }
-  const retentionDays = Number(retentionRaw)
-  if (!Number.isFinite(retentionDays)) {
+  const retentionMonths = Number(retentionRaw)
+  if (!Number.isFinite(retentionMonths)) {
     return { error: 'Retention must be a number.' }
   }
 
   try {
     await setLoggingSettings({
       store,
-      retentionDays,
+      retentionMonths,
       payloadMaxBytes: Number(formData.get('payloadMaxBytes')),
     })
   } catch (err) {

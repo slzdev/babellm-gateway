@@ -98,9 +98,9 @@ export function LogFilters({
         <Input
           value={requestId}
           onChange={(event) => setRequestId(event.target.value)}
-          placeholder="req_…"
+          placeholder="uuid…"
           className="w-48 font-mono text-xs"
-          aria-label="Look up a request id"
+          aria-label="Look up a request by its uuid"
         />
         <Button type="submit" variant="secondary">Find</Button>
       </form>

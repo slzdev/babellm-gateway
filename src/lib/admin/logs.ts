@@ -107,10 +107,10 @@ export async function loadLogs(filter: LogFilter): Promise<LogsView> {
   }
 }
 
-export async function loadLogDetail(requestId: string): Promise<LogDetail | null> {
+export async function loadLogDetail(id: string): Promise<LogDetail | null> {
   try {
     const { store } = await resolveRequestLogStore()
-    return store.readable ? await store.get(requestId) : null
+    return store.readable ? await store.get(id) : null
   } catch (err) {
     console.error('[gateway] could not load request log detail', err)
     return null
