@@ -1230,6 +1230,27 @@ In `getLoggingSettings`, read `LOG_KEYS.retentionMonths` into `retentionMonths` 
 Run: `pnpm vitest run tests/lib/logging-settings.test.ts`
 Expected: PASS.
 
+- [ ] **Step 4b: Remove Task 6's forward-reference casts**
+
+Task 6 needed `retentionMonths` before this task existed, so it reached the field through two casts. The rename you just made is what they were waiting for. Delete both — a cast that outlives its reason is a permanent hole in the type system, and this one sits in the production retention path.
+
+In `src/lib/logs/postgres.ts`, the `maintain` method reads:
+
+```ts
+    const retentionMonths = (settings as LoggingSettings & { retentionMonths: number }).retentionMonths
+```
+
+Replace it with a plain `settings.retentionMonths` at the use site and drop the local. In `tests/lib/logs/postgres-store.test.ts`, the `maintain` test builds:
+
+```ts
+  const settings = { store: 'postgres', retentionMonths: 2, payloadMaxBytes: 1024 } as unknown as LoggingSettings
+```
+
+Drop the `as unknown as LoggingSettings` — the object literal now satisfies `LoggingSettings` on its own. Remove the `LoggingSettings` import from the test if nothing else uses it.
+
+Then run: `pnpm vitest run tests/lib/logs/postgres-store.test.ts`
+Expected: PASS, 13 tests. If TypeScript still objects to either site, the rename in Step 3 is incomplete — fix that rather than restoring a cast.
+
 - [ ] **Step 5: Mint the id at request start**
 
 In `src/lib/gateway/chat-handler.ts`, add `import { uuidv7 } from '@/lib/uuid'` alongside the existing imports, and replace line 138:
@@ -1256,7 +1277,8 @@ Expected: FAIL only in `src/lib/logs/retention.ts` (Task 8), `src/lib/admin/logs
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/lib/settings.ts src/lib/gateway/chat-handler.ts tests/lib/logging-settings.test.ts
+git add src/lib/settings.ts src/lib/gateway/chat-handler.ts tests/lib/logging-settings.test.ts \
+  src/lib/logs/postgres.ts tests/lib/logs/postgres-store.test.ts
 git commit -m "feat(logs): retention in months; mint the request id at request start"
 ```
 
