@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { MoreHorizontalIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -11,6 +12,7 @@ import { deleteModelAction } from './actions'
 
 export function ModelSectionActions({ id, name }: { id: string; name: string }) {
   const [confirming, setConfirming] = useState(false)
+  const router = useRouter()
 
   return (
     <>
@@ -37,6 +39,10 @@ export function ModelSectionActions({ id, name }: { id: string; name: string }) 
           const formData = new FormData()
           formData.set('id', id)
           await deleteModelAction(formData)
+          // This menu lives on the model's own page, which no longer has
+          // anything to render. Navigating here rather than redirecting from
+          // the action keeps ConfirmAction's success toast reachable.
+          router.push('/models')
         }}
       />
     </>

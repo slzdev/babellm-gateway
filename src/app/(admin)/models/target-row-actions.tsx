@@ -15,9 +15,12 @@ import { EditTargetDialog } from './edit-target-form'
 
 export function TargetRowActions({
   target,
+  virtualModelId,
   groups,
 }: {
   target: { id: string; upstreamModel: string; priority: number; weight: number; enabled: boolean }
+  /** Only for revalidation — every mutation has to refresh this model's page. */
+  virtualModelId: string
   groups: PickerGroup[]
 }) {
   const [editing, setEditing] = useState(false)
@@ -29,7 +32,7 @@ export function TargetRowActions({
       // A bare await here is an unhandled rejection with no user feedback —
       // see target-enabled-toggle.tsx, which this menu item replaces.
       try {
-        await toggleTargetAction(target.id, !target.enabled)
+        await toggleTargetAction(target.id, !target.enabled, virtualModelId)
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Could not update the target.')
       }
@@ -58,7 +61,13 @@ export function TargetRowActions({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <EditTargetDialog target={target} groups={groups} open={editing} onOpenChange={setEditing} />
+      <EditTargetDialog
+        target={target}
+        virtualModelId={virtualModelId}
+        groups={groups}
+        open={editing}
+        onOpenChange={setEditing}
+      />
 
       <ConfirmAction
         open={confirming}
@@ -70,6 +79,7 @@ export function TargetRowActions({
         onConfirm={async () => {
           const formData = new FormData()
           formData.set('id', target.id)
+          formData.set('virtualModelId', virtualModelId)
           await removeTargetAction(formData)
         }}
       />

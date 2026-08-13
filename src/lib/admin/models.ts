@@ -43,6 +43,28 @@ export interface VirtualModelListItem {
   }>
 }
 
+type TargetRow = { target: RouteTargetRow; providerName: string }
+
+function toListItem(model: VirtualModelRow, rows: TargetRow[]): VirtualModelListItem {
+  return {
+    id: model.id,
+    name: model.name,
+    description: model.description,
+    policy: model.policy,
+    maxAttempts: model.maxAttempts,
+    enabled: model.enabled,
+    targets: rows.map(({ target, providerName }) => ({
+      id: target.id,
+      providerId: target.providerId,
+      providerName,
+      upstreamModel: target.upstreamModel,
+      priority: target.priority,
+      weight: target.weight,
+      enabled: target.enabled,
+    })),
+  }
+}
+
 export async function listVirtualModels(): Promise<VirtualModelListItem[]> {
   const models = await db.select().from(virtualModels).orderBy(asc(virtualModels.name))
   const rows = await db
@@ -51,25 +73,24 @@ export async function listVirtualModels(): Promise<VirtualModelListItem[]> {
     .innerJoin(providers, eq(routeTargets.providerId, providers.id))
     .orderBy(asc(routeTargets.priority), asc(routeTargets.createdAt))
 
-  return models.map((model) => ({
-    id: model.id,
-    name: model.name,
-    description: model.description,
-    policy: model.policy,
-    maxAttempts: model.maxAttempts,
-    enabled: model.enabled,
-    targets: rows
-      .filter(({ target }) => target.virtualModelId === model.id)
-      .map(({ target, providerName }) => ({
-        id: target.id,
-        providerId: target.providerId,
-        providerName,
-        upstreamModel: target.upstreamModel,
-        priority: target.priority,
-        weight: target.weight,
-        enabled: target.enabled,
-      })),
-  }))
+  return models.map((model) => toListItem(
+    model,
+    rows.filter(({ target }) => target.virtualModelId === model.id),
+  ))
+}
+
+export async function getVirtualModel(id: string): Promise<VirtualModelListItem | null> {
+  const [model] = await db.select().from(virtualModels).where(eq(virtualModels.id, id))
+  if (!model) return null
+
+  const rows = await db
+    .select({ target: routeTargets, providerName: providers.name })
+    .from(routeTargets)
+    .innerJoin(providers, eq(routeTargets.providerId, providers.id))
+    .where(eq(routeTargets.virtualModelId, id))
+    .orderBy(asc(routeTargets.priority), asc(routeTargets.createdAt))
+
+  return toListItem(model, rows)
 }
 
 /**
@@ -86,16 +107,29 @@ function isUniqueViolation(err: unknown): boolean {
   return hasCode(cause) && cause.code === '23505'
 }
 
-export async function createVirtualModel(input: VirtualModelInput): Promise<VirtualModelRow> {
-  const name = input.name.trim()
+function validateName(value: string): string {
+  const name = value.trim()
   if (!name) throw new Error('A virtual model name is required.')
+  return name
+}
+
+function validateMaxAttempts(value: number): number {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error('Max attempts must be a positive integer.')
+  }
+  return value
+}
+
+export async function createVirtualModel(input: VirtualModelInput): Promise<VirtualModelRow> {
+  const name = validateName(input.name)
+  const maxAttempts = validateMaxAttempts(input.maxAttempts ?? 3)
 
   try {
     const [row] = await db.insert(virtualModels).values({
       name,
       description: input.description ?? null,
       policy: input.policy ?? 'failover',
-      maxAttempts: input.maxAttempts ?? 3,
+      maxAttempts,
       enabled: input.enabled ?? true,
     }).returning()
     return row
@@ -110,20 +144,25 @@ export async function updateVirtualModel(
   input: Partial<VirtualModelInput>,
 ): Promise<VirtualModelRow> {
   const patch: Record<string, unknown> = { updatedAt: new Date() }
-  if (input.name !== undefined) {
-    const name = input.name.trim()
-    if (!name) throw new Error('A virtual model name is required.')
-    patch.name = name
-  }
+  if (input.name !== undefined) patch.name = validateName(input.name)
   if (input.description !== undefined) patch.description = input.description
   if (input.policy !== undefined) patch.policy = input.policy
-  if (input.maxAttempts !== undefined) patch.maxAttempts = input.maxAttempts
+  if (input.maxAttempts !== undefined) patch.maxAttempts = validateMaxAttempts(input.maxAttempts)
   if (input.enabled !== undefined) patch.enabled = input.enabled
 
-  const [row] = await db.update(virtualModels).set(patch)
-    .where(eq(virtualModels.id, id)).returning()
-  if (!row) throw new Error('Virtual model not found.')
-  return row
+  // A rename can collide with another model's name just as an insert can —
+  // the detail page's settings form is the first thing to make that reachable.
+  try {
+    const [row] = await db.update(virtualModels).set(patch)
+      .where(eq(virtualModels.id, id)).returning()
+    if (!row) throw new Error('Virtual model not found.')
+    return row
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw new Error(`A virtual model named "${patch.name}" already exists.`)
+    }
+    throw err
+  }
 }
 
 export async function deleteVirtualModel(id: string): Promise<void> {
