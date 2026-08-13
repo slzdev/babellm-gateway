@@ -1,14 +1,15 @@
 import { beforeEach, expect, test } from 'vitest'
-import { eq } from 'drizzle-orm'
-import { db } from '@/lib/db'
-import { requestLogs, requestPayloads } from '@/lib/db/schema'
+import { db, pool } from '@/lib/db'
+import { requestLogs } from '@/lib/db/schema'
+import { partitionName } from '@/lib/logs/partitions'
+import { uuidv7 } from '@/lib/uuid'
 import { resetDb } from '../../helpers/db'
 
 beforeEach(resetDb)
 
 test('a log row round-trips with an app-generated v7 id', async () => {
   const [row] = await db.insert(requestLogs).values({
-    requestId: 'req_one',
+    id: uuidv7(),
     keyName: 'prod',
     model: 'house-model',
     status: 200,
@@ -23,24 +24,23 @@ test('a log row round-trips with an app-generated v7 id', async () => {
   expect(row.payloadCaptured).toBe(false)
 })
 
-test('deleting a log cascades to its payload', async () => {
-  const [row] = await db.insert(requestLogs).values({
-    requestId: 'req_two', status: 200, outcome: 'ok', latencyMs: 1,
-  }).returning()
+test('a row routes to the partition its id encodes', async () => {
+  // resetDb provisions the current month, so minting the id against "now"
+  // guarantees a home for it without provisioning anything extra here.
+  const now = new Date()
+  const id = uuidv7(now)
+  await db.insert(requestLogs).values({ id, status: 200, outcome: 'ok', latencyMs: 1 })
 
-  await db.insert(requestPayloads).values({
-    requestLogId: row.id,
-    requestJson: { model: 'house-model' },
-    responseJson: { ok: true },
-  })
-
-  await db.delete(requestLogs).where(eq(requestLogs.id, row.id))
-  expect(await db.select().from(requestPayloads)).toHaveLength(0)
+  const { rows } = await pool.query(
+    'SELECT tableoid::regclass::text AS partition FROM request_logs WHERE id = $1',
+    [id],
+  )
+  expect(rows[0]?.partition).toBe(partitionName(now))
 })
 
 test('cost columns keep nine decimal places', async () => {
   const [row] = await db.insert(requestLogs).values({
-    requestId: 'req_three', status: 200, outcome: 'ok', latencyMs: 1,
+    id: uuidv7(), status: 200, outcome: 'ok', latencyMs: 1,
     costUsd: '0.000000123',
   }).returning()
 

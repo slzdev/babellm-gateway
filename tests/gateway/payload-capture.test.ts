@@ -41,7 +41,7 @@ test('a key with payload logging off stores no payload', async () => {
 
   const [row] = (await postgresStore.query({ limit: 1 })).rows
   expect(row.payloadCaptured).toBe(false)
-  expect((await postgresStore.get(row.requestId))?.payload).toBeNull()
+  expect((await postgresStore.get(row.id))?.payload).toBeNull()
 })
 
 test('a key with payload logging on stores what the client sent and received', async () => {
@@ -56,7 +56,7 @@ test('a key with payload logging on stores what the client sent and received', a
   const [row] = (await postgresStore.query({ limit: 1 })).rows
   expect(row.payloadCaptured).toBe(true)
 
-  const detail = await postgresStore.get(row.requestId)
+  const detail = await postgresStore.get(row.id)
   expect(detail?.payload?.request).toMatchObject({ model: 'house-model' })
   // The rewritten completion — what the client actually received — not the
   // upstream one.
@@ -84,7 +84,7 @@ test('a streaming response is assembled from its deltas', async () => {
   await waitForLogs()
 
   const [row] = (await postgresStore.query({ limit: 1 })).rows
-  const detail = await postgresStore.get(row.requestId)
+  const detail = await postgresStore.get(row.id)
   const response = detail?.payload?.response as {
     choices: Array<{ message: { content: string } }>
   }
@@ -104,7 +104,7 @@ test('an oversized payload is replaced by the truncation envelope', async () => 
   await waitForLogs()
 
   const [row] = (await postgresStore.query({ limit: 1 })).rows
-  const detail = await postgresStore.get(row.requestId)
+  const detail = await postgresStore.get(row.id)
   expect(detail?.payload?.truncated).toBe(true)
   expect(detail?.payload?.request).toMatchObject({ truncated: true })
 })
@@ -145,7 +145,7 @@ test('a stream clipped mid-flight is marked truncated without a stored-payload e
   await waitForLogs()
 
   const [row] = (await postgresStore.query({ limit: 1 })).rows
-  const detail = await postgresStore.get(row.requestId)
+  const detail = await postgresStore.get(row.id)
 
   expect(detail?.payload?.truncated).toBe(true)
 

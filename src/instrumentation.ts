@@ -6,6 +6,6 @@
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
-  const { startRetentionTimer } = await import('@/lib/logs/retention')
-  startRetentionTimer()
+  const { startPartitionMaintenance } = await import('@/lib/logs/maintenance')
+  await startPartitionMaintenance()
 }

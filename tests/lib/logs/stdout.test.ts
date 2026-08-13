@@ -17,7 +17,7 @@ function attempt(patch: Partial<LoggedAttempt> = {}): LoggedAttempt {
 
 function entry(patch: Partial<Parameters<typeof buildRequestLog>[0]> = {}) {
   return {
-    requestId: 'req_a1b2',
+    id: 'req_a1b2',
     keyId: null,
     keyName: 'prod-app',
     model: 'gpt-fast',
@@ -138,7 +138,7 @@ test('a failure to report the failure never escapes either', async () => {
 
 test('dropped parameters appear on the log line', () => {
   const line = buildRequestLog({
-    requestId: 'req_1', keyId: null, keyName: 'k', model: 'm', stream: false,
+    id: 'req_1', keyId: null, keyName: 'k', model: 'm', stream: false,
     status: 200, outcome: 'ok', latencyMs: 5, attempts: [],
     droppedParams: ['n', 'stop'],
   })
@@ -148,7 +148,7 @@ test('dropped parameters appear on the log line', () => {
 
 test('an empty dropped list is left off the log line entirely', () => {
   const line = buildRequestLog({
-    requestId: 'req_1', keyId: null, keyName: 'k', model: 'm', stream: false,
+    id: 'req_1', keyId: null, keyName: 'k', model: 'm', stream: false,
     status: 200, outcome: 'ok', latencyMs: 5, attempts: [], droppedParams: [],
   })
 

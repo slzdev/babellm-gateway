@@ -3,6 +3,7 @@ import { LOG_PAGE_SIZE, loadLogDetail, loadLogs, parseLogFilter } from '@/lib/ad
 import { clearRequestLogStoreCache } from '@/lib/logs/registry'
 import { postgresStore } from '@/lib/logs/postgres'
 import { setLoggingSettings } from '@/lib/settings'
+import { uuidv7 } from '@/lib/uuid'
 import { resetDb } from '../../helpers/db'
 
 const NOW = new Date('2026-08-13T12:00:00.000Z')
@@ -71,7 +72,7 @@ test('drops a malformed before cursor rather than passing it to the store', () =
 
 test('loadLogs reports a readable store and its page', async () => {
   await postgresStore.write({
-    requestId: 'req_x', keyId: null, keyName: null, model: 'm',
+    id: uuidv7(), keyId: null, keyName: null, model: 'm',
     stream: false, status: 200, outcome: 'ok', latencyMs: 1, attempts: [],
   })
 

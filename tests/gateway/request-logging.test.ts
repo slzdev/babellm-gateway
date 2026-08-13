@@ -45,7 +45,7 @@ test('a successful request lands one row with its winning target', async () => {
     promptTokens: 1_000_000, completionTokens: 1_000_000,
   })
 
-  const detail = await postgresStore.get(page.rows[0].requestId)
+  const detail = await postgresStore.get(page.rows[0].id)
   expect(detail?.finalTargetId).toBe(target.id)
   expect(detail?.attempts[0]).toMatchObject({ provider: 'test-provider', status: 200 })
 })
@@ -88,7 +88,7 @@ test('a rejected request logs the error without a key or attempts', async () => 
   const [row] = (await postgresStore.query({ limit: 1 })).rows
   expect(row).toMatchObject({ status: 401, outcome: 'error', keyName: null })
 
-  const detail = await postgresStore.get(row.requestId)
+  const detail = await postgresStore.get(row.id)
   expect(detail?.attempts).toEqual([])
   expect(detail?.errorCode).toBe('missing_api_key')
 })
@@ -162,7 +162,7 @@ test('a mid-stream failure is logged as stream_interrupted despite the 200', asy
 
   // The error that killed the stream must be carried into the row, not left
   // null next to an outcome that otherwise gives no reason.
-  const detail = await postgresStore.get(page.rows[0].requestId)
+  const detail = await postgresStore.get(page.rows[0].id)
   expect(detail?.errorType).not.toBeNull()
   expect(detail?.errorMessage).toContain('connection reset')
 })
