@@ -59,11 +59,32 @@ Copy `.env.example` to `.env` and fill these in for local development.
    The dashboard is at `http://localhost:3000` (redirects to `/login`), and
    the gateway is at `http://localhost:3000/v1/*`.
 
-Tests run against a disposable database, driven by `.env.test`:
+## Tests and browser checks
+
+Both run against a **disposable** Postgres on port 5434 — defined in
+`docker-compose.test.yml`, kept in a tmpfs, and thrown away with the
+container. Never the development database on 5432: the suite TRUNCATEs every
+table between tests, so pointing it at 5432 would delete whatever you had set
+up in the dashboard.
 
 ```bash
+pnpm test:db:up                  # start it
+cp .env.test.example .env.test   # once per checkout — .env.test is gitignored
 pnpm test
+pnpm test:db:down                # when you are done
 ```
+
+To click through the dashboard against a throwaway database — to try something
+out, or to verify a change without disturbing your own data:
+
+```bash
+pnpm dev:test-db
+```
+
+That migrates a separate `babellm_dev` database on 5434 and serves the
+dashboard on `http://localhost:3001`, so it runs *alongside* `pnpm dev` on 3000
+instead of replacing it. It still reads `.env` for everything but the database,
+so log in with your usual `ADMIN_PASSWORD`.
 
 ## Run the whole stack
 

@@ -20,7 +20,7 @@
 - **`ctx.signal` must reach every upstream call** — `generateContent`, `generateContentStream`, `files.upload`, the image `fetch`, and `models.list`. An adapter that drops it holds a connection open past client disconnect.
 - **Never fail a request over an untranslatable input.** Degrade and report. This is the stance the whole translation layer is built on.
 - **Test commands:** `pnpm test` (all), `pnpm vitest run <path>` (one file). `pnpm typecheck` and `pnpm lint` must pass before any commit.
-- **Postgres must be running** for the suite: `docker compose up -d`. `.env.test` is gitignored — copy it from the main checkout if absent.
+- **Postgres must be running** for the suite: `pnpm test:db:up` — the disposable instance on 5434, never the dev database on 5432. `.env.test` is gitignored — create it with `cp .env.test.example .env.test`.
 - **Commit style:** conventional commits, lowercase scope, e.g. `feat(gemini): …`, `test(gemini): …`.
 
 ---

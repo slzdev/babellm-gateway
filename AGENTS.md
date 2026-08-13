@@ -17,6 +17,22 @@ This project uses shadcn/ui (see `components.json` — `base-nova` style, `neutr
 - Compose and extend the shadcn primitives (variants, `cn()`, wrapper components) instead of writing bespoke markup that duplicates them.
 - Only write a custom component when shadcn genuinely has no equivalent — and say so when you do.
 
+# Never run tests or browser checks against the development database
+
+`docker compose up -d` starts Postgres on **5432 with a persistent volume**. That is the developer's own database — their providers, API keys, and settings live in it, and nothing automated may touch it. `resetDb()` in `tests/helpers/db.ts` TRUNCATEs every table it knows about, and a browser check drives the real dashboard; either one aimed at 5432 destroys work that cannot be recovered.
+
+Use the disposable Postgres on **5434** instead. `docker-compose.test.yml` defines it: tmpfs-backed, no volume, gone when the container stops.
+
+```bash
+pnpm test:db:up      # start it (waits until it accepts connections)
+pnpm test:db:down    # stop it and throw the data away
+```
+
+- **Tests** read `.env.test`, which is gitignored. In a fresh checkout or worktree create it with `cp .env.test.example .env.test` — never hand-write it, and never repoint its `DATABASE_URL` at 5432. Then `pnpm test`.
+- **Browser checks** use `pnpm dev:test-db`, which migrates a separate `babellm_dev` database on 5434 and serves the dashboard on **port 3001**. Never use `pnpm dev` for a browser check: it reads `.env` and drives the dashboard against 5432. The dedicated port and `distDir` are what let it run while the developer's own `pnpm dev` still holds 3000 — do not stop their server.
+
+This supersedes the older arrangement where `.env.test` named a `babellm_test` database on 5432. Any note still claiming `docker compose up -d` is enough to run the suite is stale.
+
 # Implementation workflow
 
 Before starting **non-trivial** implementation work, ask the user how to run it. Non-trivial means multi-step or multi-file changes. Skip these questions for one-line fixes, typo/doc tweaks, and read-only investigation — just do those inline on the current branch.
