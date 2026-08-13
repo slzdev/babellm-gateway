@@ -2,7 +2,6 @@ import {
   boolean, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
-import { uuidv7 } from '@/lib/uuid'
 
 export const adapterEnum = pgEnum('adapter', [
   'openai', 'openai_compatible', 'gemini', 'bedrock',
@@ -190,11 +189,12 @@ type LoggedPricing = {
 export const requestLogs = pgTable(
   'request_logs',
   {
-    // v7: time-ordered, so inserts append to the right edge of the B-tree
-    // instead of scattering, and the primary key doubles as the pagination,
-    // time-range and prune index.
-    id: uuid('id').primaryKey().$defaultFn(uuidv7),
-    requestId: text('request_id').notNull(),
+    // v7, minted at request start rather than defaulted at insert: the same
+    // value is the client's x-request-id, the stdout correlation id, and the
+    // partition key. A column default would mint it too late to be any of
+    // those. Ordering by it is therefore by request start, while created_at
+    // records completion.
+    id: uuid('id').primaryKey(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 
     // set null, not cascade: a deleted key must not erase the history of what
@@ -239,23 +239,21 @@ export const requestLogs = pgTable(
 
     droppedParams: jsonb('dropped_params').$type<string[]>(),
     payloadCaptured: boolean('payload_captured').notNull().default(false),
+
+    // Inline rather than a second table. A separate payloads table needs a
+    // foreign key pointing *at* request_logs, and an inbound foreign key makes
+    // a partition undroppable — which would defeat partitioning entirely.
+    // Postgres gives each partition its own TOAST relation, so a large body is
+    // already stored out of line and is only read when the column is selected.
+    requestJson: jsonb('request_json').$type<unknown>(),
+    responseJson: jsonb('response_json').$type<unknown>(),
+    payloadTruncated: boolean('payload_truncated').notNull().default(false),
   },
   (table) => [
-    uniqueIndex('request_logs_request_id_idx').on(table.requestId),
     index('request_logs_api_key_idx').on(table.apiKeyId, table.id.desc()),
     index('request_logs_model_idx').on(table.model, table.id.desc()),
   ],
 )
-
-export const requestPayloads = pgTable('request_payloads', {
-  // cascade: pruning a log prunes its payload in the same statement.
-  requestLogId: uuid('request_log_id')
-    .primaryKey()
-    .references(() => requestLogs.id, { onDelete: 'cascade' }),
-  requestJson: jsonb('request_json').$type<unknown>(),
-  responseJson: jsonb('response_json').$type<unknown>(),
-  truncated: boolean('truncated').notNull().default(false),
-})
 
 export type ProviderRow = typeof providers.$inferSelect
 export type VirtualModelRow = typeof virtualModels.$inferSelect
@@ -266,4 +264,3 @@ export type CatalogModelRow = typeof catalogModels.$inferSelect
 export type RegistryCacheRow = typeof registryCache.$inferSelect
 export type SettingRow = typeof settings.$inferSelect
 export type RequestLogRow = typeof requestLogs.$inferSelect
-export type RequestPayloadRow = typeof requestPayloads.$inferSelect
