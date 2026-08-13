@@ -1,5 +1,5 @@
 import type OpenAI from 'openai'
-import type { ProviderConfig } from '@/lib/adapters/types'
+import type { ChatCompletion, ProviderConfig } from '@/lib/adapters/types'
 import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
 
 type ResponseCreateParams = OpenAI.Responses.ResponseCreateParams
@@ -222,4 +222,101 @@ export function toResponsesRequest(
       ? { reasoning: { ...(effort ? { effort } : {}), summary: 'auto' } }
       : {}),
   } as ResponseCreateParams
+}
+
+type ResponseItem = OpenAI.Responses.ResponseOutputItem
+type ResponseUsage = OpenAI.Responses.ResponseUsage
+
+function reasoningTextOf(item: OpenAI.Responses.ResponseReasoningItem): string {
+  const summary = (item.summary ?? []).map((entry) => entry.text).join('')
+  if (summary.length > 0) return summary
+  // Some providers stream raw reasoning text and never populate a summary.
+  return (item.content ?? []).map((entry) => entry.text).join('')
+}
+
+/**
+ * Shared with the stream translator, which derives the same reason from the
+ * response carried on the terminal event.
+ */
+function finishReason(
+  res: { incomplete_details?: { reason?: string } | null },
+  hasToolCalls: boolean,
+): 'stop' | 'length' | 'tool_calls' | 'content_filter' {
+  if (hasToolCalls) return 'tool_calls'
+  const reason = res.incomplete_details?.reason
+  if (reason === 'max_output_tokens') return 'length'
+  if (reason === 'content_filter') return 'content_filter'
+  return 'stop'
+}
+
+function toUsage(usage: ResponseUsage) {
+  return {
+    prompt_tokens: usage.input_tokens,
+    completion_tokens: usage.output_tokens,
+    total_tokens: usage.total_tokens,
+    ...(usage.output_tokens_details
+      ? {
+          completion_tokens_details: {
+            reasoning_tokens: usage.output_tokens_details.reasoning_tokens,
+          },
+        }
+      : {}),
+    ...(usage.input_tokens_details
+      ? { prompt_tokens_details: { cached_tokens: usage.input_tokens_details.cached_tokens } }
+      : {}),
+  }
+}
+
+export function fromResponse(res: OpenAI.Responses.Response): ChatCompletion {
+  let content = ''
+  let refusal = ''
+  let reasoning = ''
+  const toolCalls: {
+    id: string
+    type: 'function'
+    function: { name: string; arguments: string }
+  }[] = []
+
+  for (const item of (res.output ?? []) as ResponseItem[]) {
+    if (item.type === 'message') {
+      for (const part of item.content ?? []) {
+        if (part.type === 'output_text') content += part.text
+        else if (part.type === 'refusal') refusal += part.refusal
+      }
+    } else if (item.type === 'function_call') {
+      toolCalls.push({
+        id: item.call_id,
+        type: 'function',
+        function: { name: item.name, arguments: item.arguments },
+      })
+    } else if (item.type === 'reasoning') {
+      reasoning += reasoningTextOf(item)
+    }
+    // Hosted-tool items — web_search_call, code_interpreter_call, mcp_call and
+    // the rest — have no Chat Completions representation. They can only appear
+    // if the provider injects tools server-side, since a Chat Completions
+    // request cannot ask for them.
+  }
+
+  return {
+    id: res.id,
+    object: 'chat.completion',
+    created: res.created_at,
+    model: res.model,
+    choices: [{
+      index: 0,
+      message: {
+        role: 'assistant',
+        content: content.length > 0 ? content : null,
+        ...(refusal.length > 0 ? { refusal } : {}),
+        // Non-standard, and deliberately so: it is the convention DeepSeek,
+        // vLLM and OpenRouter already use, which is why real clients render it.
+        ...(reasoning.length > 0 ? { reasoning_content: reasoning } : {}),
+        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+      },
+      finish_reason: finishReason(res, toolCalls.length > 0),
+      logprobs: null,
+    }],
+    ...(res.usage ? { usage: toUsage(res.usage) } : {}),
+  } as ChatCompletion
 }

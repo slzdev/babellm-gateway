@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { droppedParams, toResponsesRequest } from '@/lib/translate/chat-to-responses'
+import { droppedParams, fromResponse, toResponsesRequest } from '@/lib/translate/chat-to-responses'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
 
 function request(overrides: Partial<ChatCompletionRequest> = {}): ChatCompletionRequest {
@@ -8,6 +8,27 @@ function request(overrides: Partial<ChatCompletionRequest> = {}): ChatCompletion
     messages: [{ role: 'user', content: 'hi' }],
     ...overrides,
   } as ChatCompletionRequest
+}
+
+function response(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'resp_1',
+    object: 'response',
+    created_at: 1700000000,
+    model: 'gpt-5-mini',
+    status: 'completed',
+    incomplete_details: null,
+    output: [],
+    ...overrides,
+  } as never
+}
+
+const usage = {
+  input_tokens: 40,
+  input_tokens_details: { cached_tokens: 8, cache_write_tokens: 0 },
+  output_tokens: 12,
+  output_tokens_details: { reasoning_tokens: 6 },
+  total_tokens: 52,
 }
 
 test('substitutes the upstream model and pins store to false', () => {
@@ -301,4 +322,146 @@ test('droppedParams reports audio content parts', () => {
 
 test('a request with nothing unmappable drops nothing', () => {
   expect(droppedParams(request({ temperature: 0.2, top_p: 1 }))).toEqual([])
+})
+
+test('output_text parts concatenate into the message content', () => {
+  const result = fromResponse(response({
+    output: [{
+      type: 'message', id: 'msg_1', role: 'assistant', status: 'completed',
+      content: [
+        { type: 'output_text', text: 'Hello ', annotations: [] },
+        { type: 'output_text', text: 'world', annotations: [] },
+      ],
+    }],
+  }))
+
+  expect(result.object).toBe('chat.completion')
+  expect(result.created).toBe(1700000000)
+  expect(result.choices).toHaveLength(1)
+  expect(result.choices[0].message.content).toBe('Hello world')
+  expect(result.choices[0].finish_reason).toBe('stop')
+})
+
+test('a function_call item becomes a tool call keeping its call id', () => {
+  const result = fromResponse(response({
+    output: [{
+      type: 'function_call', id: 'fc_1', call_id: 'call_1',
+      name: 'get_weather', arguments: '{"city":"Paris"}', status: 'completed',
+    }],
+  }))
+
+  // The SDK types tool_calls as a union of function and custom tool calls;
+  // fromResponse only ever produces the function variant.
+  const call = result.choices[0].message.tool_calls?.[0] as
+    | { id: string; function: { name: string } }
+    | undefined
+  expect(call?.id).toBe('call_1')
+  expect(call?.function.name).toBe('get_weather')
+  expect(result.choices[0].finish_reason).toBe('tool_calls')
+})
+
+test('reasoning summaries land on reasoning_content', () => {
+  const result = fromResponse(response({
+    output: [{
+      type: 'reasoning', id: 'rs_1',
+      summary: [
+        { type: 'summary_text', text: 'Checking ' },
+        { type: 'summary_text', text: 'the weather.' },
+      ],
+    }],
+  }))
+
+  const message = result.choices[0].message as { reasoning_content?: string }
+  expect(message.reasoning_content).toBe('Checking the weather.')
+})
+
+test('raw reasoning text is used when no summary was produced', () => {
+  const result = fromResponse(response({
+    output: [{
+      type: 'reasoning', id: 'rs_1', summary: [],
+      content: [{ type: 'reasoning_text', text: 'step one' }],
+    }],
+  }))
+
+  expect((result.choices[0].message as { reasoning_content?: string }).reasoning_content)
+    .toBe('step one')
+})
+
+test('a refusal part lands on the message refusal', () => {
+  const result = fromResponse(response({
+    output: [{
+      type: 'message', id: 'msg_1', role: 'assistant', status: 'completed',
+      content: [{ type: 'refusal', refusal: 'I cannot help with that.' }],
+    }],
+  }))
+
+  expect(result.choices[0].message.refusal).toBe('I cannot help with that.')
+  expect(result.choices[0].message.content).toBeNull()
+})
+
+test('hosted tool items are ignored rather than breaking the translation', () => {
+  const result = fromResponse(response({
+    output: [
+      { type: 'web_search_call', id: 'ws_1', status: 'completed' },
+      {
+        type: 'message', id: 'msg_1', role: 'assistant', status: 'completed',
+        content: [{ type: 'output_text', text: 'done', annotations: [] }],
+      },
+    ],
+  }))
+
+  expect(result.choices[0].message.content).toBe('done')
+})
+
+test('an incomplete response truncated by the token cap finishes as length', () => {
+  const result = fromResponse(response({
+    status: 'incomplete',
+    incomplete_details: { reason: 'max_output_tokens' },
+    output: [{
+      type: 'message', id: 'msg_1', role: 'assistant', status: 'incomplete',
+      content: [{ type: 'output_text', text: 'half', annotations: [] }],
+    }],
+  }))
+
+  expect(result.choices[0].finish_reason).toBe('length')
+})
+
+test('an incomplete response stopped by a filter finishes as content_filter', () => {
+  const result = fromResponse(response({
+    status: 'incomplete',
+    incomplete_details: { reason: 'content_filter' },
+  }))
+
+  expect(result.choices[0].finish_reason).toBe('content_filter')
+})
+
+test('tool calls win over an incomplete reason when deriving finish_reason', () => {
+  const result = fromResponse(response({
+    status: 'incomplete',
+    incomplete_details: { reason: 'max_output_tokens' },
+    output: [{
+      type: 'function_call', id: 'fc_1', call_id: 'call_1',
+      name: 'f', arguments: '{}', status: 'completed',
+    }],
+  }))
+
+  expect(result.choices[0].finish_reason).toBe('tool_calls')
+})
+
+test('usage maps across, including reasoning and cached tokens', () => {
+  const result = fromResponse(response({ usage }))
+
+  expect(result.usage).toEqual({
+    prompt_tokens: 40,
+    completion_tokens: 12,
+    total_tokens: 52,
+    completion_tokens_details: { reasoning_tokens: 6 },
+    prompt_tokens_details: { cached_tokens: 8 },
+  })
+})
+
+test('an empty output produces one choice with null content', () => {
+  const result = fromResponse(response())
+  expect(result.choices[0].message.content).toBeNull()
+  expect(result.choices[0].index).toBe(0)
 })
