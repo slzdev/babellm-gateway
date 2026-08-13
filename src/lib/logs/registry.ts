@@ -33,17 +33,29 @@ export interface StoreResolution {
 }
 
 let cached: { at: number; resolution: StoreResolution } | null = null
+let inflight: Promise<StoreResolution> | null = null
 
 export function clearRequestLogStoreCache(): void {
   cached = null
+  inflight = null
 }
 
 export async function resolveRequestLogStore(): Promise<StoreResolution> {
   if (cached && Date.now() - cached.at < LOG_SETTINGS_TTL_MS) return cached.resolution
 
-  const resolution = await resolve()
-  cached = { at: Date.now(), resolution }
-  return resolution
+  // Concurrent callers share one resolution. Without this, every request that
+  // arrives during a miss window issues its own settings query — and when that
+  // query is the thing that is failing, caching the failure would no longer
+  // protect the database it is failing against.
+  inflight ??= resolve()
+    .then((resolution) => {
+      cached = { at: Date.now(), resolution }
+      return resolution
+    })
+    .finally(() => {
+      inflight = null
+    })
+  return inflight
 }
 
 export async function getRequestLogStore(): Promise<RequestLogStore> {

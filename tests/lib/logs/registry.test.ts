@@ -75,3 +75,27 @@ test('a failed settings read falls back to stdout and caches the fallback', asyn
   await resolveRequestLogStore()
   expect(spy).toHaveBeenCalledTimes(1)
 })
+
+test('concurrent callers on a cold cache share one resolution', async () => {
+  const spy = vi.spyOn(settingsModule, 'getLoggingSettings')
+
+  const [a, b, c] = await Promise.all([
+    resolveRequestLogStore(), resolveRequestLogStore(), resolveRequestLogStore(),
+  ])
+
+  expect(spy).toHaveBeenCalledTimes(1)
+  expect(a).toEqual(b)
+  expect(a).toEqual(c)
+})
+
+test('concurrent callers during a failing settings read share one fallback', async () => {
+  const spy = vi
+    .spyOn(settingsModule, 'getLoggingSettings')
+    .mockRejectedValue(new Error('connection refused'))
+
+  const [a, b] = await Promise.all([resolveRequestLogStore(), resolveRequestLogStore()])
+
+  expect(spy).toHaveBeenCalledTimes(1)
+  expect(a.fallback).toBe('settings_error')
+  expect(a).toEqual(b)
+})
