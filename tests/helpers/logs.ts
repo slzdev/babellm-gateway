@@ -32,8 +32,3 @@ export async function waitForLogs(expected = 1, timeoutMs = 2000): Promise<void>
     return page.rows.length >= expected
   }, timeoutMs)
 }
-
-/** @deprecated Use `waitForLogs` (postgres row count) or `waitFor` (a custom
- * predicate, e.g. counting stdout lines). Kept so call sites that only need
- * "one row, default timeout" stay terse. */
-export const flushLogs = waitForLogs

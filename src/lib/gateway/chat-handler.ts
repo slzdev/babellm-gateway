@@ -5,7 +5,8 @@ import type { ProviderAdapter } from '@/lib/adapters/types'
 import type { ProviderRow } from '@/lib/db/schema'
 import { chatCompletionRequestSchema, type ChatCompletionRequest } from '@/lib/schemas/chat'
 import { droppedParams } from '@/lib/translate/chat-to-responses'
-import { logRequest } from '@/lib/logs'
+import { logRequest, resolveRequestLogStore } from '@/lib/logs'
+import { capPayload } from '@/lib/logs/payload'
 import type { LogPayload, LogUsage, RequestOutcome } from '@/lib/logs/types'
 import { computeCost, priceFor } from '@/lib/pricing'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
@@ -75,6 +76,28 @@ export function attemptHeaders(
 
 const ERROR_MESSAGE_MAX_LENGTH = 2000
 
+/**
+ * Bounds and packages a request/response pair for storage.
+ *
+ * Capping happens here, before the write, so the store's insert can be a
+ * single transaction whose only remaining failure mode is the database
+ * itself.
+ */
+function buildPayload(
+  request: unknown,
+  response: unknown,
+  maxBytes: number,
+  truncatedUpstream = false,
+): LogPayload {
+  const cappedRequest = capPayload(request, maxBytes)
+  const cappedResponse = capPayload(response, maxBytes)
+  return {
+    request: cappedRequest.value,
+    response: cappedResponse.value,
+    truncated: truncatedUpstream || cappedRequest.truncated || cappedResponse.truncated,
+  }
+}
+
 /** The log keeps the real message even for an unhandled error: the page that
  * reads it is admin-only, and the sanitized envelope the client received is
  * useless for diagnosis. Length is still bounded — a provider that fails
@@ -111,13 +134,19 @@ export async function handleChatCompletions(
   let modelName: string | null = null
   let stream = false
   let dropped: string[] = []
+  // Payload capture is per key and off by default, so the cost of assembling
+  // and storing bodies falls only on the keys that asked for it.
+  let capturePayloads = false
+  let requestBody: ChatCompletionRequest | null = null
 
   interface LogExtra {
     ttftMs?: number
     /** The target that actually served, which is what gets priced. */
     candidate?: Candidate
     usage?: LogUsage | null
-    payload?: LogPayload | null
+    /** What the client received, for payload capture. */
+    response?: unknown
+    responseTruncated?: boolean
     error?: unknown
   }
 
@@ -148,6 +177,17 @@ export async function handleChatCompletions(
             usage,
           )
         : null
+    const { settings } = await resolveRequestLogStore()
+
+    const payload =
+      capturePayloads && requestBody
+        ? buildPayload(
+            requestBody,
+            extra.response ?? null,
+            settings.payloadMaxBytes,
+            extra.responseTruncated ?? false,
+          )
+        : null
 
     await logRequest({
       requestId,
@@ -172,7 +212,7 @@ export async function handleChatCompletions(
       usage,
       cost,
       ...(dropped.length > 0 ? { droppedParams: dropped } : {}),
-      payload: extra.payload ?? null,
+      payload,
     })
   }
 
@@ -180,7 +220,9 @@ export async function handleChatCompletions(
     const apiKey = await resolveApiKey(extractBearerToken(request))
     keyId = apiKey.id
     keyName = apiKey.name
+    capturePayloads = apiKey.logPayloads
     const body = await parseBody(request)
+    requestBody = body
     modelName = body.model
     stream = body.stream === true
 
@@ -204,6 +246,7 @@ export async function handleChatCompletions(
       // time-to-first-token without any plumbing into the stream itself.
       const ttftMs = Date.now() - startedAt
       dropped = droppedFor(result.candidate, body)
+      const { settings } = await resolveRequestLogStore()
 
       return sseResponse(
         result.value,
@@ -214,7 +257,21 @@ export async function handleChatCompletions(
             ttftMs,
             candidate: result.candidate,
             usage: capture.usage,
+            response: capturePayloads
+              ? {
+                  id: identity.id,
+                  object: 'chat.completion',
+                  model: identity.model,
+                  choices: [{
+                    index: 0,
+                    message: { role: 'assistant', content: capture.text },
+                    finish_reason: outcome === 'ok' ? 'stop' : null,
+                  }],
+                }
+              : null,
+            responseTruncated: capture.truncated,
           }),
+        capturePayloads ? { maxBytes: settings.payloadMaxBytes } : undefined,
       )
     }
 
@@ -226,12 +283,14 @@ export async function handleChatCompletions(
     // Built before logging: logging after the response has been constructed
     // means a throw building the response can no longer race a second,
     // contradictory log line against this one for the same request_id.
-    const response = Response.json(rewriteCompletion(result.value, identity), {
+    const completion = rewriteCompletion(result.value, identity)
+    const response = Response.json(completion, {
       headers: attemptHeaders(result.candidate, requestId, dropped),
     })
     log(200, 'ok', result.attempts, {
       candidate: result.candidate,
       usage: usageFrom(result.value.usage),
+      response: completion,
     })
     return response
   } catch (err) {

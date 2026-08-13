@@ -14,7 +14,13 @@ const DONE = encoder.encode('data: [DONE]\n\n')
 
 /** Assembles assistant text for payload capture, stopping at the byte cap.
  * Only runs when capture was requested, so streams for keys without payload
- * logging pay nothing. */
+ * logging pay nothing.
+ *
+ * The post-truncation guard (stop calling this once `captured.truncated` is
+ * set) lives at the CALL SITE, not here — see `if (capture &&
+ * !captured.truncated)` below. Do not move that check into this function: a
+ * future edit that relocates the call without carrying the guard would let a
+ * later small chunk resume appending after truncation. */
 function accumulate(captured: StreamCapture, chunk: ChatCompletionChunk, maxBytes: number) {
   const delta = chunk.choices?.[0]?.delta?.content
   // Upstream JSON is untrusted: a non-string content field would make
