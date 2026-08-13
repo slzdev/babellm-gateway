@@ -3961,8 +3961,7 @@ If `db.$client` is not a `pg.Pool` on this drizzle version, replace the lock-hol
 ```ts
 // src/lib/logs/retention.ts
 import 'server-only'
-import { sql } from 'drizzle-orm'
-import { db } from '@/lib/db'
+import { db, pool } from '@/lib/db'
 import { settings } from '@/lib/db/schema'
 import { resolveRequestLogStore } from './registry'
 
@@ -3983,31 +3982,57 @@ export async function pruneRequestLogs(now: Date = new Date()): Promise<number |
   const { store, settings: config } = await resolveRequestLogStore()
   if (config.retentionDays <= 0) return null
 
-  // A session advisory lock, taken with try_ so a second instance skips
-  // instead of queueing behind a prune it would only repeat.
-  const acquired = await db.execute(
-    sql`SELECT pg_try_advisory_lock(${PRUNE_LOCK_KEY.toString()}::bigint) AS locked`,
-  )
-  if (!acquired.rows[0]?.locked) return null
+  // A dedicated connection, not a bare db.execute(). Session advisory locks
+  // belong to the connection that took them, and a bare execute checks out any
+  // idle client from the shared pool and returns it immediately — so the
+  // unlock could land on a different backend session and silently do nothing.
+  // The lock would then leak, and because it is taken with try_, every later
+  // prune would quietly skip: retention stops with no error anywhere.
+  // scripts/migrate.mjs and src/lib/catalog/sync.ts solve the same problem the
+  // same way; this is the third call site and the reasoning has been
+  // rediscovered twice.
+  const client = await pool.connect()
+  // Set only if the unlock itself fails, in which case this client is destroyed
+  // rather than returned to the pool still holding the lock.
+  let unlockError: Error | undefined
 
   try {
-    const cutoff = new Date(now.getTime() - config.retentionDays * 24 * HOUR_MS)
-    const deleted = await store.prune(cutoff)
+    // try_ rather than a blocking acquire: a second instance should skip a
+    // prune already in progress, not queue behind one it would only repeat.
+    const acquired = await client.query<{ locked: boolean }>(
+      'SELECT pg_try_advisory_lock($1::bigint) AS locked',
+      [PRUNE_LOCK_KEY.toString()],
+    )
+    if (!acquired.rows[0]?.locked) return null
 
-    await db
-      .insert(settings)
-      .values({
-        key: 'logs.last_prune',
-        value: { at: new Date().toISOString(), deleted },
-      })
-      .onConflictDoUpdate({
-        target: settings.key,
-        set: { value: { at: new Date().toISOString(), deleted }, updatedAt: new Date() },
-      })
+    try {
+      const cutoff = new Date(now.getTime() - config.retentionDays * 24 * HOUR_MS)
+      const deleted = await store.prune(cutoff)
+      const at = new Date().toISOString()
 
-    return deleted
+      await db
+        .insert(settings)
+        .values({ key: 'logs.last_prune', value: { at, deleted } })
+        .onConflictDoUpdate({
+          target: settings.key,
+          set: { value: { at, deleted }, updatedAt: new Date() },
+        })
+
+      return deleted
+    } finally {
+      try {
+        await client.query('SELECT pg_advisory_unlock($1::bigint)', [PRUNE_LOCK_KEY.toString()])
+      } catch (err) {
+        // Rethrowing here would replace whatever the prune actually threw,
+        // hiding the root cause behind a cleanup failure.
+        unlockError = err instanceof Error ? err : new Error(String(err))
+        console.error('[gateway] could not release the request log prune lock', err)
+      }
+    }
   } finally {
-    await db.execute(sql`SELECT pg_advisory_unlock(${PRUNE_LOCK_KEY.toString()}::bigint)`)
+    // Passing the error destroys the client instead of recycling one whose
+    // session may still hold the lock.
+    client.release(unlockError)
   }
 }
 
