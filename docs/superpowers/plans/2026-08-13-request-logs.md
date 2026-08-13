@@ -3037,16 +3037,56 @@ export function parseLogFilter(
     ...(window === null ? {} : { from: new Date(now.getTime() - window) }),
     ...(params.key ? { apiKeyId: params.key } : {}),
     ...(model ? { model } : {}),
+    // Cursors are compared against a Postgres `uuid` column, so a malformed one
+    // is a database error rather than an empty result. Dropping it degrades to
+    // the first page, which is what the rest of this function promises: a
+    // hand-edited URL shows the default view, never an error page.
     ...(status && STATUS_CLASSES.includes(status as StatusClass)
       ? { statusClass: status as StatusClass }
       : {}),
     ...(status === 'stream_interrupted' || status === 'client_closed'
       ? { outcome: status }
       : {}),
-    ...(params.after ? { after: params.after } : {}),
-    ...(params.before ? { before: params.before } : {}),
+    ...(isCursor(params.after) ? { after: params.after } : {}),
+    ...(isCursor(params.before) ? { before: params.before } : {}),
     limit: LOG_PAGE_SIZE,
   }
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function isCursor(value: string | undefined): value is string {
+  return value !== undefined && UUID.test(value)
+}
+
+/**
+ * Applies one filter change to the current query string.
+ *
+ * Lives here, as a pure function, rather than inside the client component:
+ * this project has no React testing library and may not add one, so logic left
+ * in the component is logic no test can reach. The neutral-value rule below was
+ * wrong once already in exactly that blind spot.
+ */
+export function nextFilterParams(
+  current: URLSearchParams,
+  name: string,
+  value: string,
+): URLSearchParams {
+  const next = new URLSearchParams(current.toString())
+
+  // Which value means "no constraint" is per-filter, not global. `key` and
+  // `model` mean it with 'all'. `range` never does — its absent state is the
+  // 24h default, so writing 'all' is the only way to ask for all time.
+  const neutral: Record<string, string> = { key: 'all', model: 'all', status: 'all' }
+
+  if (neutral[name] === value) next.delete(name)
+  else next.set(name, value)
+
+  // A cursor is a position in one particular result set. Carrying it across a
+  // filter change points into a set that no longer exists.
+  next.delete('after')
+  next.delete('before')
+  return next
 }
 
 export interface LogsView {
@@ -3118,16 +3158,10 @@ export function LogFilters({
   const params = useSearchParams()
   const [requestId, setRequestId] = useState('')
 
-  // Every change resets the cursors: a filter change makes the old keyset
-  // position meaningless.
+  // The rule itself lives in nextFilterParams, which is pure and tested. This
+  // component only routes.
   function apply(name: string, value: string) {
-    const next = new URLSearchParams(params.toString())
-    if (value === 'all' && name !== 'status') next.delete(name)
-    else if (!value) next.delete(name)
-    else next.set(name, value)
-    next.delete('after')
-    next.delete('before')
-    router.push(`/logs?${next.toString()}`)
+    router.push(`/logs?${nextFilterParams(params, name, value).toString()}`)
   }
 
   return (
@@ -3310,9 +3344,14 @@ export default async function LogsPage({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{row.latencyMs} ms</TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">
+                    {/* Each side reports independently: a request can measure
+                        prompt tokens and not completion tokens. Rendering an
+                        unmeasured count as 0 asserts the request was free of
+                        output, which is the same lie "unpriced" exists to
+                        prevent, on a different column. */}
                     {row.promptTokens === null && row.completionTokens === null
                       ? '—'
-                      : `${row.promptTokens ?? 0} / ${row.completionTokens ?? 0}`}
+                      : `${row.promptTokens ?? '—'} / ${row.completionTokens ?? '—'}`}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{cost(row.costUsd)}</TableCell>
                 </TableRow>
