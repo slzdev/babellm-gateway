@@ -2327,7 +2327,7 @@ git commit -m "feat(adapters): point a 404 at the API flavor setting"
 
 **A deviation from `AGENTS.md` worth stating up front:** `AGENTS.md` says to prefer shadcn components, and `src/components/ui/select.tsx` exists. The flavor field sits directly beside the adapter field in the same grid, and that field is a raw `<select>` because `FormDialog` submits through a server action and needs a natively named form control. Introducing a second, visually different select pattern in the same two-column grid would be worse than matching the neighbour. So: raw `<select>` with identical classes.
 
-Before implementing, check whether `src/components/ui/select.tsx` forwards a `name` prop to a hidden input. If it does, use the shadcn `Select` for both this field *and* leave the adapter field alone (do not refactor it in this task) — and say so in the commit message. If it does not, match the raw select as described.
+This was verified before execution: `src/components/ui/select.tsx` wraps base-ui's Select and forwards no `name` prop and renders no hidden input, so it cannot participate in a server-action form submission at all. The raw `<select>` is not a preference here — it is the only option that works. Do not substitute the shadcn `Select`, and do not refactor the adjacent adapter field.
 
 **Files:**
 - Modify: `src/lib/admin/providers.ts`
@@ -2807,7 +2807,7 @@ The `n`/`stop` caveat is the reason this task is not optional. It is the one pla
 
 **Files:**
 - Modify: `README.md`
-- Modify: `docs/superpowers/specs/2026-08-13-sqlite-support-design.md`
+- Modify: `docs/superpowers/specs/2026-08-13-responses-api-flavor-design.md` (§4.1 only)
 
 - [ ] **Step 1: Document the flavor in the README**
 
@@ -2859,9 +2859,19 @@ That section currently says Phases 1 and 2 cover "the `openai` and `openai_compa
   `/v1/chat/completions`.
 ```
 
-- [ ] **Step 3: Add the enum to the SQLite spec's inventory**
+- [ ] **Step 3: Correct the flavor spec's claim about the SQLite spec**
 
-`docs/superpowers/specs/2026-08-13-sqlite-support-design.md` enumerates the Postgres enums that become text columns with check constraints. Find that inventory and add `api_flavor` (`chat_completions`, `responses`) to it, with a note that it was added by the Responses API flavor phase. Do not restructure that document.
+This was checked before execution and the original instruction was wrong. `docs/superpowers/specs/2026-08-13-sqlite-support-design.md` does **not** enumerate individual enums — it carries one general rule (`pgEnum(...)` → `text({ enum: [...] })`, in its type-mapping table) and never names `adapter`, `routing_policy` or any other enum. That rule already covers `api_flavor`, so **there is nothing to add to it. Do not edit the SQLite spec.**
+
+Instead, correct the claim in this feature's own spec, `docs/superpowers/specs/2026-08-13-responses-api-flavor-design.md` §4.1, which asserts an inventory that does not exist. Replace its second paragraph:
+
+```markdown
+This is the fifth `pgEnum` in the schema. The SQLite design
+(`2026-08-13-sqlite-support-design.md`) maps every `pgEnum` to
+`text({ enum: [...] })` under one general rule rather than listing enums
+individually, so `api_flavor` needs no entry there and that spec is
+unaffected by this phase.
+```
 
 - [ ] **Step 4: Verify the README renders and its claims are true**
 
@@ -2870,7 +2880,7 @@ Re-read the new section against the implementation. In particular confirm that t
 - [ ] **Step 5: Commit**
 
 ```bash
-git add README.md docs/superpowers/specs/2026-08-13-sqlite-support-design.md
+git add README.md docs/superpowers/specs/2026-08-13-responses-api-flavor-design.md
 git commit -m "docs: document provider API flavor and its parameter caveats"
 ```
 
