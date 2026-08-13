@@ -22,8 +22,9 @@ export function toProviderError(err: unknown): ProviderError {
   if (err instanceof ProviderError) return err
 
   if (err instanceof ApiError) {
-    // `status` is typed non-optional but is absent at runtime on some transport
-    // failures the SDK still wraps as an ApiError.
+    // `status` is typed non-optional and both SDK construction sites always
+    // set it, so this guard is defensive against a status-less ApiError
+    // rather than a runtime case the SDK is known to produce.
     const status = err.status
     const retryable = !status || RETRYABLE_STATUSES.has(status) || status >= 500
     return new ProviderError({

@@ -25,13 +25,14 @@ const answer = {
   usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 1, totalTokenCount: 3 },
 }
 
-async function* oneChunk() {
-  yield { candidates: [{ content: { parts: [{ text: 'hi' }] }, finishReason: 'STOP' }] }
+async function* twoChunks() {
+  yield { candidates: [{ content: { parts: [{ text: 'hi' }] } }] }
+  yield { candidates: [{ content: { parts: [{ text: ' there' }] }, finishReason: 'STOP' }] }
 }
 
 function fakeClient(overrides: Record<string, unknown> = {}) {
   const generateContent = vi.fn().mockResolvedValue(answer)
-  const generateContentStream = vi.fn().mockResolvedValue(oneChunk())
+  const generateContentStream = vi.fn().mockResolvedValue(twoChunks())
   const client = {
     models: { generateContent, generateContentStream, list: vi.fn() },
     files: { upload: vi.fn() },
@@ -111,6 +112,7 @@ test('a stream is translated chunk by chunk', async () => {
 
   expect(generateContentStream.mock.calls[0][0].config.abortSignal).toBe(ctx.signal)
   expect(chunks[0].choices[0].delta).toEqual({ role: 'assistant', content: 'hi' })
+  expect(chunks[1].choices[0].delta).toEqual({ content: ' there' })
 })
 
 test('a failure while opening a stream arrives classified', async () => {

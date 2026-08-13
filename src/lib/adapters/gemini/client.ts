@@ -39,9 +39,9 @@ export function createGeminiClient(
  * the first adapter to fill the `discovered` layer with anything: `/v1/models`
  * on an OpenAI-shaped provider reports an id and nothing else.
  *
- * A field is left absent rather than nulled when Gemini does not report it,
- * because the merge layer reads absent as "this layer does not know" and null
- * as an answer.
+ * A field is left absent rather than nulled when Gemini does not report it.
+ * The merge layer treats absent and null the same today, but absent is the
+ * encoding that will still be right when it distinguishes them.
  */
 export function catalogFields(model: Model): CatalogFields {
   const actions = model.supportedActions ?? []
@@ -60,9 +60,10 @@ export function catalogFields(model: Model): CatalogFields {
 }
 
 /**
- * `queryBase: true` is load-bearing: without it the SDK lists this key's *tuned*
- * models rather than the base catalog, so a sync would come back empty for
- * nearly every account.
+ * `queryBase: true` is already the SDK's default for `Models.list` in this
+ * version, so passing it explicitly pins that default rather than changing
+ * behaviour — cheap insurance if the default ever moves. The `false` path
+ * only matters under Vertex, which this adapter never enters.
  */
 export async function listModels(
   client: GoogleGenAI,

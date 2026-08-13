@@ -289,6 +289,14 @@ A few things to know before pointing production traffic at a Gemini provider:
   Responses flavor uses, honoured here so one provider setting means one thing
   across adapters. A `reasoning_effort` value outside the four known levels is
   dropped and reported as `reasoning_effort`.
+- **Thought signatures are not preserved.** A `functionCall` part's
+  `thoughtSignature` travels out with the response but is never sent back on
+  the next turn — thoughts leave the gateway one-way, the same as a Responses
+  provider's reasoning items. Some of Gemini's newer thinking models are known
+  to treat a returned function call that is missing its signature as a
+  request error, so multi-turn function calling against one of those models
+  may be rejected on the second turn. Prefer a non-thinking model for tool
+  loops until this is carried through.
 - **Model discovery fills in more of the catalog than an OpenAI-shaped
   provider's model list does.** Syncing a Gemini provider's catalog records
   each model's context window and maximum output tokens, plus whether it
@@ -408,7 +416,9 @@ policy-driven routing across every route target. Everything below is
   the Files API. The fetch is capped at 20 MB, bounded by the request timeout,
   and refuses non-image content types — but it is not restricted to an
   allowlist of hosts. A caller who can reach the gateway can make it issue a GET
-  to any URL it can route to.
+  to any URL it can route to. Resolution happens fresh on every failover
+  attempt, so a chain of Gemini targets fetches and re-uploads each image once
+  per target rather than once per request.
 - **No cost computation, price table, opt-in payload logging, or retention
   pruning** (Phase 4). `cost_usd` is always null.
 
