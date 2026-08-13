@@ -5,6 +5,7 @@ import type { ProviderAdapter } from '@/lib/adapters/types'
 import type { ProviderRow } from '@/lib/db/schema'
 import { chatCompletionRequestSchema, type ChatCompletionRequest } from '@/lib/schemas/chat'
 import { droppedParams } from '@/lib/translate/chat-to-responses'
+import { droppedParams as geminiDroppedParams } from '@/lib/translate/chat-to-gemini'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
 import { GatewayError, RoutedError, errorResponse } from './errors'
 import { execute, type AttemptRecord } from './execute'
@@ -54,6 +55,10 @@ async function parseBody(request: Request) {
  * interface every future adapter implements.
  */
 function droppedFor(candidate: Candidate, body: ChatCompletionRequest): string[] {
+  // Adapter first, then flavor: a gemini provider has an api_flavor column like
+  // every other row, but its adapter ignores it and the provider form hides the
+  // selector, so reading flavor here would report the wrong protocol's losses.
+  if (candidate.provider.adapter === 'gemini') return geminiDroppedParams(body)
   return resolveApiFlavor(candidate.provider) === 'responses' ? droppedParams(body) : []
 }
 
