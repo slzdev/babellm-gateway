@@ -60,6 +60,10 @@ export function EditProviderDialog({
               <option value="chat_completions">Chat Completions</option>
               <option value="responses">Responses</option>
             </select>
+            <p className="text-xs text-muted-foreground">
+              Choose Responses if this endpoint returns 404 on
+              {' '}<code>/v1/chat/completions</code>.
+            </p>
           </div>
         ) : null}
         <RegistryNamespaceField

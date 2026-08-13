@@ -30,10 +30,13 @@ export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
  * Chat Completions and Responses providers share every branch above this
  * point — credentials, base URL, adapter kind — and differ only in which
  * client method the adapter calls. Keeping that choice in one helper is what
- * lets the two cases above read identically otherwise.
+ * lets the two cases above read identically otherwise. `runtime.apiFlavor`
+ * is read here rather than re-derived: `resolveProviderRuntime` already
+ * called `resolveApiFlavor` once, and it remains the only caller of that
+ * function on this path.
  */
-function adapterFor(runtime: ProviderRuntime, provider: ProviderRow): ProviderAdapter {
-  return resolveApiFlavor(provider) === 'responses'
+function adapterFor(runtime: ProviderRuntime): ProviderAdapter {
+  return runtime.apiFlavor === 'responses'
     ? createResponsesAdapter(runtime)
     : createOpenAIAdapter(runtime)
 }
@@ -43,14 +46,14 @@ export function createAdapter(provider: ProviderRow): ProviderAdapter {
 
   switch (runtime.adapter) {
     case 'openai':
-      return adapterFor(runtime, provider)
+      return adapterFor(runtime)
     case 'openai_compatible':
       if (!runtime.baseUrl) {
         throw new Error(
           `Provider "${runtime.name}" is openai_compatible but has no base URL configured.`,
         )
       }
-      return adapterFor(runtime, provider)
+      return adapterFor(runtime)
     case 'gemini':
     case 'bedrock':
       throw new UnsupportedOperationError(
