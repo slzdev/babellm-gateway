@@ -84,6 +84,21 @@ test('pages newest first and walks both directions', async () => {
   expect(back.rows.map((r) => r.requestId)).toEqual(['r5', 'r4'])
 })
 
+test('prevCursor is null once before-paging reaches the newest row', async () => {
+  for (const id of ['r1', 'r2', 'r3', 'r4', 'r5']) {
+    await postgresStore.write(entry({ requestId: id }))
+  }
+
+  const all = await postgresStore.query({ limit: 10 })
+  const r4 = all.rows.find((r) => r.requestId === 'r4')!
+
+  // Only r5 has an id greater than r4's, so paging before r4 lands exactly on
+  // the newest row — there is no further "newer" page beyond it.
+  const top = await postgresStore.query({ limit: 2, before: r4.id })
+  expect(top.rows.map((r) => r.requestId)).toEqual(['r5'])
+  expect(top.prevCursor).toBeNull()
+})
+
 test('an over-long model name is truncated rather than failing the write', async () => {
   await postgresStore.write(entry({ requestId: 'req_long', model: 'm'.repeat(400) }))
   const detail = await postgresStore.get('req_long')

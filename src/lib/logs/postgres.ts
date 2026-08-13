@@ -130,7 +130,12 @@ export const postgresStore: ReadableRequestLogStore = {
     return {
       rows,
       nextCursor: rows.length && (filter.before || hasMore) ? rows[rows.length - 1].id : null,
-      prevCursor: rows.length && (filter.after || filter.before) ? rows[0].id : null,
+      // On an `after` page, newer rows are guaranteed by the same invariant
+      // that makes `nextCursor` safe on a `before` page: the cursor itself
+      // came from a row up there. On a `before` page there is no such
+      // invariant — `hasMore` (computed on the same ascending query) is the
+      // only thing that actually knows whether a still-newer page exists.
+      prevCursor: rows.length && (filter.after || (filter.before && hasMore)) ? rows[0].id : null,
     }
   },
 
