@@ -1,5 +1,5 @@
 {
-  "id": "00e1c52e-db01-4e46-ab9c-e34bb9c3ef04",
+  "id": "bcf47dd0-edb0-435b-a06b-41947aa9e1c5",
   "prevId": "5298ce63-4fef-4f33-a779-2e4fa46f0b16",
   "version": "7",
   "dialect": "postgresql",
@@ -543,12 +543,6 @@
           "primaryKey": true,
           "notNull": true
         },
-        "request_id": {
-          "name": "request_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -721,24 +715,28 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "request_json": {
+          "name": "request_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "response_json": {
+          "name": "response_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payload_truncated": {
+          "name": "payload_truncated",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         }
       },
       "indexes": {
-        "request_logs_request_id_idx": {
-          "name": "request_logs_request_id_idx",
-          "columns": [
-            {
-              "expression": "request_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "request_logs_api_key_idx": {
           "name": "request_logs_api_key_idx",
           "columns": [
@@ -794,58 +792,6 @@
             "id"
           ],
           "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.request_payloads": {
-      "name": "request_payloads",
-      "schema": "",
-      "columns": {
-        "request_log_id": {
-          "name": "request_log_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "request_json": {
-          "name": "request_json",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "response_json": {
-          "name": "response_json",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "truncated": {
-          "name": "truncated",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "request_payloads_request_log_id_request_logs_id_fk": {
-          "name": "request_payloads_request_log_id_request_logs_id_fk",
-          "tableFrom": "request_payloads",
-          "tableTo": "request_logs",
-          "columnsFrom": [
-            "request_log_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
