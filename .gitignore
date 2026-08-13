@@ -43,3 +43,6 @@ next-env.d.ts
 
 # superpowers workspace
 .superpowers/
+
+# claude code worktrees
+.claude/worktrees/
