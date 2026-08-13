@@ -1,3 +1,5 @@
+import type { LoggingSettings } from '@/lib/settings'
+
 export type RequestOutcome = 'ok' | 'error' | 'client_closed' | 'stream_interrupted'
 
 export interface LoggedAttempt {
@@ -21,7 +23,9 @@ export interface FinalTarget {
   targetId: string; providerId: string; provider: string; upstreamModel: string
 }
 export interface RequestLogEntry {
-  requestId: string
+  /** The v7 uuid minted at request start. Primary key, x-request-id, and the
+   * partition key — one value for the request's whole life. */
+  id: string
   keyId: string | null
   keyName: string | null
   model: string | null
@@ -41,11 +45,21 @@ export interface RequestLogEntry {
   payload?: LogPayload | null
 }
 
+export interface MaintenanceResult {
+  /** Partition names created and dropped, for the Settings status line.
+   * Names rather than a row count: dropping a partition never counts the rows
+   * inside it, and a number that was sometimes real and sometimes a guess
+   * would be worse than no number. */
+  created: string[]
+  dropped: string[]
+}
+
 interface BaseSink {
   readonly name: string
   write(entry: RequestLogEntry): Promise<void>
-  /** Rows removed. A driver with no retention concept returns 0. */
-  prune(olderThan: Date): Promise<number>
+  /** Provision storage ahead of time and discard what has aged out. A driver
+   * with no storage of its own returns empty arrays. */
+  maintain(now: Date, settings: LoggingSettings): Promise<MaintenanceResult>
   /** Drain anything buffered. Called on shutdown. */
   flush?(): Promise<void>
 }
@@ -57,7 +71,8 @@ export interface WriteOnlySink extends BaseSink {
 export interface ReadableRequestLogStore extends BaseSink {
   readonly readable: true
   query(filter: LogFilter): Promise<LogPage>
-  get(requestId: string): Promise<LogDetail | null>
+  /** By primary key. Returns null for anything that is not a uuid. */
+  get(id: string): Promise<LogDetail | null>
 }
 
 /**
@@ -86,7 +101,6 @@ export interface LogFilter {
 
 export interface LogRow {
   id: string
-  requestId: string
   createdAt: Date
   keyName: string | null
   model: string | null

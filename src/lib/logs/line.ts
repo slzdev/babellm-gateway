@@ -26,7 +26,7 @@ export function buildRequestLog(entry: RequestLogEntry): Record<string, unknown>
   return {
     lvl: level(entry),
     msg: 'gateway.request',
-    request_id: entry.requestId,
+    request_id: entry.id,
     key: entry.keyName,
     model: entry.model,
     stream: entry.stream,

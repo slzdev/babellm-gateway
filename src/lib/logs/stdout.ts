@@ -1,5 +1,5 @@
 import { buildRequestLog } from './line'
-import type { RequestLogEntry, WriteOnlySink } from './types'
+import type { MaintenanceResult, RequestLogEntry, WriteOnlySink } from './types'
 
 /**
  * Writes one line to stdout. Never throws: a request that succeeded must not
@@ -18,15 +18,15 @@ export const stdoutStore: WriteOnlySink = {
       // too. A request that succeeded must not be failed by its own logging,
       // and that promise is worth more than the diagnostic.
       try {
-        console.error(`[gateway] failed to emit request log request_id=${entry.requestId}`, err)
+        console.error(`[gateway] failed to emit request log request_id=${entry.id}`, err)
       } catch {
         // Nowhere left to report to.
       }
     }
   },
 
-  /** stdout has no retention concept — the log shipper owns that. */
-  async prune(): Promise<number> {
-    return 0
+  /** stdout has no storage of its own — the log shipper owns retention. */
+  async maintain(): Promise<MaintenanceResult> {
+    return { created: [], dropped: [] }
   },
 }
