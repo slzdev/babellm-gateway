@@ -1153,6 +1153,20 @@ test('pages newest first and walks both directions', async () => {
   expect(back.rows.map((r) => r.requestId)).toEqual(['r5', 'r4'])
 })
 
+test('paging back to the newest page reports no newer page', async () => {
+  for (const id of ['p1', 'p2', 'p3']) {
+    await postgresStore.write(entry({ requestId: id }))
+  }
+
+  const first = await postgresStore.query({ limit: 2 })
+  const back = await postgresStore.query({ limit: 2, before: first.nextCursor! })
+
+  // At the top of the list there is nothing newer, so the UI must be able to
+  // disable "Newer" rather than offering a click that lands on an empty page.
+  expect(back.rows.map((r) => r.requestId)).toEqual(['p3', 'p2'])
+  expect(back.prevCursor).toBeNull()
+})
+
 test('an over-long model name is truncated rather than failing the write', async () => {
   await postgresStore.write(entry({ requestId: 'req_long', model: 'm'.repeat(400) }))
   const detail = await postgresStore.get('req_long')
@@ -1327,10 +1341,19 @@ export const postgresStore: ReadableRequestLogStore = {
     const page = found.slice(0, filter.limit)
     const rows = (filter.before ? page.reverse() : page) as LogRow[]
 
+    // Each cursor is non-null only when a page genuinely exists in that
+    // direction. On a `before` page that means consulting `hasMore` — the
+    // ascending query computed it to answer exactly this question, and
+    // ignoring it would leave the UI offering a "Newer" button at the top of
+    // the list that lands on an empty page. In the other two directions the
+    // invariant does the work: you only hold an `after` cursor because you
+    // paged down past newer rows, and you only hold a `before` cursor because
+    // you paged up past older ones.
     return {
       rows,
       nextCursor: rows.length && (filter.before || hasMore) ? rows[rows.length - 1].id : null,
-      prevCursor: rows.length && (filter.after || filter.before) ? rows[0].id : null,
+      prevCursor:
+        rows.length && (filter.after || (filter.before && hasMore)) ? rows[0].id : null,
     }
   },
 
