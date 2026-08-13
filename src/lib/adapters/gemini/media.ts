@@ -38,11 +38,17 @@ function inlinePart(url: string): Part | null {
   if (!match) return null
 
   const [, mimeType, base64, payload] = match
-  const data = base64
-    ? payload
-    : Buffer.from(decodeURIComponent(payload), 'utf8').toString('base64')
+  try {
+    // decodeURIComponent throws URIError on malformed percent-encoding, which
+    // a non-base64 data: URI payload — untrusted client input — can trigger.
+    const data = base64
+      ? payload
+      : Buffer.from(decodeURIComponent(payload), 'utf8').toString('base64')
 
-  return { inlineData: { mimeType, data } }
+    return { inlineData: { mimeType, data } }
+  } catch {
+    return null
+  }
 }
 
 /**

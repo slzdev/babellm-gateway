@@ -44,6 +44,26 @@ test('a base64 data uri becomes inline data with no network call', async () => {
   expect(d.fetchImpl).not.toHaveBeenCalled()
 })
 
+test('a well-formed non-base64 data uri decodes to inline base64 data', async () => {
+  const d = deps()
+  const resolved = await resolveMedia([imageMessage('data:text/plain,hello')], d)
+
+  expect(resolved.get('data:text/plain,hello'))
+    .toEqual({ inlineData: { mimeType: 'text/plain', data: 'aGVsbG8=' } })
+  expect(d.fetchImpl).not.toHaveBeenCalled()
+})
+
+test('a malformed non-base64 data uri is dropped and warns rather than throwing', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const d = deps()
+
+  const resolved = await resolveMedia([imageMessage('data:image/png,%89PNG')], d)
+
+  expect(resolved.size).toBe(0)
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('req_1'))
+  warn.mockRestore()
+})
+
 test('a files api url passes straight through as file data', async () => {
   const url = 'https://generativelanguage.googleapis.com/v1beta/files/abc'
   const d = deps()
