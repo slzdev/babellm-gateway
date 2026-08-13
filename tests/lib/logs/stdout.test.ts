@@ -17,7 +17,7 @@ function attempt(patch: Partial<LoggedAttempt> = {}): LoggedAttempt {
 
 function entry(patch: Partial<Parameters<typeof buildRequestLog>[0]> = {}) {
   return {
-    id: 'req_a1b2',
+    id: '018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e50',
     keyId: null,
     keyName: 'prod-app',
     model: 'gpt-fast',
@@ -38,7 +38,7 @@ test('the line carries the request identity and outcome in snake_case', () => {
   expect(buildRequestLog(entry())).toMatchObject({
     lvl: 'info',
     msg: 'gateway.request',
-    request_id: 'req_a1b2',
+    request_id: '018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e50',
     key: 'prod-app',
     model: 'gpt-fast',
     stream: false,
@@ -138,7 +138,7 @@ test('a failure to report the failure never escapes either', async () => {
 
 test('dropped parameters appear on the log line', () => {
   const line = buildRequestLog({
-    id: 'req_1', keyId: null, keyName: 'k', model: 'm', stream: false,
+    id: '018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e51', keyId: null, keyName: 'k', model: 'm', stream: false,
     status: 200, outcome: 'ok', latencyMs: 5, attempts: [],
     droppedParams: ['n', 'stop'],
   })
@@ -148,7 +148,7 @@ test('dropped parameters appear on the log line', () => {
 
 test('an empty dropped list is left off the log line entirely', () => {
   const line = buildRequestLog({
-    id: 'req_1', keyId: null, keyName: 'k', model: 'm', stream: false,
+    id: '018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e52', keyId: null, keyName: 'k', model: 'm', stream: false,
     status: 200, outcome: 'ok', latencyMs: 5, attempts: [], droppedParams: [],
   })
 

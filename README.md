@@ -215,6 +215,20 @@ every boot and every daily tick for a full quarter starts refusing to write
 request logs, loudly, in stderr, rather than silently stranding rows outside
 every retention window.
 
+Maintenance runs for every store the gateway knows how to run, not only the
+one currently selected: switching Settings › Governance to `stdout` does not
+stop the postgres driver from provisioning and dropping partitions in the
+gateway's own database, and any captured prompt or completion content already
+sitting in `request_logs` keeps aging out on the same schedule as before the
+switch.
+
+Boot blocks on this first maintenance run — and if two instances start
+together, the loser blocks on the winner's advisory lock rather than serving
+with no partitions provisioned — so with Postgres unreachable, first-serve is
+delayed by up to two connection timeouts (5s each, ~10s total) before the
+failure is logged and the instance serves anyway. An operator debugging a slow
+container start should look here first.
+
 ## Routing
 
 A virtual model holds a list of route targets and the gateway uses all of

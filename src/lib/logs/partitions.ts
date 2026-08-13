@@ -64,7 +64,7 @@ export async function ensurePartitions(client: Queryable, now: Date): Promise<st
     if (rows[0]?.missing !== true) continue
 
     await client.query(`
-      CREATE TABLE IF NOT EXISTS ${name} PARTITION OF request_logs
+      CREATE TABLE IF NOT EXISTS public.${name} PARTITION OF public.request_logs
       FOR VALUES FROM ('${monthBound(start)}') TO ('${monthBound(addMonths(start, 1))}')
     `)
     created.push(name)
@@ -95,8 +95,9 @@ export async function dropExpiredPartitions(
     SELECT c.relname AS name
     FROM pg_inherits i
     JOIN pg_class p ON p.oid = i.inhparent
+    JOIN pg_namespace pn ON pn.oid = p.relnamespace
     JOIN pg_class c ON c.oid = i.inhrelid
-    WHERE p.relname = 'request_logs'
+    WHERE p.relname = 'request_logs' AND pn.nspname = 'public'
     ORDER BY c.relname
   `)
 
@@ -109,7 +110,7 @@ export async function dropExpiredPartitions(
     const start = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1))
     if (start >= keepFrom) continue
 
-    await client.query(`DROP TABLE IF EXISTS ${name}`)
+    await client.query(`DROP TABLE IF EXISTS public.${name}`)
     dropped.push(name)
   }
 

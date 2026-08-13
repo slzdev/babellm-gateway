@@ -228,7 +228,7 @@ export default async function LogDetailPage({
         ) : (
           <p className="text-sm text-muted-foreground">
             {log.payloadCaptured
-              ? 'This request was captured, but its payload row is no longer present.'
+              ? 'This request was marked as captured, but no payload was stored with it.'
               : 'Payload capture is off for this API key. Turn it on per key on the API keys page.'}
           </p>
         )}

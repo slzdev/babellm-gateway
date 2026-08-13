@@ -23,13 +23,36 @@ const DAY_MS = 24 * 60 * 60 * 1000
  * a cosmetic one. A driver with no storage of its own contributes nothing and
  * is harmless in the loop.
  *
- * Returns what was created and dropped, or null when another instance is
- * already running.
+ * `wait` selects which advisory-lock call is issued. The boot path passes
+ * `wait: true`: a fresh database has no partitions and no DEFAULT partition to
+ * catch a write, so a losing instance must not start serving until the
+ * winner's provisioning has actually landed — it blocks until the lock is
+ * free rather than skipping. The daily tick leaves it `false`: a losing
+ * instance there means another one is already doing today's work, which is
+ * fine to skip.
+ *
+ * Returns what was created and dropped, or null when the run was skipped
+ * because another instance held the lock (only possible with `wait: false`).
  */
 export async function runLogMaintenance(
   now: Date = new Date(),
+  { wait = false }: { wait?: boolean } = {},
 ): Promise<MaintenanceResult | null> {
-  const { settings: config } = await resolveRequestLogStore()
+  const { settings: config, fallback } = await resolveRequestLogStore()
+
+  // A settings read that failed hands back DEFAULT_RETENTION_MONTHS, which is
+  // a guess at the operator's policy rather than the policy itself.
+  // Provisioning on a guess is harmless; dropping on one destroys captured
+  // prompt content past the configured window, and DROP TABLE has no undo.
+  // retentionMonths 0 already means "provision, drop nothing".
+  const effective = fallback === 'settings_error'
+    ? { ...config, retentionMonths: 0 }
+    : config
+  if (fallback === 'settings_error') {
+    console.error(
+      '[gateway] logging settings were unreadable; this run provisions but skips dropping expired partitions',
+    )
+  }
 
   // pg_try_advisory_lock / pg_advisory_unlock are scoped to the session that
   // took them. `db` wraps a shared pool: a bare db.execute() checks out
@@ -43,15 +66,24 @@ export async function runLogMaintenance(
   let unlockError: Error | undefined
 
   try {
-    const locked = await client.query<{ locked: boolean }>(
-      'SELECT pg_try_advisory_lock($1::bigint) AS locked', [PARTITION_LOCK_KEY.toString()],
-    )
-    if (!locked.rows[0]?.locked) return null
+    if (wait) {
+      // Blocking: this caller must not proceed — let alone start serving —
+      // until whichever instance holds the lock has finished with it.
+      await client.query('SELECT pg_advisory_lock($1::bigint)', [PARTITION_LOCK_KEY.toString()])
+    } else {
+      const locked = await client.query<{ locked: boolean }>(
+        'SELECT pg_try_advisory_lock($1::bigint) AS locked', [PARTITION_LOCK_KEY.toString()],
+      )
+      if (!locked.rows[0]?.locked) {
+        console.error('[gateway] request log maintenance skipped; another instance holds the lock')
+        return null
+      }
+    }
 
     try {
       const result: MaintenanceResult = { created: [], dropped: [] }
       for (const driver of Object.values(DRIVERS)) {
-        const done = await driver.maintain(now, config)
+        const done = await driver.maintain(now, effective)
         result.created.push(...done.created)
         result.dropped.push(...done.dropped)
       }
@@ -113,7 +145,10 @@ export async function startPartitionMaintenance(): Promise<void> {
   timer.unref()
 
   try {
-    await runLogMaintenance()
+    // Blocking: two instances booting against a fresh database must not have
+    // the loser start serving with no partitions provisioned. See the `wait`
+    // note on runLogMaintenance.
+    await runLogMaintenance(new Date(), { wait: true })
   } catch (err) {
     console.error('[gateway] initial request log maintenance failed', err)
   }

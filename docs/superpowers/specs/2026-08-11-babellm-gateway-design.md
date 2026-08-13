@@ -156,6 +156,11 @@ default for that model name across providers), `input_per_mtok`,
 Separate table so the hot log table stays small; written only when the key opts
 in; pruned by the retention job.
 
+> Superseded by
+> [`docs/superpowers/specs/2026-08-13-request-logs-design.md`](2026-08-13-request-logs-design.md):
+> `request_payloads` was deleted, and the payload columns live on `request_logs`
+> itself; retention drops whole monthly partitions rather than pruning rows.
+
 **`settings`** — key/value jsonb for retention days, default timeouts, breaker
 threshold and cooldown.
 
@@ -302,6 +307,12 @@ started at boot — the Node runtime makes this safe — pruning `request_payloa
 `request_logs` and `rate_windows` beyond the configured window. It takes a
 Postgres advisory lock first, so exactly one instance prunes regardless of how
 many are running.
+
+> Superseded by
+> [`docs/superpowers/specs/2026-08-13-request-logs-design.md`](2026-08-13-request-logs-design.md)
+> for `request_logs`/`request_payloads`: retention there drops expired monthly
+> partitions outright rather than pruning individual rows. `rate_windows` row
+> pruning is unaffected by that change.
 
 ## 8. Dashboard
 

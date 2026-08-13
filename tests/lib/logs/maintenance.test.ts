@@ -1,14 +1,19 @@
-import { beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { db, pool } from '@/lib/db'
 import { clearRequestLogStoreCache } from '@/lib/logs/registry'
 import { PARTITION_LOCK_KEY, runLogMaintenance } from '@/lib/logs/maintenance'
+import * as settingsModule from '@/lib/settings'
 import { setLoggingSettings } from '@/lib/settings'
 import { resetDb } from '../../helpers/db'
 
 beforeEach(async () => {
   await resetDb()
   clearRequestLogStoreCache()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 async function partitions(): Promise<string[]> {
@@ -53,6 +58,25 @@ test('zero retention still provisions but drops nothing', async () => {
   expect(result?.dropped).toEqual([])
   expect(result?.created).toContain('request_logs_2030_06')
   expect(await partitions()).toContain('request_logs_2029_01')
+})
+
+test('a failed settings read provisions but does not drop, rather than dropping against a guessed retention', async () => {
+  // An operator set retentionMonths: 12 because these rows hold captured
+  // prompts and completions they are required to keep. A settings read that
+  // fails mid-run must not fall back to guessing 3 and dropping nine months
+  // of partitions on that guess — DROP TABLE has no undo.
+  await setLoggingSettings({ retentionMonths: 12 })
+  clearRequestLogStoreCache()
+  await runLogMaintenance(new Date('2030-01-15T00:00:00Z'))
+
+  clearRequestLogStoreCache()
+  vi.spyOn(settingsModule, 'getLoggingSettings').mockRejectedValueOnce(new Error('settings read failed'))
+
+  const result = await runLogMaintenance(new Date('2030-06-15T00:00:00Z'))
+
+  expect(result?.dropped).toEqual([])
+  expect(result?.created).toContain('request_logs_2030_06')
+  expect(await partitions()).toContain('request_logs_2030_01')
 })
 
 test('maintains a non-active store rather than only the configured one', async () => {

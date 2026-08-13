@@ -174,8 +174,12 @@ rather than discovered:
   log viewer this is the more useful order, and it is the only one available
   since the partition must be chosen from the id.
 - A request that starts at 23:59:59 on the last day of a month and finishes
-  after midnight is filed in the month it started in. Harmless, because that
-  partition is still present and will not be dropped for months.
+  after midnight is filed in the month it started in. At the default
+  `retentionMonths: 3` that partition survives for months, but this is not
+  guaranteed in general: at `retentionMonths: 1`, `keepFrom` is the current
+  month, so the outgoing month's partition can be dropped by the first
+  maintenance run on or after the 1st — and if this request's insert happens
+  after that drop, its log line is lost rather than filed.
 
 The tradeoff: with clocks skewed across instances, a row can land marginally
 outside a boundary — including a partition boundary. At millisecond
