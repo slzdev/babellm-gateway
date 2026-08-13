@@ -1,6 +1,6 @@
-import { beforeEach, expect, test } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
 import { sql } from 'drizzle-orm'
-import { db } from '@/lib/db'
+import { db, pool } from '@/lib/db'
 import { postgresStore } from '@/lib/logs/postgres'
 import { clearRequestLogStoreCache } from '@/lib/logs/registry'
 import { PRUNE_LOCK_KEY, pruneRequestLogs } from '@/lib/logs/retention'
@@ -66,4 +66,59 @@ test('records when it last ran', async () => {
 
   const rows = await db.execute(sql`SELECT value FROM settings WHERE key = 'logs.last_prune'`)
   expect(rows.rowCount).toBe(1)
+})
+
+test('pins the advisory lock and its unlock to one connection', async () => {
+  // pg_try_advisory_lock/pg_advisory_unlock are scoped to the session that
+  // issued them. This does not prove cross-process exclusion — the "skips
+  // the run" test above already covers that — it proves the specific
+  // regression from fix round 1: that the lock and its unlock are issued on
+  // one client checked out with pool.connect(), rather than as two
+  // independent db.execute() calls that could each land on a different
+  // pooled connection.
+  //
+  // pool.connect is also invoked internally, in its callback form, by every
+  // pool.query() — which is what db.execute()/drizzle use for
+  // resolveRequestLogStore's settings read, store.prune's DELETEs, and the
+  // last_prune upsert. Those must pass straight through undisturbed, or the
+  // test hangs waiting on a callback the mock swallowed. Only the explicit,
+  // no-argument, promise-returning call that pruneRequestLogs itself makes
+  // is instrumented — that is the one this test cares about.
+  await writeOne('old')
+
+  const queries: string[] = []
+  let explicitConnects = 0
+  let querySpy: ReturnType<typeof vi.spyOn> | undefined
+  const originalConnect = pool.connect.bind(pool)
+  const connectSpy = vi.spyOn(pool, 'connect').mockImplementation(((cb?: unknown) => {
+    if (typeof cb === 'function') {
+      // Passthrough for pool.query()'s internal callback-style connects.
+      return (originalConnect as unknown as (cb: unknown) => void)(cb)
+    }
+
+    explicitConnects += 1
+    return (async () => {
+      const client = await originalConnect()
+      const originalQuery = client.query.bind(client)
+      querySpy = vi.spyOn(client, 'query').mockImplementation(((...args: unknown[]) => {
+        queries.push(String(args[0]))
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return (originalQuery as any)(...args)
+      }) as typeof client.query)
+      return client
+    })()
+  }) as typeof pool.connect)
+
+  try {
+    expect(await pruneRequestLogs(new Date(Date.now() + 31 * DAY))).toBe(1)
+  } finally {
+    connectSpy.mockRestore()
+    querySpy?.mockRestore()
+  }
+
+  expect(explicitConnects).toBe(1)
+  const lockIndex = queries.findIndex((q) => q.includes('pg_try_advisory_lock'))
+  const unlockIndex = queries.findIndex((q) => q.includes('pg_advisory_unlock'))
+  expect(lockIndex).toBeGreaterThanOrEqual(0)
+  expect(unlockIndex).toBeGreaterThan(lockIndex)
 })

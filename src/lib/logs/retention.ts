@@ -1,6 +1,5 @@
 import 'server-only'
-import { sql } from 'drizzle-orm'
-import { db } from '@/lib/db'
+import { db, pool } from '@/lib/db'
 import { settings } from '@/lib/db/schema'
 import { resolveRequestLogStore } from './registry'
 
@@ -21,31 +20,56 @@ export async function pruneRequestLogs(now: Date = new Date()): Promise<number |
   const { store, settings: config } = await resolveRequestLogStore()
   if (config.retentionDays <= 0) return null
 
-  // A session advisory lock, taken with try_ so a second instance skips
-  // instead of queueing behind a prune it would only repeat.
-  const acquired = await db.execute(
-    sql`SELECT pg_try_advisory_lock(${PRUNE_LOCK_KEY.toString()}::bigint) AS locked`,
-  )
-  if (!acquired.rows[0]?.locked) return null
+  // pg_try_advisory_lock / pg_advisory_unlock are scoped to the session that
+  // took them. `db` wraps a shared pool: a bare db.execute() checks out
+  // *some* idle client, runs one statement, and hands it back, so the lock
+  // and its unlock could land on two different backends. The unlock would
+  // then silently no-op on a connection that never held the lock, leaking it
+  // on the one that did — and with pg_try_advisory_lock, every later prune
+  // would just find it still held and skip, with no error anywhere. Pinning
+  // both calls to one held client (as syncProvider in catalog/sync.ts does)
+  // is what keeps them on the same session.
+  const client = await pool.connect()
+  let unlockError: Error | undefined
 
   try {
-    const cutoff = new Date(now.getTime() - config.retentionDays * 24 * HOUR_MS)
-    const deleted = await store.prune(cutoff)
+    const locked = await client.query<{ locked: boolean }>(
+      'SELECT pg_try_advisory_lock($1::bigint) AS locked', [PRUNE_LOCK_KEY.toString()],
+    )
+    if (!locked.rows[0]?.locked) return null
 
-    await db
-      .insert(settings)
-      .values({
-        key: 'logs.last_prune',
-        value: { at: new Date().toISOString(), deleted },
-      })
-      .onConflictDoUpdate({
-        target: settings.key,
-        set: { value: { at: new Date().toISOString(), deleted }, updatedAt: new Date() },
-      })
+    try {
+      const cutoff = new Date(now.getTime() - config.retentionDays * 24 * HOUR_MS)
+      const deleted = await store.prune(cutoff)
 
-    return deleted
+      await db
+        .insert(settings)
+        .values({
+          key: 'logs.last_prune',
+          value: { at: new Date().toISOString(), deleted },
+        })
+        .onConflictDoUpdate({
+          target: settings.key,
+          set: { value: { at: new Date().toISOString(), deleted }, updatedAt: new Date() },
+        })
+
+      return deleted
+    } finally {
+      try {
+        await client.query('SELECT pg_advisory_unlock($1::bigint)', [PRUNE_LOCK_KEY.toString()])
+      } catch (err) {
+        // The prune's own outcome (its return value, and the last_prune row)
+        // is already decided by this point. Rethrowing here would replace a
+        // real failure from store.prune with the unlock's instead, hiding the
+        // root cause — so it's logged and carried to release() below, which
+        // destroys the client rather than recycling one that may still hold
+        // the lock.
+        unlockError = err instanceof Error ? err : new Error(String(err))
+        console.error('[gateway] could not release the retention prune lock', err)
+      }
+    }
   } finally {
-    await db.execute(sql`SELECT pg_advisory_unlock(${PRUNE_LOCK_KEY.toString()}::bigint)`)
+    client.release(unlockError)
   }
 }
 
