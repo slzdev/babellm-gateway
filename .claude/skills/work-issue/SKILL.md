@@ -74,7 +74,7 @@ Read the output. Failing or skipped checks get reported as failing or skipped �
 
 Ask the `AGENTS.md` integration question (merge / branch / branch + PR), then follow `superpowers:finishing-a-development-branch`.
 
-The PR body — or the merge commit, if merging straight to master — **must** contain:
+The PR body — or the merge commit, if merging straight to main — **must** contain:
 
 ```
 Closes #N

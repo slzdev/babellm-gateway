@@ -2895,5 +2895,5 @@ After Task 11, confirm the whole feature from a clean state.
 - [ ] **Build:** `pnpm build` — succeeds.
 - [ ] **Migration from scratch:** drop and recreate the dev database, then `pnpm db:migrate`. Confirm `providers.api_flavor` exists with the `chat_completions` default and that no earlier migration was edited.
 - [ ] **Manual smoke:** with `pnpm dev`, create an `openai_compatible` provider on the Responses flavor pointing at a real Responses endpoint, add a route target, and send both a streaming and a non-streaming request through `/v1/chat/completions`. Confirm the response headers name the provider, and that a request carrying `n: 3` comes back with `x-babellm-dropped-params: n`.
-- [ ] **Interface check:** `git diff master -- src/lib/adapters/types.ts` shows no change to `ProviderAdapter`. If `respond` or `respondStream` appears, it does not belong in this phase.
+- [ ] **Interface check:** `git diff main -- src/lib/adapters/types.ts` shows no change to `ProviderAdapter`. If `respond` or `respondStream` appears, it does not belong in this phase.
 - [ ] **Scope check:** `src/lib/translate/` contains exactly one file, and `src/app/v1/` contains only `chat/completions/route.ts`.

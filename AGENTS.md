@@ -36,7 +36,7 @@ Ask with `AskUserQuestion`, **one question at a time, in this order**. Wait for 
 
 - **Git worktree** — isolated workspace (`superpowers:using-git-worktrees`)
 - **Git branch** — new branch in the current workspace
-- **On master** — no isolation
+- **On main** — no isolation
 
 ## 3. When the work is finished
 
@@ -44,7 +44,7 @@ Once the implementation is complete and verified (`superpowers:verification-befo
 
 > How should this be integrated?
 
-- **Merge into master**
+- **Merge into main**
 - **Create a branch**
 - **Create a branch + PR**
 
