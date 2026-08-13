@@ -1,10 +1,39 @@
+import { postgresStore } from '@/lib/logs/postgres'
+
 /**
- * Waits for a fire-and-forget log write to settle.
+ * Polls `check` until it returns true, or throws once `timeoutMs` elapses.
  *
  * The handler deliberately does not await logRequest — a log write is not
- * worth client latency — so a test that asserts on the row has to give the
- * write a turn of the event loop.
+ * worth client latency — so a test that asserts on its effect has to wait
+ * for it. A fixed sleep is a race against a real database transaction (or,
+ * for the stdout driver, a real event-loop turn); polling gives every
+ * environment exactly the time it needs and fails with a clear message
+ * instead of asserting on a write that never landed.
  */
-export async function flushLogs(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 25))
+export async function waitFor(
+  check: () => boolean | Promise<boolean>,
+  timeoutMs = 2000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await check()) return
+    if (Date.now() >= deadline) {
+      throw new Error(`waitFor: condition was not satisfied within ${timeoutMs}ms`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
 }
+
+/** Waits for at least `expected` rows to have landed in the postgres request
+ * log store. */
+export async function waitForLogs(expected = 1, timeoutMs = 2000): Promise<void> {
+  await waitFor(async () => {
+    const page = await postgresStore.query({ limit: expected })
+    return page.rows.length >= expected
+  }, timeoutMs)
+}
+
+/** @deprecated Use `waitForLogs` (postgres row count) or `waitFor` (a custom
+ * predicate, e.g. counting stdout lines). Kept so call sites that only need
+ * "one row, default timeout" stay terse. */
+export const flushLogs = waitForLogs

@@ -73,18 +73,27 @@ export function attemptHeaders(
   }
 }
 
+const ERROR_MESSAGE_MAX_LENGTH = 2000
+
 /** The log keeps the real message even for an unhandled error: the page that
  * reads it is admin-only, and the sanitized envelope the client received is
- * useless for diagnosis. */
+ * useless for diagnosis. Length is still bounded — a provider that fails
+ * with a multi-megabyte HTML body must not turn into a multi-megabyte row. */
+function errorMessage(message: string): string {
+  return message.length > ERROR_MESSAGE_MAX_LENGTH
+    ? message.slice(0, ERROR_MESSAGE_MAX_LENGTH)
+    : message
+}
+
 function errorFields(err: unknown) {
   if (err === undefined) return {}
   if (err instanceof GatewayError) {
-    return { errorType: err.type, errorCode: err.code, errorMessage: err.message }
+    return { errorType: err.type, errorCode: err.code, errorMessage: errorMessage(err.message) }
   }
   return {
     errorType: 'internal_error',
     errorCode: null,
-    errorMessage: err instanceof Error ? err.message : String(err),
+    errorMessage: errorMessage(err instanceof Error ? err.message : String(err)),
   }
 }
 
@@ -214,16 +223,25 @@ export async function handleChatCompletions(
     )
     dropped = droppedFor(result.candidate, body)
 
+    // Built before logging: logging after the response has been constructed
+    // means a throw building the response can no longer race a second,
+    // contradictory log line against this one for the same request_id.
+    const response = Response.json(rewriteCompletion(result.value, identity), {
+      headers: attemptHeaders(result.candidate, requestId, dropped),
+    })
     log(200, 'ok', result.attempts, {
       candidate: result.candidate,
       usage: usageFrom(result.value.usage),
     })
-    return Response.json(rewriteCompletion(result.value, identity), {
-      headers: attemptHeaders(result.candidate, requestId, dropped),
-    })
+    return response
   } catch (err) {
     const status = err instanceof GatewayError ? err.status : 500
-    log(status, 'error', err instanceof RoutedError ? err.attempts : [], { error: err })
+    // A client that disconnected mid-request surfaces here as an aborted
+    // signal, which classifyProviderError reports as an upstream timeout —
+    // that's the right status for a stuck response, but the wrong outcome:
+    // the client left, no upstream is to blame.
+    const outcome: RequestOutcome = request.signal.aborted ? 'client_closed' : 'error'
+    log(status, outcome, err instanceof RoutedError ? err.attempts : [], { error: err })
 
     // Under failover the interesting provider is the last one tried, which
     // only the routed error knows.

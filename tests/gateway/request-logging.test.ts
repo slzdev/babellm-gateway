@@ -2,11 +2,12 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { postgresStore } from '@/lib/logs/postgres'
 import { clearRequestLogStoreCache } from '@/lib/logs/registry'
+import * as pricing from '@/lib/pricing'
 import { clearPriceCache } from '@/lib/pricing'
 import { db } from '@/lib/db'
 import { catalogModels } from '@/lib/db/schema'
 import { chatRequest, fakeAdapterDeps, seedGateway } from '../helpers/gateway'
-import { flushLogs } from '../helpers/logs'
+import { waitFor, waitForLogs } from '../helpers/logs'
 import { resetDb } from '../helpers/db'
 
 const body = { model: 'house-model', messages: [{ role: 'user', content: 'hi' }] }
@@ -34,7 +35,7 @@ test('a successful request lands one row with its winning target', async () => {
     chatRequest(body, apiKey),
     fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
   )
-  await flushLogs()
+  await waitForLogs()
 
   const page = await postgresStore.query({ limit: 10 })
   expect(page.rows).toHaveLength(1)
@@ -60,7 +61,7 @@ test('cost is filled in when the catalog prices the winning model', async () => 
     chatRequest(body, apiKey),
     fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
   )
-  await flushLogs()
+  await waitForLogs()
 
   const [row] = (await postgresStore.query({ limit: 1 })).rows
   expect(Number(row.costUsd)).toBeCloseTo(4, 6)
@@ -73,7 +74,7 @@ test('an unpriced model logs a null cost rather than zero', async () => {
     chatRequest(body, apiKey),
     fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
   )
-  await flushLogs()
+  await waitForLogs()
 
   expect((await postgresStore.query({ limit: 1 })).rows[0].costUsd).toBeNull()
 })
@@ -82,7 +83,7 @@ test('a rejected request logs the error without a key or attempts', async () => 
   await seedGateway()
 
   await handleChatCompletions(chatRequest(body, null), fakeAdapterDeps({}))
-  await flushLogs()
+  await waitForLogs()
 
   const [row] = (await postgresStore.query({ limit: 1 })).rows
   expect(row).toMatchObject({ status: 401, outcome: 'error', keyName: null })
@@ -110,7 +111,7 @@ test('a streaming request logs usage captured from the final chunk', async () =>
     fakeAdapterDeps({ chatStream: chatStream as never }),
   )
   await res.text()
-  await flushLogs()
+  await waitForLogs()
 
   const [row] = (await postgresStore.query({ limit: 1 })).rows
   expect(row).toMatchObject({ stream: true, outcome: 'ok', promptTokens: 7, completionTokens: 2 })
@@ -131,7 +132,7 @@ test('a provider that reports no stream usage logs nulls, not zeros', async () =
     fakeAdapterDeps({ chatStream: chatStream as never }),
   )
   await res.text()
-  await flushLogs()
+  await waitForLogs()
 
   const [row] = (await postgresStore.query({ limit: 1 })).rows
   expect(row.promptTokens).toBeNull()
@@ -153,7 +154,7 @@ test('a mid-stream failure is logged as stream_interrupted despite the 200', asy
     fakeAdapterDeps({ chatStream: chatStream as never }),
   )
   await res.text()
-  await flushLogs()
+  await waitForLogs()
 
   const page = await postgresStore.query({ limit: 10 })
   expect(page.rows).toHaveLength(1)
@@ -169,10 +170,58 @@ test('a write failure never reaches the client', async () => {
     chatRequest(body, apiKey),
     fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
   )
-  await flushLogs()
+  // No row will ever land for this request, so wait on the side effect that
+  // does happen rather than on waitForLogs, which would just time out.
+  await waitFor(() => stderr.mock.calls.length > 0)
 
   expect(res.status).toBe(200)
   expect(stderr).toHaveBeenCalled()
   failure.mockRestore()
   stderr.mockRestore()
+})
+
+test('a pricing failure never reaches the client', async () => {
+  const { apiKey } = await seedGateway()
+  const failure = vi.spyOn(pricing, 'priceFor').mockRejectedValue(new Error('catalog unreachable'))
+  const stderr = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
+  )
+  // writeLog awaits priceFor before it ever calls logRequest, so a rejection
+  // here means no row lands either — this is the cheapest proof that the
+  // fire-and-forget .catch() at the call site really does catch a throw from
+  // inside the async writeLog, not just from logRequest itself.
+  await waitFor(() => stderr.mock.calls.length > 0)
+
+  expect(res.status).toBe(200)
+  expect(stderr).toHaveBeenCalled()
+  expect((await postgresStore.query({ limit: 10 })).rows).toHaveLength(0)
+  failure.mockRestore()
+  stderr.mockRestore()
+})
+
+test('a client disconnect on the non-streaming path logs client_closed, not an upstream timeout', async () => {
+  const { apiKey } = await seedGateway()
+  const controller = new AbortController()
+  const request = new Request('http://gateway.test/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify(body),
+    signal: controller.signal,
+  })
+
+  // Simulates what a real adapter sees once the client leaves mid-request:
+  // its own fetch aborts because ctx.signal is AbortSignal.any([clientSignal, ...]).
+  const chat = vi.fn().mockImplementation(async () => {
+    controller.abort()
+    throw new DOMException('The operation was aborted.', 'AbortError')
+  })
+
+  await handleChatCompletions(request, fakeAdapterDeps({ chat }))
+  await waitForLogs()
+
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  expect(row).toMatchObject({ outcome: 'client_closed' })
 })

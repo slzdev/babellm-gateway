@@ -17,12 +17,19 @@ const DONE = encoder.encode('data: [DONE]\n\n')
  * logging pay nothing. */
 function accumulate(captured: StreamCapture, chunk: ChatCompletionChunk, maxBytes: number) {
   const delta = chunk.choices?.[0]?.delta?.content
-  if (!delta) return
-  if (Buffer.byteLength(captured.text, 'utf8') + Buffer.byteLength(delta, 'utf8') > maxBytes) {
+  // Upstream JSON is untrusted: a non-string content field would make
+  // Buffer.byteLength throw, and a throw here is inside the relay loop —
+  // it would turn a healthy stream into an interrupted one.
+  if (typeof delta !== 'string' || delta.length === 0) return
+  const width = Buffer.byteLength(delta, 'utf8')
+  // A running total rather than re-measuring the accumulated text on every
+  // chunk, which would be quadratic over a token-per-chunk stream.
+  if (captured.bytes + width > maxBytes) {
     captured.truncated = true
     return
   }
   captured.text += delta
+  captured.bytes += width
 }
 
 export interface StartedChatStream {
@@ -64,6 +71,8 @@ export interface StreamCapture {
   usage: LogUsage | null
   /** Assembled assistant text. Empty unless payload capture was requested. */
   text: string
+  /** Byte length of `text`, tracked incrementally rather than recomputed. */
+  bytes: number
   /** True once the text hit the byte cap and stopped accumulating. */
   truncated: boolean
 }
@@ -96,7 +105,7 @@ export function sseResponse(
 
   // Accumulated as the stream is relayed, so the settle callback — whichever
   // of the three paths reaches it — reports what actually got through.
-  const captured: StreamCapture = { usage: null, text: '', truncated: false }
+  const captured: StreamCapture = { usage: null, text: '', bytes: 0, truncated: false }
 
   function settle(outcome: StreamOutcome) {
     if (settled) return
