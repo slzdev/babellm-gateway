@@ -193,11 +193,12 @@ apiFlavor: apiFlavorEnum('api_flavor').notNull().default('chat_completions'),
 The default makes the migration additive with no backfill; every existing row
 keeps its current behaviour.
 
-This is the fifth `pgEnum` in the schema. The SQLite design
-(`2026-08-13-sqlite-support-design.md`) maps every `pgEnum` to
-`text({ enum: [...] })` under one general rule rather than listing enums
-individually, so `api_flavor` needs no entry there and that spec is
-unaffected by this phase.
+This is the fifth `pgEnum` in the schema. A SQLite-support design existed while
+this phase was being written and mapped every `pgEnum` to `text({ enum: [...] })`
+under one general rule rather than listing enums individually, so `api_flavor`
+needed no entry in it. That document has since been removed from the repository;
+should SQLite support be revisited, the same general rule covers this enum with
+no special handling.
 
 ### 4.2 `src/lib/adapters/types.ts`
 
@@ -559,6 +560,6 @@ Modified:
 - `src/app/(admin)/providers/actions.ts`
 - `README.md` — flavor setting, `reasoning_content`, and the `n`/`stop` caveat
 
-Not modified: `docs/superpowers/specs/2026-08-13-sqlite-support-design.md`. Its
-general `pgEnum` → `text({ enum: [...] })` rule already covers `api_flavor`;
-see §4.1.
+No other spec was modified. The SQLite-support design that existed during this
+phase needed no entry for `api_flavor` — see §4.1 — and has since been removed
+from the repository.
