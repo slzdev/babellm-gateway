@@ -71,3 +71,27 @@ test('resolveProviderRuntime carries the flavor onto the runtime', () => {
   expect(resolveProviderRuntime(provider({ apiFlavor: 'responses' })).apiFlavor)
     .toBe('responses')
 })
+
+test('a responses-flavored provider gets an adapter that speaks responses', () => {
+  const adapter = createAdapter(provider({ apiFlavor: 'responses' }))
+  expect(typeof adapter.chat).toBe('function')
+  expect(typeof adapter.chatStream).toBe('function')
+  expect(typeof adapter.listModels).toBe('function')
+})
+
+test('flavor is honoured for openai_compatible providers too', () => {
+  const adapter = createAdapter(provider({
+    adapter: 'openai_compatible',
+    baseUrl: 'https://api.example/v1',
+    apiFlavor: 'responses',
+  }))
+  expect(typeof adapter.chat).toBe('function')
+})
+
+test('a responses-flavored openai_compatible provider still needs a base URL', () => {
+  expect(() =>
+    createAdapter(provider({
+      adapter: 'openai_compatible', baseUrl: null, apiFlavor: 'responses',
+    })),
+  ).toThrow(/base URL/i)
+})

@@ -2,6 +2,7 @@ import { decryptJson } from '@/lib/crypto'
 import type { ProviderRow } from '@/lib/db/schema'
 import { UnsupportedOperationError } from '@/lib/gateway/errors'
 import { createOpenAIAdapter } from './openai'
+import { createResponsesAdapter } from './openai/responses'
 import type { ApiFlavor, ProviderAdapter, ProviderConfig, ProviderRuntime } from './types'
 
 /**
@@ -25,19 +26,31 @@ export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
   }
 }
 
+/**
+ * Chat Completions and Responses providers share every branch above this
+ * point — credentials, base URL, adapter kind — and differ only in which
+ * client method the adapter calls. Keeping that choice in one helper is what
+ * lets the two cases above read identically otherwise.
+ */
+function adapterFor(runtime: ProviderRuntime, provider: ProviderRow): ProviderAdapter {
+  return resolveApiFlavor(provider) === 'responses'
+    ? createResponsesAdapter(runtime)
+    : createOpenAIAdapter(runtime)
+}
+
 export function createAdapter(provider: ProviderRow): ProviderAdapter {
   const runtime = resolveProviderRuntime(provider)
 
   switch (runtime.adapter) {
     case 'openai':
-      return createOpenAIAdapter(runtime)
+      return adapterFor(runtime, provider)
     case 'openai_compatible':
       if (!runtime.baseUrl) {
         throw new Error(
           `Provider "${runtime.name}" is openai_compatible but has no base URL configured.`,
         )
       }
-      return createOpenAIAdapter(runtime)
+      return adapterFor(runtime, provider)
     case 'gemini':
     case 'bedrock':
       throw new UnsupportedOperationError(
