@@ -5,14 +5,17 @@ import type { ProviderAdapter } from '@/lib/adapters/types'
 import type { ProviderRow } from '@/lib/db/schema'
 import { chatCompletionRequestSchema, type ChatCompletionRequest } from '@/lib/schemas/chat'
 import { droppedParams } from '@/lib/translate/chat-to-responses'
+import { logRequest } from '@/lib/logs'
+import type { LogPayload, LogUsage, RequestOutcome } from '@/lib/logs/types'
+import { computeCost, priceFor } from '@/lib/pricing'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
 import { GatewayError, RoutedError, errorResponse } from './errors'
 import { execute, type AttemptRecord } from './execute'
 import { newCompletionId, rewriteCompletion } from './identity'
-import { emitRequestLog, type RequestOutcome } from './request-log'
 import { resolveModel, type Candidate } from './resolve'
 import { selectOrder } from './select'
 import { sseResponse, startChatStream } from './sse'
+import { usageFrom } from './usage'
 
 export interface ChatHandlerDeps {
   createAdapter: (provider: ProviderRow) => ProviderAdapter
@@ -70,6 +73,21 @@ export function attemptHeaders(
   }
 }
 
+/** The log keeps the real message even for an unhandled error: the page that
+ * reads it is admin-only, and the sanitized envelope the client received is
+ * useless for diagnosis. */
+function errorFields(err: unknown) {
+  if (err === undefined) return {}
+  if (err instanceof GatewayError) {
+    return { errorType: err.type, errorCode: err.code, errorMessage: err.message }
+  }
+  return {
+    errorType: 'internal_error',
+    errorCode: null,
+    errorMessage: err instanceof Error ? err.message : String(err),
+  }
+}
+
 export async function handleChatCompletions(
   request: Request,
   deps: ChatHandlerDeps = defaultDeps,
@@ -79,33 +97,79 @@ export async function handleChatCompletions(
 
   // Tracked outside the try so the log line can still say who was calling
   // and for what when the request never got as far as an attempt.
+  let keyId: string | null = null
   let keyName: string | null = null
   let modelName: string | null = null
   let stream = false
   let dropped: string[] = []
 
+  interface LogExtra {
+    ttftMs?: number
+    /** The target that actually served, which is what gets priced. */
+    candidate?: Candidate
+    usage?: LogUsage | null
+    payload?: LogPayload | null
+    error?: unknown
+  }
+
   function log(
     status: number,
     outcome: RequestOutcome,
     attempts: AttemptRecord[],
-    ttftMs?: number,
+    extra: LogExtra = {},
   ) {
-    emitRequestLog({
+    // Fire-and-forget. A request that succeeded must not be failed — or even
+    // slowed — by its own bookkeeping.
+    void writeLog(status, outcome, attempts, extra).catch((err) =>
+      console.error(`[gateway] failed to write request log request_id=${requestId}`, err),
+    )
+  }
+
+  async function writeLog(
+    status: number,
+    outcome: RequestOutcome,
+    attempts: AttemptRecord[],
+    extra: LogExtra,
+  ) {
+    const usage = extra.usage ?? null
+    const cost =
+      extra.candidate && usage
+        ? computeCost(
+            await priceFor(extra.candidate.provider.id, extra.candidate.upstreamModel),
+            usage,
+          )
+        : null
+
+    await logRequest({
       requestId,
-      key: keyName,
+      keyId,
+      keyName,
       model: modelName,
       stream,
       status,
       outcome,
+      ...errorFields(extra.error),
       latencyMs: Date.now() - startedAt,
-      ...(ttftMs === undefined ? {} : { ttftMs }),
+      ...(extra.ttftMs === undefined ? {} : { ttftMs: extra.ttftMs }),
       attempts,
+      final: extra.candidate
+        ? {
+            targetId: extra.candidate.targetId,
+            providerId: extra.candidate.provider.id,
+            provider: extra.candidate.provider.name,
+            upstreamModel: extra.candidate.upstreamModel,
+          }
+        : null,
+      usage,
+      cost,
       ...(dropped.length > 0 ? { droppedParams: dropped } : {}),
+      payload: extra.payload ?? null,
     })
   }
 
   try {
     const apiKey = await resolveApiKey(extractBearerToken(request))
+    keyId = apiKey.id
     keyName = apiKey.name
     const body = await parseBody(request)
     modelName = body.model
@@ -136,7 +200,12 @@ export async function handleChatCompletions(
         result.value,
         identity,
         attemptHeaders(result.candidate, requestId, dropped),
-        (outcome) => log(200, outcome, result.attempts, ttftMs),
+        (outcome, capture) =>
+          log(200, outcome, result.attempts, {
+            ttftMs,
+            candidate: result.candidate,
+            usage: capture.usage,
+          }),
       )
     }
 
@@ -145,13 +214,16 @@ export async function handleChatCompletions(
     )
     dropped = droppedFor(result.candidate, body)
 
-    log(200, 'ok', result.attempts)
+    log(200, 'ok', result.attempts, {
+      candidate: result.candidate,
+      usage: usageFrom(result.value.usage),
+    })
     return Response.json(rewriteCompletion(result.value, identity), {
       headers: attemptHeaders(result.candidate, requestId, dropped),
     })
   } catch (err) {
     const status = err instanceof GatewayError ? err.status : 500
-    log(status, 'error', err instanceof RoutedError ? err.attempts : [])
+    log(status, 'error', err instanceof RoutedError ? err.attempts : [], { error: err })
 
     // Under failover the interesting provider is the last one tried, which
     // only the routed error knows.

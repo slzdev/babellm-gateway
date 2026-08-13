@@ -1,7 +1,10 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
+import { clearRequestLogStoreCache } from '@/lib/logs/registry'
+import { setLoggingSettings } from '@/lib/settings'
 import { chatRequest, fakeAdapterByProvider, fakeAdapterDeps, seedGateway, seedTargets } from '../helpers/gateway'
+import { flushLogs } from '../helpers/logs'
 import { resetDb } from '../helpers/db'
 
 const body = { model: 'house-model', messages: [{ role: 'user', content: 'hi' }] }
@@ -24,6 +27,8 @@ let lines: Array<Record<string, unknown>>
 beforeEach(async () => {
   process.env.ENCRYPTION_KEY = 'a'.repeat(64)
   await resetDb()
+  await setLoggingSettings({ store: 'stdout' })
+  clearRequestLogStoreCache()
   lines = []
   vi.spyOn(console, 'log').mockImplementation((written: unknown) => {
     // Defensive: anything else that reaches stdout during a test would
@@ -39,7 +44,7 @@ beforeEach(async () => {
 /** Waits for the stream's settle callback, which fires after the body drains. */
 async function drain(res: Response) {
   await res.text()
-  await new Promise((resolve) => setTimeout(resolve, 10))
+  await flushLogs()
 }
 
 test('a successful request logs exactly one line', async () => {
@@ -48,6 +53,7 @@ test('a successful request logs exactly one line', async () => {
     chatRequest(body, apiKey),
     fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
   )
+  await flushLogs()
 
   expect(lines).toHaveLength(1)
   expect(lines[0]).toMatchObject({
@@ -72,6 +78,7 @@ test('the line records every attempt made, in order', async () => {
       backup: { chat: vi.fn().mockResolvedValue(upstreamCompletion) },
     }),
   )
+  await flushLogs()
 
   const attempts = lines[0].attempts as Array<Record<string, unknown>>
   expect(attempts).toHaveLength(2)
@@ -91,6 +98,7 @@ test('a failed request still logs its attempts', async () => {
       b: { chat: vi.fn().mockRejectedValue(apiError(429)) },
     }),
   )
+  await flushLogs()
 
   expect(lines[0]).toMatchObject({ status: 429, outcome: 'error', lvl: 'warn' })
   expect(lines[0].attempts).toHaveLength(2)
@@ -99,6 +107,7 @@ test('a failed request still logs its attempts', async () => {
 test('a rejected request with no key logs a null key and no attempts', async () => {
   await seedGateway()
   await handleChatCompletions(chatRequest(body, null), fakeAdapterDeps({}))
+  await flushLogs()
 
   expect(lines[0]).toMatchObject({ key: null, status: 401, outcome: 'error' })
   expect(lines[0].attempts).toEqual([])

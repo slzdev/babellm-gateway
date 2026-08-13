@@ -1,6 +1,8 @@
 import type { ChatCompletionChunk } from '@/lib/adapters/types'
+import type { LogUsage } from '@/lib/logs/types'
 import { classifyProviderError } from './errors'
 import { rewriteChunk, type IdentityOptions } from './identity'
+import { usageFrom } from './usage'
 
 const encoder = new TextEncoder()
 
@@ -9,6 +11,19 @@ function event(payload: unknown): Uint8Array {
 }
 
 const DONE = encoder.encode('data: [DONE]\n\n')
+
+/** Assembles assistant text for payload capture, stopping at the byte cap.
+ * Only runs when capture was requested, so streams for keys without payload
+ * logging pay nothing. */
+function accumulate(captured: StreamCapture, chunk: ChatCompletionChunk, maxBytes: number) {
+  const delta = chunk.choices?.[0]?.delta?.content
+  if (!delta) return
+  if (Buffer.byteLength(captured.text, 'utf8') + Buffer.byteLength(delta, 'utf8') > maxBytes) {
+    captured.truncated = true
+    return
+  }
+  captured.text += delta
+}
 
 export interface StartedChatStream {
   chunks: AsyncIterable<ChatCompletionChunk>
@@ -45,11 +60,25 @@ export async function startChatStream(
 
 export type StreamOutcome = 'ok' | 'client_closed' | 'stream_interrupted'
 
+export interface StreamCapture {
+  usage: LogUsage | null
+  /** Assembled assistant text. Empty unless payload capture was requested. */
+  text: string
+  /** True once the text hit the byte cap and stopped accumulating. */
+  truncated: boolean
+}
+
+export interface CaptureOptions {
+  /** Accumulate assistant text up to this many bytes, for payload capture. */
+  maxBytes: number
+}
+
 export function sseResponse(
   started: StartedChatStream,
   identity: IdentityOptions,
   headers: HeadersInit,
-  onSettle?: (outcome: StreamOutcome) => void,
+  onSettle?: (outcome: StreamOutcome, capture: StreamCapture) => void,
+  capture?: CaptureOptions,
 ): Response {
   // Set the moment the client disconnects. The `for await` below may still
   // be mid-pull when that happens (it does not know the controller is gone
@@ -64,11 +93,16 @@ export function sseResponse(
   // false and reports ok on top of it. First one wins, so the outcome that
   // describes what actually happened is the one that survives.
   let settled = false
+
+  // Accumulated as the stream is relayed, so the settle callback — whichever
+  // of the three paths reaches it — reports what actually got through.
+  const captured: StreamCapture = { usage: null, text: '', truncated: false }
+
   function settle(outcome: StreamOutcome) {
     if (settled) return
     settled = true
     try {
-      onSettle?.(outcome)
+      onSettle?.(outcome, captured)
     } catch (err) {
       console.error('[gateway] stream settle callback failed', err)
     }
@@ -79,6 +113,10 @@ export function sseResponse(
       try {
         for await (const chunk of started.chunks) {
           if (cancelled) return
+          // include_usage puts this on the final chunk; a provider that omits
+          // it simply leaves captured.usage null.
+          if (chunk.usage) captured.usage = usageFrom(chunk.usage)
+          if (capture && !captured.truncated) accumulate(captured, chunk, capture.maxBytes)
           controller.enqueue(event(rewriteChunk(chunk, identity)))
         }
       } catch (err) {
