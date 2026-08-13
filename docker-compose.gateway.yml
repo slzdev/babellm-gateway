@@ -1,0 +1,43 @@
+# Overlay that adds the gateway itself to the Postgres-only stack in
+# docker-compose.yml, so one command brings up a complete working server:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gateway.yml up -d --build
+#
+# It is a separate file so the local development flow — `docker compose up -d`
+# for Postgres, then `pnpm dev` on port 3000 — keeps working untouched.
+#
+# ---------------------------------------------------------------------------
+# THE CREDENTIALS BELOW ARE PUBLIC. THIS STACK IS FOR TRYING THE GATEWAY OUT
+# ON YOUR OWN MACHINE, NOT FOR ANYTHING REACHABLE FROM A NETWORK YOU DO NOT
+# CONTROL.
+#
+#   - ENCRYPTION_KEY is checked into this repo, so every provider credential
+#     the gateway encrypts under it can be decrypted by anyone who has the
+#     repo.
+#   - ADMIN_PASSWORD is `babellm`, so anyone who can reach the port owns the
+#     dashboard.
+#
+# To use real values, put them in a `.env` file next to this one (start from
+# `.env.example`) — Compose loads it automatically and it wins over these
+# defaults. Do not switch ENCRYPTION_KEY after storing provider credentials:
+# rotating it makes the existing rows undecryptable.
+# ---------------------------------------------------------------------------
+
+services:
+  gateway:
+    build: .
+    image: babellm-gateway:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Override GATEWAY_PORT to run this stack alongside a local `pnpm dev`.
+    ports:
+      - "${GATEWAY_PORT:-3000}:3000"
+    environment:
+      # Deliberately not overridable: DATABASE_URL in a developer's .env
+      # points at localhost, which inside the container is the container.
+      DATABASE_URL: postgres://babellm:babellm@postgres:5432/babellm
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-babellm}
+      SESSION_SECRET: ${SESSION_SECRET:-insecure-demo-session-secret-change-me}

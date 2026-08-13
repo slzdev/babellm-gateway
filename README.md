@@ -39,6 +39,10 @@ Copy `.env.example` to `.env` and fill these in for local development.
    docker compose up -d
    ```
 
+   This starts Postgres only, leaving port 3000 to the dev server below. To
+   run the gateway in a container too, see
+   [Run the whole stack](#run-the-whole-stack).
+
 2. Install dependencies and apply migrations:
 
    ```bash
@@ -60,6 +64,43 @@ Tests run against a disposable database, driven by `.env.test`:
 ```bash
 pnpm test
 ```
+
+## Run the whole stack
+
+To get a complete working server — Postgres *and* the gateway — without
+installing Node or pnpm, add the `docker-compose.gateway.yml` overlay:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gateway.yml up -d --build
+```
+
+The dashboard is at `http://localhost:3000` and the gateway at
+`http://localhost:3000/v1/*`. The container migrates the database on boot, so
+there is no separate setup step. Set `GATEWAY_PORT` to publish somewhere else
+(`GATEWAY_PORT=3100 docker compose …`) — useful when `pnpm dev` already holds
+port 3000.
+
+To drop the flags from every subsequent command:
+
+```bash
+export COMPOSE_FILE=docker-compose.yml:docker-compose.gateway.yml
+docker compose up -d --build
+docker compose logs -f gateway
+docker compose down
+```
+
+**The credentials in that overlay are public.** It ships a checked-in
+`ENCRYPTION_KEY` and the admin password `babellm` so the stack boots with no
+setup — which means anyone with this repo can decrypt the provider credentials
+it stores, and anyone who can reach the port owns the dashboard. Keep it on
+your own machine. To use real values, put them in `.env` (start from
+`.env.example`); Compose loads that file automatically and it overrides the
+defaults. `DATABASE_URL` is the exception — the overlay always points it at the
+`postgres` service, since a host-local URL does not resolve inside the
+container.
+
+For anything beyond a local trial, use the deployment path in
+[Production deployment](#production-deployment) instead.
 
 ## Model catalog
 
