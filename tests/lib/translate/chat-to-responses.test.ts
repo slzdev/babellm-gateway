@@ -1,6 +1,13 @@
 import { expect, test } from 'vitest'
-import { droppedParams, fromResponse, toResponsesRequest } from '@/lib/translate/chat-to-responses'
+import {
+  droppedParams,
+  fromResponse,
+  fromResponseStream,
+  toResponsesRequest,
+} from '@/lib/translate/chat-to-responses'
+import type { ChatCompletionChunk } from '@/lib/adapters/types'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
+import streamFixture from '../../fixtures/openai-responses-tool-call-stream.json'
 
 function request(overrides: Partial<ChatCompletionRequest> = {}): ChatCompletionRequest {
   return {
@@ -464,4 +471,128 @@ test('an empty output produces one choice with null content', () => {
   const result = fromResponse(response())
   expect(result.choices[0].message.content).toBeNull()
   expect(result.choices[0].index).toBe(0)
+})
+
+async function collectStream(
+  events: unknown[],
+  req: ChatCompletionRequest = request({ stream: true }),
+): Promise<ChatCompletionChunk[]> {
+  async function* source() {
+    for (const event of events) yield event
+  }
+  const out: ChatCompletionChunk[] = []
+  for await (const chunk of fromResponseStream(source() as never, req)) out.push(chunk)
+  return out
+}
+
+test('the done events are ignored, so no content is duplicated', async () => {
+  const chunks = await collectStream(streamFixture)
+
+  const reasoning = chunks
+    .map((c) => (c.choices[0]?.delta as { reasoning_content?: string })?.reasoning_content ?? '')
+    .join('')
+  expect(reasoning).toBe('Checking the weather.')
+
+  const args = chunks
+    .flatMap((c) => c.choices[0]?.delta?.tool_calls ?? [])
+    .map((call) => call.function?.arguments ?? '')
+    .join('')
+  expect(JSON.parse(args)).toEqual({ city: 'Paris' })
+})
+
+test('the assistant role appears exactly once, on the first emitted chunk', async () => {
+  const chunks = await collectStream(streamFixture)
+
+  const withRole = chunks.filter((c) => c.choices[0]?.delta?.role !== undefined)
+  expect(withRole).toHaveLength(1)
+  expect(chunks[0].choices[0].delta.role).toBe('assistant')
+  // Held rather than emitted at response.created: the first chunk must carry
+  // real content, because that pull is the failover boundary.
+  expect(
+    (chunks[0].choices[0].delta as { reasoning_content?: string }).reasoning_content,
+  ).toBe('Checking ')
+})
+
+test('tool call indices are dense even though output_index is not', async () => {
+  const chunks = await collectStream(streamFixture)
+  const fragments = chunks.flatMap((c) => c.choices[0]?.delta?.tool_calls ?? [])
+
+  // The function call sits at output_index 1, behind a reasoning item.
+  expect(fragments.every((fragment) => fragment.index === 0)).toBe(true)
+})
+
+test('the tool call id and name arrive on the opening fragment only', async () => {
+  const chunks = await collectStream(streamFixture)
+  const fragments = chunks.flatMap((c) => c.choices[0]?.delta?.tool_calls ?? [])
+
+  expect(fragments[0].id).toBe('call_1')
+  expect(fragments[0].function?.name).toBe('get_weather')
+  expect(fragments.slice(1).every((fragment) => fragment.id === undefined)).toBe(true)
+})
+
+test('two function calls get distinct dense indices', async () => {
+  const chunks = await collectStream([
+    { type: 'response.output_item.added', output_index: 0, item: { id: 'rs', type: 'reasoning', summary: [] } },
+    { type: 'response.output_item.added', output_index: 1, item: { id: 'a', type: 'function_call', call_id: 'call_a', name: 'a', arguments: '' } },
+    { type: 'response.output_item.added', output_index: 2, item: { id: 'b', type: 'function_call', call_id: 'call_b', name: 'b', arguments: '' } },
+    { type: 'response.function_call_arguments.delta', output_index: 2, item_id: 'b', delta: '{}' },
+    { type: 'response.completed', response: { id: 'r', created_at: 1, model: 'm', status: 'completed', incomplete_details: null, output: [] } },
+  ])
+
+  const fragments = chunks.flatMap((c) => c.choices[0]?.delta?.tool_calls ?? [])
+  expect(fragments.map((fragment) => fragment.index)).toEqual([0, 1, 1])
+})
+
+test('the finish reason precedes the usage chunk', async () => {
+  const chunks = await collectStream(streamFixture)
+
+  expect(chunks.at(-2)?.choices[0].finish_reason).toBe('tool_calls')
+  expect(chunks.at(-1)?.usage?.total_tokens).toBe(52)
+  expect(chunks.at(-1)?.choices).toEqual([])
+})
+
+test('the usage chunk is omitted when the client opted out', async () => {
+  const chunks = await collectStream(
+    streamFixture,
+    request({ stream: true, stream_options: { include_usage: false } }),
+  )
+
+  expect(chunks.at(-1)?.usage).toBeUndefined()
+  expect(chunks.at(-1)?.choices[0].finish_reason).toBe('tool_calls')
+})
+
+test('chunks carry the model and creation time from response.created', async () => {
+  const chunks = await collectStream(streamFixture)
+  expect(chunks[0].model).toBe('gpt-5-mini')
+  expect(chunks[0].created).toBe(1700000000)
+})
+
+test('output text deltas become content deltas', async () => {
+  const chunks = await collectStream([
+    { type: 'response.created', response: { id: 'r', created_at: 1, model: 'm', status: 'in_progress', output: [] } },
+    { type: 'response.output_text.delta', output_index: 0, item_id: 'm1', delta: 'Hello' },
+    { type: 'response.output_text.done', output_index: 0, item_id: 'm1', text: 'Hello' },
+    { type: 'response.completed', response: { id: 'r', created_at: 1, model: 'm', status: 'completed', incomplete_details: null, output: [] } },
+  ])
+
+  const text = chunks.map((c) => c.choices[0]?.delta?.content ?? '').join('')
+  expect(text).toBe('Hello')
+  expect(chunks.at(-1)?.choices[0].finish_reason).toBe('stop')
+})
+
+test('an incomplete response finishes as length', async () => {
+  const chunks = await collectStream([
+    { type: 'response.output_text.delta', output_index: 0, item_id: 'm1', delta: 'half' },
+    { type: 'response.incomplete', response: { id: 'r', created_at: 1, model: 'm', status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [] } },
+  ])
+
+  expect(chunks.at(-1)?.choices[0].finish_reason).toBe('length')
+})
+
+test('a failed response throws so the routing loop can classify it', async () => {
+  await expect(
+    collectStream([
+      { type: 'response.failed', response: { id: 'r', created_at: 1, model: 'm', status: 'failed', error: { code: 'server_error', message: 'upstream exploded' }, output: [] } },
+    ]),
+  ).rejects.toThrow('upstream exploded')
 })

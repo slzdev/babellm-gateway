@@ -1,5 +1,5 @@
 import type OpenAI from 'openai'
-import type { ChatCompletion, ProviderConfig } from '@/lib/adapters/types'
+import type { ChatCompletion, ChatCompletionChunk, ProviderConfig } from '@/lib/adapters/types'
 import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
 
 type ResponseCreateParams = OpenAI.Responses.ResponseCreateParams
@@ -319,4 +319,123 @@ export function fromResponse(res: OpenAI.Responses.Response): ChatCompletion {
     }],
     ...(res.usage ? { usage: toUsage(res.usage) } : {}),
   } as ChatCompletion
+}
+
+type ResponseStreamEvent = OpenAI.Responses.ResponseStreamEvent
+
+/**
+ * Chat Completions chunks are positional deltas; Responses events are semantic
+ * and indexed by `output_index`, which counts every output item — reasoning and
+ * messages included — while `tool_calls[].index` counts only tool calls. The
+ * map between the two is the only state this translator keeps, alongside the
+ * pending role.
+ */
+export async function* fromResponseStream(
+  events: AsyncIterable<ResponseStreamEvent>,
+  req: ChatCompletionRequest,
+): AsyncIterable<ChatCompletionChunk> {
+  const toolIndexByOutput = new Map<number, number>()
+  let nextToolIndex = 0
+  let rolePending = true
+  let created = 0
+  let model = ''
+
+  // Responses always reports usage on completion, so `include_usage` needs no
+  // upstream parameter — only an opt-out honoured here.
+  const includeUsage = req.stream_options?.include_usage !== false
+
+  function chunk(
+    delta: Record<string, unknown>,
+    reason: string | null = null,
+  ): ChatCompletionChunk {
+    // The role rides the first chunk that carries real content rather than
+    // being emitted on response.created, so the eager first-chunk pull in
+    // startChatStream keeps meaning "the upstream produced something" — which
+    // is what makes failover and ttftMs measure what they claim to.
+    const withRole = rolePending ? { role: 'assistant', ...delta } : delta
+    rolePending = false
+
+    return {
+      id: '',
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [{ index: 0, delta: withRole, finish_reason: reason }],
+    } as ChatCompletionChunk
+  }
+
+  for await (const event of events) {
+    switch (event.type) {
+      case 'response.created':
+        // Emits nothing, but carries the metadata every chunk needs.
+        created = event.response.created_at
+        model = event.response.model
+        break
+
+      case 'response.output_text.delta':
+        yield chunk({ content: event.delta })
+        break
+
+      case 'response.refusal.delta':
+        yield chunk({ refusal: event.delta })
+        break
+
+      case 'response.reasoning_summary_text.delta':
+      case 'response.reasoning_text.delta':
+        yield chunk({ reasoning_content: event.delta })
+        break
+
+      case 'response.output_item.added': {
+        if (event.item.type !== 'function_call') break
+        const index = nextToolIndex++
+        toolIndexByOutput.set(event.output_index, index)
+        yield chunk({
+          tool_calls: [{
+            index,
+            id: event.item.call_id,
+            type: 'function',
+            function: { name: event.item.name, arguments: '' },
+          }],
+        })
+        break
+      }
+
+      case 'response.function_call_arguments.delta': {
+        const index = toolIndexByOutput.get(event.output_index)
+        if (index === undefined) break
+        yield chunk({ tool_calls: [{ index, function: { arguments: event.delta } }] })
+        break
+      }
+
+      case 'response.completed':
+      case 'response.incomplete': {
+        const response = event.response
+        yield chunk({}, finishReason(response, nextToolIndex > 0))
+        if (includeUsage && response.usage) {
+          yield {
+            id: '',
+            object: 'chat.completion.chunk',
+            created,
+            model,
+            choices: [],
+            usage: toUsage(response.usage),
+          } as ChatCompletionChunk
+        }
+        break
+      }
+
+      case 'response.failed':
+        throw new Error(
+          event.response.error?.message ?? 'The upstream response failed.',
+        )
+
+      default:
+        // Everything else is deliberately dropped. The `.done` events restate
+        // what the deltas already delivered, and emitting them would duplicate
+        // every response; content_part.*, output_item.done,
+        // reasoning_summary_part.*, annotations, queued/in_progress and the
+        // hosted-tool progress events have no Chat Completions counterpart.
+        break
+    }
+  }
 }
