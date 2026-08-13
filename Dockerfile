@@ -41,4 +41,8 @@ EXPOSE 3000
 # Migrate first so the server never comes up against an out-of-date schema,
 # then start it. Both dependencies (pg, drizzle-orm) are production
 # dependencies, so this works with the pruned node_modules above.
-CMD ["sh", "-c", "node scripts/migrate.mjs && node_modules/.bin/next start -p ${PORT}"]
+#
+# `exec` matters: without it the shell stays PID 1 and dash does not forward
+# SIGTERM to its child, so `docker stop` would SIGKILL the server after the
+# grace period instead of letting it drain in-flight (streaming) requests.
+CMD ["sh", "-c", "node scripts/migrate.mjs && exec node_modules/.bin/next start -p ${PORT}"]
