@@ -176,10 +176,11 @@ export const postgresStore: ReadableRequestLogStore = {
       outputCostUsd: log.outputCostUsd,
       pricing: log.pricing ?? null,
       droppedParams: log.droppedParams,
-      // payload_captured is the flag; the columns are the fact. Trusting the
-      // flag over the columns would render an empty payload block for a row
-      // whose body was never stored.
-      payload: log.payloadCaptured
+      // payload_captured is the flag; the columns are the fact. A row can
+      // carry the flag with nothing stored — written by an older version, or
+      // edited by hand — and rendering a payload block for it would claim a
+      // body that does not exist. So the columns decide, not the flag.
+      payload: log.requestJson !== null || log.responseJson !== null
         ? { request: log.requestJson, response: log.responseJson, truncated: log.payloadTruncated }
         : null,
     }

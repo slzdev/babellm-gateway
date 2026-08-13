@@ -1,5 +1,6 @@
 import { beforeEach, expect, test } from 'vitest'
-import { pool } from '@/lib/db'
+import { db, pool } from '@/lib/db'
+import { requestLogs } from '@/lib/db/schema'
 import { postgresStore } from '@/lib/logs/postgres'
 import { ensurePartitions } from '@/lib/logs/partitions'
 import { uuidv7 } from '@/lib/uuid'
@@ -64,6 +65,22 @@ test('an entry without a payload records payload_captured false', async () => {
   await postgresStore.write(entry({ id }))
   const detail = await postgresStore.get(id)
   expect(detail?.payloadCaptured).toBe(false)
+  expect(detail?.payload).toBeNull()
+})
+
+test('get trusts the payload columns over the flag, not the other way around', async () => {
+  // write() cannot produce this divergence — it sets the flag and the
+  // columns from the same value — so it is inserted through Drizzle
+  // directly, standing in for a row an older version wrote or a hand edit
+  // left behind: payload_captured true, nothing actually stored.
+  const id = uuidv7()
+  await db.insert(requestLogs).values({
+    id, model: 'house-model', status: 200, outcome: 'ok', latencyMs: 10,
+    payloadCaptured: true, requestJson: null, responseJson: null,
+  })
+
+  const detail = await postgresStore.get(id)
+  expect(detail?.payloadCaptured).toBe(true)
   expect(detail?.payload).toBeNull()
 })
 
