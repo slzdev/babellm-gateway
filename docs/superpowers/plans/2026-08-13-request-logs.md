@@ -1780,6 +1780,35 @@ test('no prices means unpriced, not free', () => {
   )).toBeNull()
 })
 
+test('a provider reporting more cached than prompt tokens is not overbilled', () => {
+  // Some providers report this when a cache hit spans a prefix. Cached is
+  // documented as a subset of prompt, so the two components must never sum to
+  // more tokens than were actually reported.
+  const cost = computeCost(
+    { inputPerMtok: '1.000000', cachedInputPerMtok: '0.500000', outputPerMtok: '0' },
+    usage({ promptTokens: 100, cachedTokens: 150, completionTokens: 0 }),
+  )
+  expect(cost?.inputUsd).toBe('0.000000000')
+  // 100 tokens at the cached rate, not 150.
+  expect(cost?.cachedUsd).toBe('0.000050000')
+  expect(cost?.totalUsd).toBe('0.000050000')
+})
+
+test('a half-reported usage is unpriced rather than half-priced', () => {
+  const prices = { inputPerMtok: '1.000000', cachedInputPerMtok: null, outputPerMtok: '3.000000' }
+  expect(computeCost(prices, usage({ promptTokens: null, completionTokens: 500 }))).toBeNull()
+  expect(computeCost(prices, usage({ promptTokens: 500, completionTokens: null }))).toBeNull()
+})
+
+test('a measured zero still prices, because zero is not the same as unreported', () => {
+  const cost = computeCost(
+    { inputPerMtok: '1.000000', cachedInputPerMtok: null, outputPerMtok: '3.000000' },
+    usage({ promptTokens: 1_000_000, completionTokens: 0 }),
+  )
+  expect(cost?.outputUsd).toBe('0.000000000')
+  expect(cost?.totalUsd).toBe('1.000000000')
+})
+
 test('no usage means unpriced', () => {
   expect(computeCost(
     { inputPerMtok: '1.000000', cachedInputPerMtok: null, outputPerMtok: '1.000000' },
@@ -1874,9 +1903,11 @@ export async function priceFor(
 }
 
 function usd(tokens: number, perMtok: string): string {
-  // Float arithmetic at nine decimal places: the inputs are token counts and
-  // per-million rates, so the products stay far inside the range where a
-  // double is exact enough for a displayed cost.
+  // Float arithmetic, with a known and accepted bound: fuzzing against exact
+  // decimal arithmetic shows roughly 0.3% of (rate, token) pairs misround the
+  // ninth decimal by 1 — one nano-dollar, orders of magnitude below any
+  // display precision. Removing it would mean a decimal library, and this
+  // project ships no new dependencies for a rounding error nobody can see.
   return ((tokens * Number(perMtok)) / PER_MTOK).toFixed(SCALE)
 }
 
@@ -1893,12 +1924,19 @@ export function computeCost(
 ): CostBreakdown | null {
   if (!prices || !usage) return null
   if (prices.inputPerMtok === null || prices.outputPerMtok === null) return null
-  if (usage.promptTokens === null && usage.completionTokens === null) return null
+  // Half a price is not a price. Substituting 0 for an unreported side would
+  // return a confident-looking number that silently omits part of the request
+  // — exactly the lie "null, never zero" exists to prevent. A *measured* 0
+  // still prices normally; only null means "not reported".
+  if (usage.promptTokens === null || usage.completionTokens === null) return null
 
-  const cached = usage.cachedTokens ?? 0
   // OpenAI reports cached_tokens as a *subset* of prompt_tokens, so charging
-  // both in full would double-count every cached request.
-  const billablePrompt = Math.max((usage.promptTokens ?? 0) - cached, 0)
+  // both in full would double-count every cached request. The clamp handles
+  // providers that report more cached than prompt tokens when a cache hit
+  // spans a prefix: billing more tokens than were reported would contradict
+  // the very invariant this line encodes.
+  const cached = Math.min(usage.cachedTokens ?? 0, usage.promptTokens)
+  const billablePrompt = usage.promptTokens - cached
   const cachedRate = prices.cachedInputPerMtok ?? prices.inputPerMtok
 
   const inputUsd = usd(billablePrompt, prices.inputPerMtok)
