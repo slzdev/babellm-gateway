@@ -528,3 +528,101 @@ export function fromGenerateContent(
     ...(res.usageMetadata ? { usage: toUsage(res.usageMetadata) } : {}),
   } as ChatCompletion
 }
+
+/**
+ * Gemini streams whole responses with partial candidates rather than semantic
+ * events, so this translator is much smaller than the Responses one: there is
+ * no output-index bookkeeping, because a functionCall part arrives complete.
+ *
+ * The state it does keep is per choice — which roles have been announced and
+ * how many tool calls have been seen — because `n > 1` produces interleaved
+ * candidates that a Chat Completions client expects to stay separated.
+ */
+export async function* fromGenerateContentStream(
+  chunks: AsyncIterable<GenerateContentResponse>,
+  req: ChatCompletionRequest,
+  model: string,
+): AsyncIterable<ChatCompletionChunk> {
+  const rolesSent = new Set<number>()
+  const toolCounts = new Map<number, number>()
+  let created = Math.floor(Date.now() / 1000)
+  let responseModel = model
+  let usage: GenerateContentResponseUsageMetadata | undefined
+
+  // Gemini always reports usage, so `include_usage` needs no upstream
+  // parameter — only an opt-out honoured here.
+  const includeUsage = req.stream_options?.include_usage !== false
+
+  function chunk(
+    index: number,
+    delta: Record<string, unknown>,
+    reason: string | null = null,
+  ): ChatCompletionChunk {
+    // The role rides the first chunk carrying real content rather than the
+    // first chunk of any kind, so the eager first-chunk pull in startChatStream
+    // keeps meaning "the upstream produced something" — which is what makes
+    // failover and ttftMs measure what they claim to.
+    const withRole = rolesSent.has(index) ? delta : { role: 'assistant', ...delta }
+    rolesSent.add(index)
+
+    return {
+      id: '',
+      object: 'chat.completion.chunk',
+      created,
+      model: responseModel,
+      choices: [{ index, delta: withRole, finish_reason: reason }],
+    } as ChatCompletionChunk
+  }
+
+  for await (const res of chunks) {
+    if (res.modelVersion) responseModel = res.modelVersion
+    if (res.createTime) created = createdAt(res.createTime)
+    if (res.usageMetadata) usage = res.usageMetadata
+
+    const candidates = res.candidates ?? []
+
+    if (candidates.length === 0 && res.promptFeedback?.blockReason) {
+      yield chunk(0, {}, 'content_filter')
+      continue
+    }
+
+    for (const [position, candidate] of candidates.entries()) {
+      const index = candidate.index ?? position
+
+      for (const part of candidate.content?.parts ?? []) {
+        if (part.functionCall) {
+          const callIndex = toolCounts.get(index) ?? 0
+          toolCounts.set(index, callIndex + 1)
+          yield chunk(index, {
+            tool_calls: [{
+              index: callIndex,
+              id: part.functionCall.id ?? synthesizedCallId(index, callIndex),
+              type: 'function',
+              function: {
+                name: part.functionCall.name ?? '',
+                arguments: JSON.stringify(part.functionCall.args ?? {}),
+              },
+            }],
+          })
+        } else if (typeof part.text === 'string' && part.text.length > 0) {
+          yield chunk(index, part.thought ? { reasoning_content: part.text } : { content: part.text })
+        }
+      }
+
+      if (candidate.finishReason) {
+        yield chunk(index, {}, finishReasonFor(candidate.finishReason, (toolCounts.get(index) ?? 0) > 0))
+      }
+    }
+  }
+
+  if (includeUsage && usage) {
+    yield {
+      id: '',
+      object: 'chat.completion.chunk',
+      created,
+      model: responseModel,
+      choices: [],
+      usage: toUsage(usage),
+    } as ChatCompletionChunk
+  }
+}
