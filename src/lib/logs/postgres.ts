@@ -1,14 +1,21 @@
 import 'server-only'
 import { and, asc, desc, eq, gte, lt, sql } from 'drizzle-orm'
-import { db } from '@/lib/db'
-import { requestLogs, requestPayloads } from '@/lib/db/schema'
+import { db, pool } from '@/lib/db'
+import { requestLogs } from '@/lib/db/schema'
 import { uuidv7Bound } from '@/lib/uuid'
+import type { LoggingSettings } from '@/lib/settings'
+import { dropExpiredPartitions, ensurePartitions } from './partitions'
 import type {
-  LogDetail, LogFilter, LogPage, LogRow, ReadableRequestLogStore, RequestLogEntry,
+  LogDetail, LogFilter, LogPage, LogRow, MaintenanceResult, ReadableRequestLogStore,
+  RequestLogEntry,
 } from './types'
 
 const MODEL_MAX_LENGTH = 128
-const PRUNE_BATCH = 5000
+
+/** Cursors and detail ids arrive from a URL. A non-uuid reaching a uuid
+ * column comparison is an unhandled Postgres error, so it is rejected here
+ * and read as "no such row". */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** An absurd model name in a request must not become a failed insert that
  * loses the log line. */
@@ -19,7 +26,6 @@ function clamp(value: string | null | undefined): string | null {
 
 const LIST_COLUMNS = {
   id: requestLogs.id,
-  requestId: requestLogs.requestId,
   createdAt: requestLogs.createdAt,
   keyName: requestLogs.keyName,
   model: requestLogs.model,
@@ -58,49 +64,41 @@ export const postgresStore: ReadableRequestLogStore = {
   readable: true,
 
   async write(entry: RequestLogEntry): Promise<void> {
-    // One transaction for both rows. Capping already happened in the caller,
-    // so the only remaining failure mode is the database itself — and losing
-    // both rows together is the coherent outcome.
-    await db.transaction(async (tx) => {
-      const [row] = await tx.insert(requestLogs).values({
-        requestId: entry.requestId,
-        apiKeyId: entry.keyId,
-        keyName: entry.keyName,
-        model: clamp(entry.model),
-        stream: entry.stream,
-        status: entry.status,
-        outcome: entry.outcome,
-        errorType: entry.errorType ?? null,
-        errorCode: entry.errorCode ?? null,
-        errorMessage: entry.errorMessage ?? null,
-        latencyMs: entry.latencyMs,
-        ttftMs: entry.ttftMs ?? null,
-        attempts: entry.attempts,
-        finalTargetId: entry.final?.targetId ?? null,
-        finalProviderId: entry.final?.providerId ?? null,
-        finalProvider: entry.final?.provider ?? null,
-        finalUpstreamModel: clamp(entry.final?.upstreamModel),
-        promptTokens: entry.usage?.promptTokens ?? null,
-        completionTokens: entry.usage?.completionTokens ?? null,
-        cachedTokens: entry.usage?.cachedTokens ?? null,
-        reasoningTokens: entry.usage?.reasoningTokens ?? null,
-        inputCostUsd: entry.cost?.inputUsd ?? null,
-        cachedCostUsd: entry.cost?.cachedUsd ?? null,
-        outputCostUsd: entry.cost?.outputUsd ?? null,
-        costUsd: entry.cost?.totalUsd ?? null,
-        pricing: entry.cost?.pricing ?? null,
-        droppedParams: entry.droppedParams?.length ? entry.droppedParams : null,
-        payloadCaptured: entry.payload != null,
-      }).returning({ id: requestLogs.id })
-
-      if (entry.payload) {
-        await tx.insert(requestPayloads).values({
-          requestLogId: row.id,
-          requestJson: entry.payload.request,
-          responseJson: entry.payload.response,
-          truncated: entry.payload.truncated,
-        })
-      }
+    // One row. The payload columns live here, so the two-row transaction this
+    // replaced — and the window where a log row could claim a payload that
+    // was never written — are both gone.
+    await db.insert(requestLogs).values({
+      id: entry.id,
+      apiKeyId: entry.keyId,
+      keyName: entry.keyName,
+      model: clamp(entry.model),
+      stream: entry.stream,
+      status: entry.status,
+      outcome: entry.outcome,
+      errorType: entry.errorType ?? null,
+      errorCode: entry.errorCode ?? null,
+      errorMessage: entry.errorMessage ?? null,
+      latencyMs: entry.latencyMs,
+      ttftMs: entry.ttftMs ?? null,
+      attempts: entry.attempts,
+      finalTargetId: entry.final?.targetId ?? null,
+      finalProviderId: entry.final?.providerId ?? null,
+      finalProvider: entry.final?.provider ?? null,
+      finalUpstreamModel: clamp(entry.final?.upstreamModel),
+      promptTokens: entry.usage?.promptTokens ?? null,
+      completionTokens: entry.usage?.completionTokens ?? null,
+      cachedTokens: entry.usage?.cachedTokens ?? null,
+      reasoningTokens: entry.usage?.reasoningTokens ?? null,
+      inputCostUsd: entry.cost?.inputUsd ?? null,
+      cachedCostUsd: entry.cost?.cachedUsd ?? null,
+      outputCostUsd: entry.cost?.outputUsd ?? null,
+      costUsd: entry.cost?.totalUsd ?? null,
+      pricing: entry.cost?.pricing ?? null,
+      droppedParams: entry.droppedParams?.length ? entry.droppedParams : null,
+      payloadCaptured: entry.payload != null,
+      requestJson: entry.payload?.request ?? null,
+      responseJson: entry.payload?.response ?? null,
+      payloadTruncated: entry.payload?.truncated ?? false,
     })
   },
 
@@ -139,20 +137,19 @@ export const postgresStore: ReadableRequestLogStore = {
     }
   },
 
-  async get(requestId: string): Promise<LogDetail | null> {
-    const [found] = await db
-      .select({ log: requestLogs, payload: requestPayloads })
+  async get(id: string): Promise<LogDetail | null> {
+    if (!UUID_RE.test(id)) return null
+
+    const [log] = await db
+      .select()
       .from(requestLogs)
-      .leftJoin(requestPayloads, eq(requestPayloads.requestLogId, requestLogs.id))
-      .where(eq(requestLogs.requestId, requestId))
+      .where(eq(requestLogs.id, id))
       .limit(1)
 
-    if (!found) return null
-    const { log, payload } = found
+    if (!log) return null
 
     return {
       id: log.id,
-      requestId: log.requestId,
       createdAt: log.createdAt,
       keyName: log.keyName,
       model: log.model,
@@ -179,32 +176,26 @@ export const postgresStore: ReadableRequestLogStore = {
       outputCostUsd: log.outputCostUsd,
       pricing: log.pricing ?? null,
       droppedParams: log.droppedParams,
-      // A payload row can be absent even when payload_captured is true, if the
-      // row was written by an older version or removed by hand. Read it
-      // defensively rather than trusting the flag.
-      payload: payload
-        ? { request: payload.requestJson, response: payload.responseJson, truncated: payload.truncated }
+      // payload_captured is the flag; the columns are the fact. Trusting the
+      // flag over the columns would render an empty payload block for a row
+      // whose body was never stored.
+      payload: log.payloadCaptured
+        ? { request: log.requestJson, response: log.responseJson, truncated: log.payloadTruncated }
         : null,
     }
   },
 
-  async prune(olderThan: Date): Promise<number> {
-    const bound = uuidv7Bound(olderThan)
-    let total = 0
-
-    // Batched so a first prune over a large backlog never holds one enormous
-    // transaction. `id <` is a range scan on the primary key, and payloads
-    // follow through the cascade.
-    for (;;) {
-      const result = await db.execute(sql`
-        DELETE FROM request_logs
-        WHERE id IN (
-          SELECT id FROM request_logs WHERE id < ${bound} ORDER BY id LIMIT ${PRUNE_BATCH}
-        )
-      `)
-      const deleted = result.rowCount ?? 0
-      total += deleted
-      if (deleted < PRUNE_BATCH) return total
-    }
+  /**
+   * Provision ahead, then discard what aged out — in that order. If the drop
+   * half throws, the months that keep writes landing have already been made.
+   */
+  async maintain(now: Date, settings: LoggingSettings): Promise<MaintenanceResult> {
+    const created = await ensurePartitions(pool, now)
+    // Task 7 renames `LoggingSettings.retentionDays` to `retentionMonths`;
+    // until that lands, widen locally rather than reading a field the type
+    // doesn't have yet.
+    const retentionMonths = (settings as LoggingSettings & { retentionMonths: number }).retentionMonths
+    const dropped = await dropExpiredPartitions(pool, now, retentionMonths)
+    return { created, dropped }
   },
 }
