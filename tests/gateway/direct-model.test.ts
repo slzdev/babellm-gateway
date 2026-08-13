@@ -17,7 +17,9 @@ const upstreamCompletion = {
 }
 
 /** A provider with a catalog, and no virtual model anywhere in sight. */
-async function seedCatalogOnly(adapter: 'openai_compatible' | 'gemini' = 'openai_compatible') {
+async function seedCatalogOnly(
+  adapter: 'openai_compatible' | 'gemini' | 'bedrock' = 'openai_compatible',
+) {
   const [provider] = await db.insert(providers).values({
     name: 'xai',
     adapter,
@@ -93,7 +95,7 @@ test('streams a `provider/model` request', async () => {
 })
 
 test('answers 501 for a direct address on a provider with no adapter', async () => {
-  const { apiKey } = await seedCatalogOnly('gemini')
+  const { apiKey } = await seedCatalogOnly('bedrock')
 
   // Deliberately the real adapter registry: a direct address is a chain of
   // one, so execute's "skip this target and let a sibling serve" path has no

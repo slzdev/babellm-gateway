@@ -160,7 +160,7 @@ async function runSync(provider: ProviderRow, options: SyncOptions): Promise<Syn
   try {
     adapter = (options.createAdapterImpl ?? createAdapter)(provider)
   } catch (err) {
-    // gemini and bedrock have no adapter until Phase 3.
+    // bedrock has no adapter until Phase 3.
     const unsupported = err instanceof UnsupportedOperationError
     return recordOutcome({
       ...base,
