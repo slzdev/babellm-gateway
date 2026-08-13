@@ -1,5 +1,15 @@
-import type { Content, Part } from '@google/genai'
-import type { ChatMessage } from '@/lib/schemas/chat'
+import {
+  FunctionCallingConfigMode,
+  ThinkingLevel,
+  type Content,
+  type FunctionDeclaration,
+  type GenerateContentConfig,
+  type GenerateContentParameters,
+  type Part,
+  type ToolConfig,
+} from '@google/genai'
+import type { ProviderConfig } from '@/lib/adapters/types'
+import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
 
 /**
  * Image parts already resolved to something Gemini accepts, keyed by the
@@ -161,4 +171,222 @@ export function toContents(
   }
 
   return { contents, systemInstruction: system.join('\n\n') }
+}
+
+const THINKING_LEVELS: Record<string, ThinkingLevel> = {
+  minimal: ThinkingLevel.MINIMAL,
+  low: ThinkingLevel.LOW,
+  medium: ThinkingLevel.MEDIUM,
+  high: ThinkingLevel.HIGH,
+}
+
+function toFunctionDeclarations(
+  tools: NonNullable<ChatCompletionRequest['tools']>,
+): FunctionDeclaration[] {
+  return tools.map((tool) => ({
+    name: tool.function.name,
+    ...(tool.function.description ? { description: tool.function.description } : {}),
+    // `parametersJsonSchema` takes JSON Schema directly. The alternative field,
+    // `parameters`, takes Gemini's own Schema type and would need a converter —
+    // a translation layer inside a translation layer.
+    ...(tool.function.parameters ? { parametersJsonSchema: tool.function.parameters } : {}),
+  }))
+}
+
+function toToolConfig(choice: ChatCompletionRequest['tool_choice']): ToolConfig | undefined {
+  if (choice === undefined) return undefined
+
+  if (typeof choice === 'string') {
+    const mode =
+      choice === 'none'
+        ? FunctionCallingConfigMode.NONE
+        : choice === 'required'
+          ? FunctionCallingConfigMode.ANY
+          : FunctionCallingConfigMode.AUTO
+    return { functionCallingConfig: { mode } }
+  }
+
+  return {
+    functionCallingConfig: {
+      mode: FunctionCallingConfigMode.ANY,
+      allowedFunctionNames: [choice.function.name],
+    },
+  }
+}
+
+function toResponseFormat(
+  format: ChatCompletionRequest['response_format'],
+): Pick<GenerateContentConfig, 'responseMimeType' | 'responseJsonSchema'> {
+  if (!format) return {}
+
+  if (format.type === 'json_schema') {
+    const schema = (format as { json_schema?: { schema?: unknown } }).json_schema?.schema
+    return {
+      responseMimeType: 'application/json',
+      ...(schema ? { responseJsonSchema: schema } : {}),
+    }
+  }
+
+  if (format.type === 'json_object') return { responseMimeType: 'application/json' }
+
+  return {}
+}
+
+function toStopSequences(stop: ChatCompletionRequest['stop']): string[] | undefined {
+  if (stop == null) return undefined
+  const list = (Array.isArray(stop) ? stop : [stop]).filter((value) => value.length > 0)
+  return list.length > 0 ? list : undefined
+}
+
+function numberOf(req: ChatCompletionRequest, name: string): number | undefined {
+  const value = (req as Record<string, unknown>)[name]
+  return typeof value === 'number' ? value : undefined
+}
+
+export function toGeminiRequest(
+  req: ChatCompletionRequest,
+  upstreamModel: string,
+  media: MediaParts = new Map(),
+  config: ProviderConfig = {},
+): GenerateContentParameters {
+  const { contents, systemInstruction } = toContents(req.messages, media)
+  const maxTokens = req.max_completion_tokens ?? req.max_tokens ?? undefined
+  const stopSequences = toStopSequences(req.stop)
+  const toolConfig = toToolConfig(req.tool_choice)
+  const frequencyPenalty = numberOf(req, 'frequency_penalty')
+  const presencePenalty = numberOf(req, 'presence_penalty')
+
+  const effort = req.reasoning_effort
+  const thinkingLevel = effort ? THINKING_LEVELS[effort] : undefined
+  // Sending `thinkingConfig` is only asked for when the client's own request
+  // proves it expects thoughts, or when an admin has said so for this provider
+  // — the same opt-in the Responses flavor defines, honoured here so one
+  // provider setting means one thing across adapters.
+  const wantsThoughts = thinkingLevel !== undefined || config.requestReasoningSummary === true
+
+  const generation: GenerateContentConfig = {
+    ...(systemInstruction ? { systemInstruction } : {}),
+    ...(maxTokens === undefined ? {} : { maxOutputTokens: maxTokens }),
+    ...(req.temperature == null ? {} : { temperature: req.temperature }),
+    ...(req.top_p == null ? {} : { topP: req.top_p }),
+    ...(req.seed == null ? {} : { seed: req.seed }),
+    ...(stopSequences ? { stopSequences } : {}),
+    ...(frequencyPenalty === undefined ? {} : { frequencyPenalty }),
+    ...(presencePenalty === undefined ? {} : { presencePenalty }),
+    // Not every Gemini model accepts candidateCount, and a rejected request is
+    // fatal — it fails the whole chain rather than moving on. `n: 1` and `n`
+    // absent mean the same thing, so the common case is sent as nothing and can
+    // never trip that.
+    ...(req.n != null && req.n > 1 ? { candidateCount: req.n } : {}),
+    ...(req.tools?.length
+      ? { tools: [{ functionDeclarations: toFunctionDeclarations(req.tools) }] }
+      : {}),
+    ...(toolConfig ? { toolConfig } : {}),
+    ...toResponseFormat(req.response_format),
+    ...(wantsThoughts
+      ? { thinkingConfig: { includeThoughts: true, ...(thinkingLevel ? { thinkingLevel } : {}) } }
+      : {}),
+  }
+
+  return { model: upstreamModel, contents, config: generation }
+}
+
+/**
+ * Chat Completions parameters Gemini cannot express, plus the structural
+ * degradations above. Dropped rather than rejected: SDKs and frameworks
+ * routinely send these meaning nothing by them, and 400ing would make the
+ * gateway unusable against a Gemini provider without per-client config.
+ *
+ * Everything named here is knowable from the request body alone, because
+ * chat-handler computes this before any attempt runs. Runtime degradations —
+ * an image that could not be fetched — go to the log instead.
+ */
+const UNMAPPABLE = [
+  'logit_bias',
+  'logprobs',
+  'top_logprobs',
+  'parallel_tool_calls',
+  'user',
+] as const
+
+/**
+ * Values that mean "the default", which is also what Gemini does. Reporting
+ * them would put a line in the header on nearly every request.
+ *
+ * Note what is deliberately NOT copied from chat-to-responses: its rule that
+ * any `false` is inert. `parallel_tool_calls: false` is a real instruction that
+ * Gemini cannot honour, and it must be reported.
+ */
+const INERT: Record<string, unknown> = {
+  logprobs: false,
+  parallel_tool_calls: true,
+}
+
+function isInert(name: string, value: unknown): boolean {
+  if (name in INERT && value === INERT[name]) return true
+  if (value === '') return true
+  if (Array.isArray(value) && value.length === 0) return true
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0
+  ) {
+    return true
+  }
+  return false
+}
+
+function hoistsSystemMessage(messages: ChatMessage[]): boolean {
+  const firstTurn = messages.findIndex((m) => m.role !== 'system' && m.role !== 'developer')
+  if (firstTurn === -1) return false
+  return messages
+    .slice(firstTurn)
+    .some((m) => m.role === 'system' || m.role === 'developer')
+}
+
+export function droppedParams(req: ChatCompletionRequest): string[] {
+  const dropped: string[] = []
+
+  for (const name of UNMAPPABLE) {
+    const value = (req as Record<string, unknown>)[name]
+    if (value === undefined || value === null) continue
+    if (isInert(name, value)) continue
+    dropped.push(name)
+  }
+
+  if (hoistsSystemMessage(req.messages)) dropped.push('system_message_hoisted')
+
+  const names = toolNamesById(req.messages)
+  if (
+    req.messages.some(
+      (m) => m.role === 'tool' && (!m.tool_call_id || !names.has(m.tool_call_id)),
+    )
+  ) {
+    dropped.push('unmatched_tool_call_id')
+  }
+
+  if (
+    req.messages.some((m) =>
+      (m.tool_calls ?? []).some((call) => asObject(call.function.arguments) === null),
+    )
+  ) {
+    dropped.push('malformed_tool_arguments')
+  }
+
+  if (
+    req.messages.some(
+      (m) =>
+        Array.isArray(m.content) &&
+        m.content.some((part) => part.type !== 'text' && part.type !== 'image_url'),
+    )
+  ) {
+    dropped.push('unsupported_content_part')
+  }
+
+  if (req.reasoning_effort && !THINKING_LEVELS[req.reasoning_effort]) {
+    dropped.push('reasoning_effort')
+  }
+
+  return dropped
 }
