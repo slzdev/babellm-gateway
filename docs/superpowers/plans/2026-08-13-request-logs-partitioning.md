@@ -597,17 +597,19 @@ git commit -m "feat(logs): add month-partition create and drop"
 - Modify: `tests/helpers/db.ts`
 
 **Interfaces:**
-- Consumes: `ensurePartitions` from Task 3.
-- Produces: `resetDb()` leaves the current month provisioned. Every test that writes a log row depends on this.
+- Consumes: `ensurePartitions`, `partitionName`, `addMonths`, `MONTHS_AHEAD` from Task 3.
+- Produces: `resetDb()` leaves the partition set in a known state — exactly the current month plus `MONTHS_AHEAD`, nothing else. Every test that writes a log row depends on this, and every test that asserts on what `ensurePartitions` created depends on it too.
+
+**Why this task grew:** the original version only added provisioning. That is not enough, and the gap is reproducible: `pnpm vitest run tests/lib/logs/partitions.test.ts` passes on a clean database and **fails on the very next run** — `ensurePartitions is idempotent and reports only what it created` expects four names and gets zero, because the previous run's 2031/2032 partitions are still attached. `TRUNCATE` empties partitions but never detaches them, and it cannot restore one a test dropped. So the reset has to restore the partition *set*, not just the rows.
 
 - [ ] **Step 1: Rewrite `resetDb`**
 
-Task 3 Step 0 already removed `request_payloads` from `TABLES`. What this step adds is the provisioning call and the comment explaining why it is needed. Write the file to exactly the state below.
+Task 3 Step 0 already removed `request_payloads` from `TABLES`. Write the file to exactly the state below.
 
 ```ts
 import { sql } from 'drizzle-orm'
 import { db, pool } from '@/lib/db'
-import { ensurePartitions } from '@/lib/logs/partitions'
+import { MONTHS_AHEAD, addMonths, ensurePartitions, partitionName } from '@/lib/logs/partitions'
 
 const TABLES = [
   'request_logs',
@@ -615,34 +617,85 @@ const TABLES = [
   'providers', 'registry_cache', 'settings',
 ]
 
+/** The partitions a freshly reset database should have: exactly the set
+ * `ensurePartitions` would build for right now. */
+function expected(now: Date): Set<string> {
+  const names = new Set<string>()
+  for (let ahead = 0; ahead <= MONTHS_AHEAD; ahead += 1) {
+    names.add(partitionName(addMonths(now, ahead)))
+  }
+  return names
+}
+
 /**
- * TRUNCATE on the partitioned parent empties its partitions but leaves them
- * attached, so the reset alone would be enough — except that a maintenance
- * test drops partitions for real. With no DEFAULT partition to absorb a
- * write, a test running after one of those would fail on "no partition of
- * relation" for reasons that have nothing to do with what it asserts.
- * Re-provisioning here makes that impossible.
+ * Restores the partition set as well as the rows.
+ *
+ * TRUNCATE empties a partitioned table's partitions but leaves them attached,
+ * and it cannot bring back one a test dropped. Tests do both: they provision
+ * far-future months and they drop expired ones for real. Without a sweep the
+ * database accumulates months across runs, and the next run of an
+ * "ensurePartitions created these four" assertion finds them already there —
+ * green the first time, red the second.
+ *
+ * Unlike the production `dropExpiredPartitions`, this drops anything outside
+ * the expected set including names that do not parse as a month. That
+ * difference is deliberate: production must never delete a table it did not
+ * create, while a test fixture wants a known slate. Do not "fix" one to match
+ * the other.
+ *
+ * In the steady state this is one catalog query and no DDL at all.
  */
 export async function resetDb() {
   await db.execute(
     sql.raw(`TRUNCATE TABLE ${TABLES.join(', ')} RESTART IDENTITY CASCADE`),
   )
-  await ensurePartitions(pool, new Date())
+
+  const now = new Date()
+  const keep = expected(now)
+  const { rows } = await pool.query(`
+    SELECT c.relname AS name
+    FROM pg_inherits i
+    JOIN pg_class p ON p.oid = i.inhparent
+    JOIN pg_class c ON c.oid = i.inhrelid
+    WHERE p.relname = 'request_logs'
+  `)
+  for (const row of rows) {
+    const name = String(row.name)
+    if (!keep.has(name)) await pool.query(`DROP TABLE IF EXISTS ${name}`)
+  }
+
+  await ensurePartitions(pool, now)
 }
 
 export { db as testDb }
 ```
 
-- [ ] **Step 2: Verify the partitions module's own tests still pass**
+- [ ] **Step 2: Verify the partitions module's own tests pass, twice in a row**
 
-Run: `pnpm vitest run tests/lib/logs/partitions.test.ts`
-Expected: PASS, 14 tests.
+```bash
+pnpm vitest run tests/lib/logs/partitions.test.ts
+pnpm vitest run tests/lib/logs/partitions.test.ts
+```
 
-- [ ] **Step 3: Commit**
+Expected: PASS, 14 tests, **both times**. The second run is the whole point of this task — it is the run that failed before the sweep existed. A single green run does not demonstrate the fix.
+
+- [ ] **Step 3: Confirm the database is left in the expected state**
+
+```bash
+docker exec babellm-test-postgres-test-1 psql -U babellm -d babellm_test -tA -c \
+  "SELECT c.relname FROM pg_inherits i
+     JOIN pg_class p ON p.oid = i.inhparent
+     JOIN pg_class c ON c.oid = i.inhrelid
+    WHERE p.relname = 'request_logs' ORDER BY 1"
+```
+
+Expected: exactly four partitions — the current month and the next three — and no 2029/2030/2031/2032 leftovers, no `request_logs_archive`.
+
+- [ ] **Step 4: Commit**
 
 ```bash
 git add tests/helpers/db.ts
-git commit -m "test: provision request_log partitions on reset"
+git commit -m "test: restore the request_log partition set on reset"
 ```
 
 ---
