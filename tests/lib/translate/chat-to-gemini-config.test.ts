@@ -179,6 +179,20 @@ test('an uncorrelated tool result is reported', () => {
   })).toEqual(['unmatched_tool_call_id'])
 })
 
+test('an unnamed legacy function message is reported', () => {
+  expect(droppedParams({
+    ...base,
+    messages: [{ role: 'function', content: 'x' }],
+  } as ChatCompletionRequest)).toEqual(['unnamed_function_message'])
+})
+
+test('a named legacy function message is not reported', () => {
+  expect(droppedParams({
+    ...base,
+    messages: [{ role: 'function', name: 'get_weather', content: 'x' }],
+  } as ChatCompletionRequest)).toEqual([])
+})
+
 test('malformed tool call arguments are reported', () => {
   expect(droppedParams({
     ...base,

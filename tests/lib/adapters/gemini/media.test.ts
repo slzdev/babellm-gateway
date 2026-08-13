@@ -79,6 +79,19 @@ test('a gs uri passes straight through as file data', async () => {
   expect(resolved.get('gs://bucket/cat.png')).toEqual({ fileData: { fileUri: 'gs://bucket/cat.png' } })
 })
 
+test('an uppercase content-type is still recognised as an image', async () => {
+  const upload = vi.fn().mockResolvedValue({ uri: 'files/xyz', mimeType: 'image/png' })
+  const d = deps({
+    client: { files: { upload } } as never,
+    fetchImpl: vi.fn().mockResolvedValue(imageResponse(new Uint8Array([1, 2, 3]), 'IMAGE/PNG')),
+  })
+
+  const resolved = await resolveMedia([imageMessage('https://example.com/cat.png')], d)
+  expect(resolved.get('https://example.com/cat.png')).toEqual({
+    fileData: { fileUri: 'files/xyz', mimeType: 'image/png' },
+  })
+})
+
 test('an https image is fetched, uploaded, and referenced by its uri', async () => {
   const upload = vi.fn().mockResolvedValue({ uri: 'files/xyz', mimeType: 'image/png' })
   const d = deps({ client: { files: { upload } } as never })
@@ -144,6 +157,34 @@ test('an upload that returns no uri is refused', async () => {
   const d = deps({ client: { files: { upload: vi.fn().mockResolvedValue({}) } } as never })
 
   expect((await resolveMedia([imageMessage('https://example.com/cat.png')], d)).size).toBe(0)
+  warn.mockRestore()
+})
+
+test('an abort mid-fetch propagates instead of being logged as a dropped image', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const controller = new AbortController()
+  const d = deps({
+    signal: controller.signal,
+    fetchImpl: vi.fn().mockImplementation(() => {
+      controller.abort()
+      return Promise.reject(new DOMException('aborted', 'AbortError'))
+    }),
+  })
+
+  await expect(resolveMedia([imageMessage('https://example.com/cat.png')], d))
+    .rejects.toThrow('aborted')
+  expect(warn).not.toHaveBeenCalled()
+  warn.mockRestore()
+})
+
+test('a query string on a dropped image url is not logged', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const d = deps({ fetchImpl: vi.fn().mockResolvedValue(new Response('nope', { status: 404 })) })
+
+  await resolveMedia([imageMessage('https://example.com/gone.png?token=secret')], d)
+
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('https://example.com/gone.png'))
+  expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('token=secret'))
   warn.mockRestore()
 })
 

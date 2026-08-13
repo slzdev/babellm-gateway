@@ -84,6 +84,36 @@ test('function calls become tool_calls and force a tool_calls finish reason', ()
   expect(result.choices[0].finish_reason).toBe('tool_calls')
 })
 
+test('a function call that finished MAX_TOKENS reports length, not tool_calls', () => {
+  const result = fromGenerateContent(
+    response({
+      candidates: [{
+        content: { parts: [{ functionCall: { name: 'get_weather', args: { city: 'Paris' } } }] },
+        finishReason: 'MAX_TOKENS',
+      }],
+    }),
+    'gemini-2.5-flash',
+  )
+
+  expect(result.choices[0].message.tool_calls).toHaveLength(1)
+  expect(result.choices[0].finish_reason).toBe('length')
+})
+
+test('a function call that finished on a content-filter reason reports content_filter, not tool_calls', () => {
+  const result = fromGenerateContent(
+    response({
+      candidates: [{
+        content: { parts: [{ functionCall: { name: 'get_weather', args: { city: 'Paris' } } }] },
+        finishReason: 'SAFETY',
+      }],
+    }),
+    'gemini-2.5-flash',
+  )
+
+  expect(result.choices[0].message.tool_calls).toHaveLength(1)
+  expect(result.choices[0].finish_reason).toBe('content_filter')
+})
+
 test('a function call id from the provider is preferred over a synthesized one', () => {
   const result = fromGenerateContent(
     response({

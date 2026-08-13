@@ -369,6 +369,15 @@ export function droppedParams(req: ChatCompletionRequest): string[] {
     dropped.push('unmatched_tool_call_id')
   }
 
+  // The deprecated `function` role carries its name directly rather than a
+  // `tool_call_id`, and that name is optional on the schema. When it is
+  // missing, toContents carries the message as untrusted user text instead of
+  // a functionResponse — a distinct cause from an unresolved tool_call_id, so
+  // it gets its own name rather than being folded into that one.
+  if (req.messages.some((m) => m.role === 'function' && !m.name)) {
+    dropped.push('unnamed_function_message')
+  }
+
   if (
     req.messages.some((m) =>
       (m.tool_calls ?? []).some((call) => asObject(call.function.arguments) === null),
@@ -413,9 +422,14 @@ function finishReasonFor(
   reason: string | undefined,
   hasToolCalls: boolean,
 ): 'stop' | 'length' | 'tool_calls' | 'content_filter' {
-  if (hasToolCalls) return 'tool_calls'
+  // Truncation and filtering outrank a present tool call: the spec's table
+  // (§3.7) assigns `tool_calls` under `STOP` only. A call that finished
+  // MAX_TOKENS may have truncated arguments, and one that finished on a
+  // content-filter reason was filtered — both would be hidden from the client
+  // if `hasToolCalls` were checked first.
   if (reason === 'MAX_TOKENS') return 'length'
   if (reason && CONTENT_FILTER_REASONS.has(reason)) return 'content_filter'
+  if (hasToolCalls) return 'tool_calls'
   return 'stop'
 }
 

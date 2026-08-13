@@ -85,10 +85,14 @@ async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> 
 
 async function uploadedPart(url: string, deps: MediaDeps): Promise<Part> {
   const fetchImpl = deps.fetchImpl ?? fetch
+  // Redirects are followed by default. That is fine today — nothing here is
+  // host-restricted yet — but whoever adds the host allowlist this ingress
+  // needs must also set `redirect: 'manual'` and re-check each hop, or the
+  // allowlist can be defeated by a redirect to an unlisted host.
   const res = await fetchImpl(url, { signal: deps.signal })
   if (!res.ok) throw new Error(`fetching it returned ${res.status}`)
 
-  const mimeType = (res.headers.get('content-type') ?? '').split(';')[0].trim()
+  const mimeType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
   if (!mimeType.startsWith('image/')) {
     throw new Error(`expected an image, got "${mimeType || 'no content type'}"`)
   }
@@ -110,7 +114,11 @@ async function uploadedPart(url: string, deps: MediaDeps): Promise<Part> {
 
 function warn(requestId: string, url: string, err: unknown): void {
   const reason = err instanceof Error ? err.message : String(err)
-  console.warn(`[gemini] request_id=${requestId} dropped image ${url}: ${reason}`)
+  // A pre-signed URL (S3, GCS, Azure SAS) carries its credential in the query
+  // string, so this must never log past the `?` — doing so would write a
+  // usable capability into stdout logs.
+  const safeUrl = url.split('?')[0]
+  console.warn(`[gemini] request_id=${requestId} dropped image ${safeUrl}: ${reason}`)
 }
 
 /**
@@ -127,6 +135,10 @@ function warn(requestId: string, url: string, err: unknown): void {
  * Resolution is sequential rather than concurrent: a request carrying enough
  * images for that to matter is already the exception, and serial failures
  * produce log lines in a stable order.
+ *
+ * The one failure not swallowed is an aborted signal: it propagates so the
+ * caller's own abort classification handles it, rather than being logged as
+ * a dropped image.
  */
 export async function resolveMedia(
   messages: ChatMessage[],
@@ -150,6 +162,13 @@ export async function resolveMedia(
     try {
       resolved.set(url, await uploadedPart(url, deps))
     } catch (err) {
+      // A client disconnect or attempt timeout mid-fetch surfaces here as an
+      // AbortError too, and swallowing it would log a misleading "dropped
+      // image" for what is actually a timeout, then spend a pointless
+      // upstream call before the aborted signal fails it anyway. Re-throwing
+      // is safe: resolveMedia already runs inside the same try block that
+      // classifies upstream errors, so this becomes the 504 it should be.
+      if (deps.signal.aborted) throw err
       warn(deps.requestId, url, err)
     }
   }
