@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { nextFilterParams } from '@/lib/admin/log-filter-params'
 
 const RANGES = [
   { value: '1h', label: 'Last hour' },
@@ -36,16 +37,8 @@ export function LogFilters({
   const params = useSearchParams()
   const [requestId, setRequestId] = useState('')
 
-  // Every change resets the cursors: a filter change makes the old keyset
-  // position meaningless.
   function apply(name: string, value: string) {
-    const next = new URLSearchParams(params.toString())
-    if (value === 'all' && name !== 'status') next.delete(name)
-    else if (!value) next.delete(name)
-    else next.set(name, value)
-    next.delete('after')
-    next.delete('before')
-    router.push(`/logs?${next.toString()}`)
+    router.push(`/logs?${nextFilterParams(params, name, value).toString()}`)
   }
 
   return (

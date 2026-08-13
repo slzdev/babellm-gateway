@@ -115,9 +115,12 @@ export default async function LogsPage({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{row.latencyMs} ms</TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">
+                    {/* Each side renders independently: a null count means it
+                        was not measured, not that it was zero — the same
+                        distinction the "unpriced" cost cell protects. */}
                     {row.promptTokens === null && row.completionTokens === null
                       ? '—'
-                      : `${row.promptTokens ?? 0} / ${row.completionTokens ?? 0}`}
+                      : `${row.promptTokens ?? '—'} / ${row.completionTokens ?? '—'}`}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{cost(row.costUsd)}</TableCell>
                 </TableRow>

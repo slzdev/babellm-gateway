@@ -40,15 +40,24 @@ test('maps the single status select onto a class or an outcome', () => {
 })
 
 test('passes through key, model and cursors', () => {
+  const id = '01912c3e-1234-7abc-8def-0123456789ab'
   const filter = parseLogFilter(
-    { key: 'k-1', model: 'house-model', after: 'cursor-1' },
+    { key: 'k-1', model: 'house-model', after: id },
     NOW,
   )
-  expect(filter).toMatchObject({ apiKeyId: 'k-1', model: 'house-model', after: 'cursor-1' })
+  expect(filter).toMatchObject({ apiKeyId: 'k-1', model: 'house-model', after: id })
 })
 
 test('drops a blank model rather than filtering on an empty string', () => {
   expect(parseLogFilter({ model: '   ' }, NOW).model).toBeUndefined()
+})
+
+test('drops a malformed after cursor rather than passing it to the store', () => {
+  expect(parseLogFilter({ after: 'not-a-uuid' }, NOW).after).toBeUndefined()
+})
+
+test('drops a malformed before cursor rather than passing it to the store', () => {
+  expect(parseLogFilter({ before: 'also garbage' }, NOW).before).toBeUndefined()
 })
 
 test('loadLogs reports a readable store and its page', async () => {

@@ -1,6 +1,9 @@
 import 'server-only'
 import { resolveRequestLogStore } from '@/lib/logs'
 import type { LogDetail, LogFilter, LogPage, StatusClass } from '@/lib/logs/types'
+import { DEFAULT_RANGE } from './log-filter-params'
+
+export { DEFAULT_RANGE }
 
 export const LOG_PAGE_SIZE = 50
 
@@ -13,9 +16,17 @@ const RANGES: Record<string, number | null> = {
   all: null,
 }
 
-export const DEFAULT_RANGE = '24h'
-
 const STATUS_CLASSES: StatusClass[] = ['success', 'client_error', 'server_error']
+
+// Keyset cursors are uuid v7 ids passed straight into a Postgres `uuid`
+// column comparison. A malformed one must be dropped here rather than
+// reaching the store — the same "hand-edited URL shows the default view,
+// not an error page" contract that unrecognized ranges already get.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function cursor(value: string | undefined): string | undefined {
+  return value && UUID_RE.test(value) ? value : undefined
+}
 
 export interface LogSearchParams {
   range?: string
@@ -40,6 +51,8 @@ export function parseLogFilter(
   const window = RANGES[range]
   const model = params.model?.trim()
   const status = params.status
+  const after = cursor(params.after)
+  const before = cursor(params.before)
 
   return {
     ...(window === null ? {} : { from: new Date(now.getTime() - window) }),
@@ -51,8 +64,8 @@ export function parseLogFilter(
     ...(status === 'stream_interrupted' || status === 'client_closed'
       ? { outcome: status }
       : {}),
-    ...(params.after ? { after: params.after } : {}),
-    ...(params.before ? { before: params.before } : {}),
+    ...(after ? { after } : {}),
+    ...(before ? { before } : {}),
     limit: LOG_PAGE_SIZE,
   }
 }
