@@ -1138,7 +1138,7 @@ Delete the whole old `prune` method.
 - [ ] **Step 5: Run the driver tests**
 
 Run: `pnpm vitest run tests/lib/logs/postgres-store.test.ts`
-Expected: PASS, 13 tests.
+Expected: PASS, 13 tests (14 once the payload-gating regression test is added in review).
 
 - [ ] **Step 6: Commit**
 
