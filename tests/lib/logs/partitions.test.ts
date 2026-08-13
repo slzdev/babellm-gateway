@@ -111,7 +111,12 @@ test('dropExpiredPartitions keeps the current month and N-1 before it', async ()
 
   const dropped = await dropExpiredPartitions(pool, now, 3)
 
-  expect(dropped).toEqual([
+  // Scoped to the months this test created. The fixture also seeds the real
+  // current month and its lead, which are years older than this test's `now`
+  // and are therefore swept as well. Asserting the whole list would be
+  // asserting what the fixture happens to contain rather than what the
+  // function under test decides.
+  expect(dropped.filter((name) => name.startsWith('request_logs_2030_'))).toEqual([
     'request_logs_2030_01', 'request_logs_2030_02', 'request_logs_2030_03',
   ])
   const left = await partitions()
