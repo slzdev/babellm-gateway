@@ -9,6 +9,7 @@ const runtime: ProviderRuntime = {
   baseUrl: null,
   credentials: { apiKey: 'sk-test' },
   config: {},
+  apiFlavor: 'chat_completions',
 }
 
 /** models.list() returns a paginated async-iterable, not a plain array. */
