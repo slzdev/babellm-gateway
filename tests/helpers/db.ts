@@ -34,7 +34,9 @@ function expected(now: Date): Set<string> {
  * create, while a test fixture wants a known slate. Do not "fix" one to match
  * the other.
  *
- * In the steady state this is one catalog query and no DDL at all.
+ * In the steady state this costs five catalog reads and no DDL: one to
+ * enumerate what is attached, and one per expected month to confirm it is
+ * already there.
  */
 export async function resetDb() {
   await db.execute(
