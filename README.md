@@ -156,7 +156,13 @@ store is cached for that long so it isn't re-read on every request.
 Switching does not migrate existing logs: the previous store keeps its rows,
 and switching back brings them into view again. On `stdout`, `/logs` shows
 an empty state and debugging a past request goes back to searching container
-logs by the `x-request-id` header the gateway returns.
+logs by the `x-request-id` header the gateway returns — a v7 uuid, e.g.
+`018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e50`, the same value as the log row's
+primary key and the `/logs/<id>` detail page's URL:
+
+```bash
+docker compose logs gateway | grep 018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e50
+```
 
 The default store writes to the gateway's own database, which is right for
 development and low traffic; at high request rates the table and its three
@@ -184,9 +190,30 @@ way you'd treat any other place that content ends up.
 
 ### Retention
 
-Request logs are pruned hourly, governed by the retention-days setting in
-Settings › Governance; `0` disables pruning. Exactly one instance prunes at
-a time.
+Request logs live one partition per calendar month (UTC), keyed off the
+primary key rather than `created_at` — a v7 uuid's leading bytes are a
+millisecond timestamp, so id order is time order and a month boundary is
+expressible as a plain uuid bound. (This is also why the partition key is
+`id`: Postgres requires a partitioned table's partition key in every unique
+constraint, which is what keeps the primary key a bare `id` rather than a
+compound `(id, created_at)`.)
+
+Retention is set in whole months on the **Retention (months)** field in
+Settings › Governance (default `3`). A value of `N` keeps the current month
+and the `N − 1` before it, so the youngest logs are always retained in full,
+however young the current month is; `0` keeps everything. This is coarse by
+construction — there is no way to delete an individual day, or an individual
+row's captured prompt content, ahead of its whole month rolling off.
+
+Retention is enforced by dropping expired partitions outright, not deleting
+rows, once a day. The same maintenance job provisions the current month's
+partition plus the next three months ahead, running at boot and every 24
+hours after, under an advisory lock so only one instance does the work at a
+time. There is no default partition to catch a write for a month nobody has
+provisioned — so a database whose maintenance job has been failing across
+every boot and every daily tick for a full quarter starts refusing to write
+request logs, loudly, in stderr, rather than silently stranding rows outside
+every retention window.
 
 ## Routing
 
@@ -300,13 +327,6 @@ set `requestReasoningSummary: true` in the provider's config.
 A provider on the wrong flavor fails fast in either direction: a `404` from the
 upstream, whichever flavor is misconfigured, comes back with the error naming
 the setting to change.
-
-Each settled request writes one JSON line to stdout: request id, key name,
-virtual model, status, outcome, latency, time-to-first-token for streams, and
-every attempt with its provider, upstream model, status and error. **That line
-is the only record.** There is no request history in the database and no log
-viewer; once the line scrolls out of your container log the request is
-unrecoverable.
 
 Two limitations worth planning around:
 
