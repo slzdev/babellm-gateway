@@ -264,6 +264,30 @@ Two limitations worth planning around:
   more than one instance skews the distribution — each process starts at zero
   and they all favour the same target — and a restart resets it.
 
+### Endpoint paths
+
+An `openai` or `openai_compatible` provider asks its upstream for three
+endpoints, and by default appends the paths the OpenAI SDK uses to the
+provider's base URL:
+
+| Endpoint | Default path | Used for |
+| --- | --- | --- |
+| Models | `/models` | catalog sync |
+| Chat completions | `/chat/completions` | requests, when the API flavor is Chat Completions |
+| Responses | `/responses` | requests, when the API flavor is Responses |
+
+A clone that hangs the OpenAI shape off somewhere else can override any of the
+three under **Advanced** on the Providers page. An override is **joined onto the
+base URL**, not substituted for it — the base URL keeps carrying whatever prefix
+it carries today, so a provider based at `https://api.example/v1` with a models
+path of `/api/v2/models` is asked for `https://api.example/v1/api/v2/models`. A
+blank field means the default, which is also how you go back to one.
+
+Paths are stored per provider and normalised on save: a missing leading slash is
+added and a trailing one removed. A full URL is rejected rather than saved,
+because it would be appended rather than replacing the base URL; so is a query
+string, which the SDK sends separately from the path.
+
 ## Production deployment
 
 The app runs as a Docker image with `next start` — no serverless

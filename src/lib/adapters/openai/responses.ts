@@ -12,6 +12,7 @@ import type {
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { toProviderError } from './errors'
+import { resolveProviderPaths } from './paths'
 
 // The symmetric misconfiguration to the Chat Completions hint below: a
 // provider set to `responses` that in fact only speaks Chat Completions. The
@@ -32,6 +33,7 @@ export function createResponsesAdapter(
   createClient?: OpenAIClientFactory,
 ): ProviderAdapter {
   const client = createOpenAIClient(runtime, createClient)
+  const paths = resolveProviderPaths(runtime.config)
 
   return {
     async chat(req, ctx): Promise<ChatCompletion> {
@@ -41,7 +43,7 @@ export function createResponsesAdapter(
             ...toResponsesRequest(req, ctx.upstreamModel, runtime.config),
             stream: false,
           },
-          { signal: ctx.signal },
+          { signal: ctx.signal, path: paths.responses },
         )
         return fromResponse(result as OpenAI.Responses.Response)
       } catch (err) {
@@ -61,7 +63,7 @@ export function createResponsesAdapter(
             ...toResponsesRequest(req, ctx.upstreamModel, runtime.config),
             stream: true,
           },
-          { signal: ctx.signal },
+          { signal: ctx.signal, path: paths.responses },
         )
       } catch (err) {
         throw toProviderError(err, FLAVOR_HINT)
@@ -77,6 +79,6 @@ export function createResponsesAdapter(
       }
     },
 
-    listModels: (ctx) => listModels(client, ctx),
+    listModels: (ctx) => listModels(client, ctx, paths.models),
   }
 }

@@ -9,6 +9,7 @@ import type {
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { toProviderError } from './errors'
+import { resolveProviderPaths } from './paths'
 
 // Re-exported because tests and the registry import the factory type from the
 // adapter module rather than reaching past it.
@@ -22,6 +23,7 @@ export function createOpenAIAdapter(
   createClient?: OpenAIClientFactory,
 ): ProviderAdapter {
   const client = createOpenAIClient(runtime, createClient)
+  const paths = resolveProviderPaths(runtime.config)
 
   function upstreamParams(req: ChatCompletionRequest, ctx: AttemptContext) {
     return { ...req, model: ctx.upstreamModel }
@@ -35,7 +37,10 @@ export function createOpenAIAdapter(
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming
 
       try {
-        return await client.chat.completions.create(params, { signal: ctx.signal })
+        return await client.chat.completions.create(params, {
+          signal: ctx.signal,
+          path: paths.chatCompletions,
+        })
       } catch (err) {
         throw toProviderError(err, FLAVOR_HINT)
       }
@@ -59,7 +64,10 @@ export function createOpenAIAdapter(
       // routing loop already interpreted.
       let stream
       try {
-        stream = await client.chat.completions.create(params, { signal: ctx.signal })
+        stream = await client.chat.completions.create(params, {
+          signal: ctx.signal,
+          path: paths.chatCompletions,
+        })
       } catch (err) {
         throw toProviderError(err, FLAVOR_HINT)
       }
@@ -71,6 +79,6 @@ export function createOpenAIAdapter(
       }
     },
 
-    listModels: (ctx) => listModels(client, ctx),
+    listModels: (ctx) => listModels(client, ctx, paths.models),
   }
 }

@@ -164,6 +164,22 @@ test('listProviders reports catalog counts and sync bookkeeping', async () => {
   expect(item.lastSyncSummary).toEqual({ added: 2, updated: 0, missing: 0, matched: 1, total: 2 })
 })
 
+test('listProviders exposes stored path overrides, so the edit form can prefill them', async () => {
+  await createProvider({
+    name: 'clone', adapter: 'openai_compatible', baseUrl: 'https://api.example/v1',
+    credentials: { apiKey: 'sk-x' },
+    config: { modelsPath: '/api/v2/models', timeoutMs: 5000 },
+  })
+  const [item] = await listProviders()
+  expect(item.pathOverrides).toEqual({ modelsPath: '/api/v2/models' })
+})
+
+test('a provider that overrides no path reports an empty set, not undefined', async () => {
+  await createProvider({ name: 'plain', adapter: 'openai', credentials: { apiKey: 'sk-x' } })
+  const [item] = await listProviders()
+  expect(item.pathOverrides).toEqual({})
+})
+
 test('a provider with no catalog rows reports zero, not undefined', async () => {
   await createProvider({ name: 'fresh', adapter: 'openai', credentials: { apiKey: 'sk-x' } })
   const [item] = await listProviders()
