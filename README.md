@@ -161,7 +161,8 @@ always call `/v1/chat/completions`, and a Responses-flavored provider is
 translated in both directions. A single virtual model can mix the two, and
 failover crosses between them freely.
 
-Two things to know before pointing production traffic at a Responses provider:
+A few things to know before pointing production traffic at a Responses
+provider:
 
 - **`n` and `stop` are silently ineffective.** The Responses API cannot
   express them, and the gateway drops unmappable parameters rather than
