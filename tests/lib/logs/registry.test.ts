@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import * as settingsModule from '@/lib/settings'
-import { setLoggingSettings } from '@/lib/settings'
+import { setLoggingSettings, type LoggingSettings } from '@/lib/settings'
 import {
   LOG_SETTINGS_TTL_MS, clearRequestLogStoreCache, resolveRequestLogStore,
 } from '@/lib/logs/registry'
@@ -98,4 +98,26 @@ test('concurrent callers during a failing settings read share one fallback', asy
   expect(spy).toHaveBeenCalledTimes(1)
   expect(a.fallback).toBe('settings_error')
   expect(a).toEqual(b)
+})
+
+test('a resolution in flight when the cache is cleared does not repopulate it', async () => {
+  // A settings write (e.g. the admin Settings page) can call
+  // clearRequestLogStoreCache() while an earlier resolveRequestLogStore() is
+  // still awaiting the pre-write settings read. That resolution must not
+  // silently republish stale state once it finally settles.
+  let resolveSettings: (value: LoggingSettings) => void = () => {}
+  const staleSettings: LoggingSettings = { store: 'stdout', retentionDays: 30, payloadMaxBytes: 262_144 }
+  const spy = vi
+    .spyOn(settingsModule, 'getLoggingSettings')
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveSettings = resolve }))
+
+  const pending = resolveRequestLogStore()
+  clearRequestLogStoreCache()
+  resolveSettings(staleSettings)
+  await pending
+
+  // The cache was not repopulated by the stale resolution, so this call
+  // re-reads settings instead of being served the pre-write value.
+  await resolveRequestLogStore()
+  expect(spy).toHaveBeenCalledTimes(2)
 })

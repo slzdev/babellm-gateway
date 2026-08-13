@@ -34,10 +34,15 @@ export interface StoreResolution {
 
 let cached: { at: number; resolution: StoreResolution } | null = null
 let inflight: Promise<StoreResolution> | null = null
+let generation = 0
 
 export function clearRequestLogStoreCache(): void {
   cached = null
   inflight = null
+  // Any resolution still in flight was started against settings that have
+  // since changed. Bumping the generation makes it return its value to its
+  // own callers without publishing it to the cache.
+  generation += 1
 }
 
 export async function resolveRequestLogStore(): Promise<StoreResolution> {
@@ -47,9 +52,14 @@ export async function resolveRequestLogStore(): Promise<StoreResolution> {
   // arrives during a miss window issues its own settings query — and when that
   // query is the thing that is failing, caching the failure would no longer
   // protect the database it is failing against.
+  const startedAt = generation
   inflight ??= resolve()
     .then((resolution) => {
-      cached = { at: Date.now(), resolution }
+      // A clear that happened while this resolution was in flight (e.g. an
+      // admin's settings write) must not have its cache repopulated by a
+      // resolution computed against the pre-write state. The caller still
+      // gets its answer below; only the cache write is suppressed.
+      if (startedAt === generation) cached = { at: Date.now(), resolution }
       return resolution
     })
     .finally(() => {
