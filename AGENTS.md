@@ -23,6 +23,14 @@ Before starting **non-trivial** implementation work, ask the user how to run it.
 
 Ask with `AskUserQuestion`, **one question at a time, in this order**. Wait for each answer before asking the next.
 
+## 0. Specs and plans never land on `main` directly
+
+Design docs under `docs/superpowers/specs/` and `docs/superpowers/plans/` belong to the work they describe. Commit them on the worktree/branch that implements them and let them reach `main` only through that merge — never commit a spec or plan straight to `main`. A design that ends up never being built should disappear with its branch instead of leaving a stale doc, and a cleanup commit, in the history.
+
+In practice this means the git-isolation question comes **before** the spec is written, not after: as soon as brainstorming looks like it will produce a spec or plan, ask question 2 below, create the worktree/branch, then write the doc there.
+
+This overrides the "skip these questions for doc tweaks" rule above — specs and plans are never treated as trivial doc edits. Docs that describe what already exists (`README.md`, `AGENTS.md`, notes on shipped code) are ordinary changes and follow the normal rules.
+
 ## 1. Execution mode
 
 > How should this be executed?
