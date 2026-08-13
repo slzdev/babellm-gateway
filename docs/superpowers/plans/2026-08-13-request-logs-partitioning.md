@@ -1601,7 +1601,18 @@ Expected: no hits outside `maintenance.ts`'s own prose. Fix any stale import pat
 - [ ] **Step 8: Run the whole suite**
 
 Run: `pnpm test`
-Expected: PASS. Remaining failures should be confined to `tests/lib/db/request-logs-schema.test.ts`, `tests/lib/admin/logs.test.ts`, `tests/lib/logs/stdout.test.ts`, `tests/lib/logs/registry.test.ts`, and `tests/gateway/payload-capture.test.ts` — all of which still name `requestId`. Fix them now: replace `requestId: 'req_x'` with `id: uuidv7()` in every entry literal, drop `requestPayloads` assertions, and change the schema test's insert to supply an explicit `id`. `tests/lib/db/request-logs-schema.test.ts` loses its cascade test entirely — there is nothing left to cascade to — and gains one asserting a row routes to the partition its id encodes.
+Expected: PASS **by the end of this step**, not on its first invocation. The command's first run is the step's work-list, not its verdict.
+
+Fix every remaining failure this change caused. The list below is where they were known to be, but treat it as a starting point rather than a closed set — run the suite and fix what it actually reports:
+
+- `tests/lib/db/request-logs-schema.test.ts`
+- `tests/lib/admin/logs.test.ts` — compilation only (`requestId` → `id`); Task 9 owns its assertions
+- `tests/lib/logs/stdout.test.ts`
+- `tests/lib/logs/registry.test.ts`
+- `tests/gateway/payload-capture.test.ts`
+- `tests/gateway/request-logging.test.ts` — calls `postgresStore.get(page.rows[0].requestId)` in three places; `LogRow` no longer has that field, so each becomes `.id`
+
+Fix them now: replace `requestId: 'req_x'` with `id: uuidv7()` in every entry literal, drop `requestPayloads` assertions, and change the schema test's insert to supply an explicit `id`. `tests/lib/db/request-logs-schema.test.ts` loses its cascade test entirely — there is nothing left to cascade to — and gains one asserting a row routes to the partition its id encodes.
 
 - [ ] **Step 9: Commit**
 
