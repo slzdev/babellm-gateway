@@ -11,10 +11,10 @@ import {
   type Part,
   type ToolConfig,
 } from '@google/genai'
-import { mediaPart, type MediaKind } from '@/lib/adapters/gemini/media'
 import { ProviderError } from '@/lib/gateway/errors'
 import type { ChatCompletion, ChatCompletionChunk, ProviderConfig } from '@/lib/adapters/types'
 import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
+import { mediaPart, type MediaKind } from './gemini-media'
 
 /**
  * The media part types this translation carries, and the kind each denotes. A

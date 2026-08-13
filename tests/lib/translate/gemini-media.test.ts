@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { mediaPart } from '@/lib/adapters/gemini/media'
+import { mediaPart } from '@/lib/translate/gemini-media'
 import { ProviderError } from '@/lib/gateway/errors'
 
 test('an https image url is passed straight through with its mime type', () => {
