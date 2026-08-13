@@ -194,9 +194,10 @@ The default makes the migration additive with no backfill; every existing row
 keeps its current behaviour.
 
 This is the fifth `pgEnum` in the schema. The SQLite design
-(`2026-08-13-sqlite-support-design.md`) maps enums to text columns with check
-constraints, so its enum inventory needs this one added. That is a one-line
-follow-up on that spec, not work in this phase.
+(`2026-08-13-sqlite-support-design.md`) maps every `pgEnum` to
+`text({ enum: [...] })` under one general rule rather than listing enums
+individually, so `api_flavor` needs no entry there and that spec is
+unaffected by this phase.
 
 ### 4.2 `src/lib/adapters/types.ts`
 
@@ -550,5 +551,7 @@ Modified:
 - `src/app/(admin)/providers/{provider-form,edit-provider-form,page}.tsx`
 - `src/app/(admin)/providers/actions.ts`
 - `README.md` — flavor setting, `reasoning_content`, and the `n`/`stop` caveat
-- `docs/superpowers/specs/2026-08-13-sqlite-support-design.md` — one line adding
-  `api_flavor` to its enum inventory
+
+Not modified: `docs/superpowers/specs/2026-08-13-sqlite-support-design.md`. Its
+general `pgEnum` → `text({ enum: [...] })` rule already covers `api_flavor`;
+see §4.1.
