@@ -35,6 +35,11 @@ test('token counts appear only when they were measured', () => {
   }))
   expect(withUsage).toMatchObject({ prompt_tokens: 10, completion_tokens: 4 })
   expect(withUsage).not.toHaveProperty('cached_tokens')
+
+  const withZero = buildRequestLog(entry({
+    usage: { promptTokens: 10, completionTokens: 4, cachedTokens: 0, reasoningTokens: null },
+  }))
+  expect(withZero).toMatchObject({ cached_tokens: 0 })
 })
 
 test('cost appears only when the request could be priced', () => {

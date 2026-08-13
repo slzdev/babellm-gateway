@@ -42,18 +42,29 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
         <div className="px-5 py-4 text-sm font-semibold">BabeLLM</div>
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 pb-4">
-          {NAV.map((section, index) => (
-            <div key={section.label ?? index} className="flex flex-col gap-1">
-              {section.label ? (
-                <div className="px-3 pt-4 pb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                  {section.label}
-                </div>
-              ) : null}
-              {section.items.map((item) => (
-                <NavLink key={item.href} href={item.href} label={item.label} />
-              ))}
-            </div>
-          ))}
+          {NAV.map((section, index) => {
+            const headingId = section.label ? `nav-section-${index}-heading` : undefined
+            return (
+              <div
+                key={section.label ?? index}
+                className="flex flex-col gap-1"
+                role={section.label ? 'group' : undefined}
+                aria-labelledby={headingId}
+              >
+                {section.label ? (
+                  <div
+                    id={headingId}
+                    className="px-3 pt-4 pb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase"
+                  >
+                    {section.label}
+                  </div>
+                ) : null}
+                {section.items.map((item) => (
+                  <NavLink key={item.href} href={item.href} label={item.label} />
+                ))}
+              </div>
+            )
+          })}
 
           <div className="mt-auto flex flex-col gap-1 pt-4">
             {FOOTER_NAV.map((item) => (

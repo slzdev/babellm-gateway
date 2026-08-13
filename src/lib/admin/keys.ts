@@ -163,6 +163,10 @@ export async function setApiKeyEnabled(id: string, enabled: boolean): Promise<vo
   await db.update(apiKeys).set({ enabled }).where(eq(apiKeys.id, id))
 }
 
+export async function setApiKeyLogPayloads(id: string, logPayloads: boolean): Promise<void> {
+  await db.update(apiKeys).set({ logPayloads }).where(eq(apiKeys.id, id))
+}
+
 export async function deleteApiKey(id: string): Promise<void> {
   await db.delete(apiKeys).where(eq(apiKeys.id, id))
 }

@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { apiKeys } from '@/lib/db/schema'
 import {
   createApiKey, createUser, deleteApiKey, deleteUser,
-  listApiKeys, listUsers, setApiKeyEnabled,
+  listApiKeys, listUsers, setApiKeyEnabled, setApiKeyLogPayloads,
 } from '@/lib/admin/keys'
 import { hashApiKey } from '@/lib/gateway/auth'
 import { resetDb } from '../../helpers/db'
@@ -92,6 +92,26 @@ test('revoking a key disables it without deleting it', async () => {
   await setApiKeyEnabled(item.id, false)
   const [updated] = await listApiKeys()
   expect(updated.enabled).toBe(false)
+})
+
+test('payload logging is off unless a key opts in at creation', async () => {
+  const { item } = await createApiKey({ name: 'app key' })
+  expect(item.logPayloads).toBe(false)
+
+  const { item: captured } = await createApiKey({ name: 'captured key', logPayloads: true })
+  expect(captured.logPayloads).toBe(true)
+})
+
+test('toggling payload logging on a key updates it without touching other fields', async () => {
+  const { item } = await createApiKey({ name: 'app key', rpmLimit: 60 })
+  await setApiKeyLogPayloads(item.id, true)
+  const [updated] = await listApiKeys()
+  expect(updated.logPayloads).toBe(true)
+  expect(updated.rpmLimit).toBe(60)
+
+  await setApiKeyLogPayloads(item.id, false)
+  const [reverted] = await listApiKeys()
+  expect(reverted.logPayloads).toBe(false)
 })
 
 test('deleting a key removes it', async () => {

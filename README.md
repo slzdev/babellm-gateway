@@ -135,6 +135,59 @@ off the air.
 unlisted `openai_compatible` endpoint has no models.dev namespace, so those
 models stay unenriched unless you override them by hand.
 
+## Governance
+
+### Request logs
+
+Every request the gateway serves is recorded: the caller's key name, the
+model asked for, status and outcome, latency and time-to-first-token, the
+full attempt chain with each target's failure reason, token counts, and
+cost. Browse them at `/logs` — filter by time range, key, model, and status,
+or jump straight to one by its request id — and open any row for a detail
+page with the full attempt timeline and cost breakdown.
+
+### Choosing a store
+
+Settings › Governance picks where request logs go: `postgres` (default,
+readable — this is what powers `/logs`) or `stdout` (write-only, one JSON
+line per request). A change takes effect on the instance that made it
+immediately, and on every other instance within 15 seconds — the resolved
+store is cached for that long so it isn't re-read on every request.
+Switching does not migrate existing logs: the previous store keeps its rows,
+and switching back brings them into view again. On `stdout`, `/logs` shows
+an empty state and debugging a past request goes back to searching container
+logs by the `x-request-id` header the gateway returns.
+
+The default store writes to the gateway's own database, which is right for
+development and low traffic; at high request rates the table and its three
+indexes compete with the queries that serve requests.
+
+### Upgrading from an earlier version
+
+`postgres` is the default store, so a gateway upgraded from a version that
+predates this feature starts writing request logs into its own database as
+soon as it boots on the new code. Selecting `stdout` on the Settings page
+restores exactly the previous behavior. The stdout line itself gained token
+and cost keys — additively, so existing parsers keep working.
+
+### Payload capture
+
+Off by default. Turn it on per key on the **API keys** page: the create-key
+dialog has a switch, and an existing key's row menu has a "Turn on/off
+payload logging" action, with a **Payloads** column showing which keys
+currently capture. When on, the gateway stores the exact request and
+response bodies with that key's logs (the assembled completion for a
+streamed response), bounded by the payload cap in Settings › Governance
+(256 KiB by default) — anything larger is stored as a truncated preview.
+This writes prompt and completion content to the database, so treat it the
+way you'd treat any other place that content ends up.
+
+### Retention
+
+Request logs are pruned hourly, governed by the retention-days setting in
+Settings › Governance; `0` disables pruning. Exactly one instance prunes at
+a time.
+
 ## Routing
 
 A virtual model holds a list of route targets and the gateway uses all of
@@ -352,14 +405,9 @@ policy-driven routing across every route target. Everything below is
 - **No circuit breaker.** Routing tries every policy's chain on every
   request, so a provider that is down costs one wasted attempt each time
   rather than being taken out of rotation. See [Routing](#routing).
-- **No stored request history and no log viewer.** Each request emits one
-  JSON line on stdout; nothing is written to the database. Debugging a past
-  request means searching your container logs by `x-request-id`.
 - **No Gemini or Bedrock adapters, no `/v1/models`, no `/v1/embeddings`**
   (Phase 3). Configuring a `gemini` or `bedrock` provider is accepted by
   the dashboard but every request to it returns `501 unsupported_operation`.
-- **No cost computation, price table, opt-in payload logging, or retention
-  pruning** (Phase 4). `cost_usd` is always null.
 
 ## Learn more
 

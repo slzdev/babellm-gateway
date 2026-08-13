@@ -2,7 +2,9 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireAdmin } from '@/lib/admin/session'
-import { createApiKey, deleteApiKey, setApiKeyEnabled } from '@/lib/admin/keys'
+import {
+  createApiKey, deleteApiKey, setApiKeyEnabled, setApiKeyLogPayloads,
+} from '@/lib/admin/keys'
 
 export interface CreateKeyState {
   error?: string
@@ -35,6 +37,11 @@ export async function createKeyAction(
       budgetMonthlyUsd: optionalText(formData, 'budgetMonthlyUsd'),
       budgetTotalUsd: optionalText(formData, 'budgetTotalUsd'),
       expiresAt: expiresAtRaw ? new Date(expiresAtRaw) : null,
+      // The Switch renders a native checkbox: checked submits "on" (no value
+      // attribute is set, so it falls back to the HTML default) and unchecked
+      // omits the field entirely. Treat anything present-and-not-explicitly-off
+      // as true rather than betting on the exact string.
+      logPayloads: !['false', 'off', null, ''].includes(formData.get('logPayloads') as string | null),
     })
     revalidatePath('/keys')
     return { plaintextKey }
@@ -46,6 +53,12 @@ export async function createKeyAction(
 export async function revokeKeyAction(formData: FormData): Promise<void> {
   await requireAdmin()
   await setApiKeyEnabled(String(formData.get('id')), formData.get('enabled') === 'true')
+  revalidatePath('/keys')
+}
+
+export async function setKeyPayloadLoggingAction(formData: FormData): Promise<void> {
+  await requireAdmin()
+  await setApiKeyLogPayloads(String(formData.get('id')), formData.get('logPayloads') === 'true')
   revalidatePath('/keys')
 }
 
