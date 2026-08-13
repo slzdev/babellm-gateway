@@ -58,7 +58,13 @@ export default async function ModelsPage() {
                 </Badge>
               </TableCell>
               <TableCell className="text-right">
-                <Button variant="outline" size="sm" render={<Link href={`/models/${model.id}`} />}>
+                {/* Rendered as a link, so Base UI must not assume a native <button>. */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  nativeButton={false}
+                  render={<Link href={`/models/${model.id}`} />}
+                >
                   Manage
                 </Button>
               </TableCell>
