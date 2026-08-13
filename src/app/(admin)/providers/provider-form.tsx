@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FormDialog } from '@/components/admin/form-dialog'
 import { createProviderAction, type ActionState } from './actions'
+import { AdvancedPathsFields } from './advanced-paths-fields'
 import { CredentialField } from './provider-fields'
 import { RegistryNamespaceField } from './registry-namespace-field'
 import type { AdapterType } from '@/lib/adapters/credentials'
@@ -84,6 +85,8 @@ export function CreateProviderDialog() {
           ) : null}
         </div>
       )}
+
+      <AdvancedPathsFields idPrefix="new" adapter={adapter} />
     </FormDialog>
   )
 }

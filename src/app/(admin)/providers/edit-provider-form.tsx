@@ -6,6 +6,7 @@ import { FormDialog } from '@/components/admin/form-dialog'
 import type { AdapterType } from '@/lib/adapters/credentials'
 import type { ProviderListItem } from '@/lib/admin/providers'
 import { updateProviderAction, type ActionState } from './actions'
+import { AdvancedPathsFields } from './advanced-paths-fields'
 import { RegistryNamespaceField } from './registry-namespace-field'
 
 const CREDENTIAL_FIELDS: Record<AdapterType, string[]> = {
@@ -104,6 +105,12 @@ export function EditProviderDialog({
           </label>
         ) : null}
       </fieldset>
+
+      <AdvancedPathsFields
+        idPrefix={provider.id}
+        adapter={provider.adapter}
+        values={provider.pathOverrides}
+      />
     </FormDialog>
   )
 }

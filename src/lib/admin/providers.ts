@@ -8,6 +8,7 @@ import { decryptJson, encryptJson } from '@/lib/crypto'
 import { credentialSchemas, maskCredentials, type AdapterType } from '@/lib/adapters/credentials'
 import { createAdapter } from '@/lib/adapters/registry'
 import type { ApiFlavor } from '@/lib/adapters/types'
+import { PATH_FIELDS } from '@/lib/adapters/openai/paths'
 import { parseProviderConfig, readRegistryNamespace } from '@/lib/catalog/config'
 
 export interface ProviderInput {
@@ -31,6 +32,12 @@ export interface ProviderListItem {
   targetCount: number
   catalogModelCount: number
   registryNamespace: string | null
+  /**
+   * Only the endpoint paths this provider actually overrides. A key is absent
+   * rather than defaulted so the edit form can leave its box empty, which is
+   * how the form says "use the default".
+   */
+  pathOverrides: Record<string, string>
   lastSyncedAt: Date | null
   lastSyncStatus: 'ok' | 'failed' | 'unsupported' | null
   lastSyncError: string | null
@@ -52,6 +59,16 @@ function validate(adapter: AdapterType, credentials: unknown, baseUrl?: string |
     throw new Error('An openai_compatible provider requires a base URL.')
   }
   return result.data as Record<string, unknown>
+}
+
+function readPathOverrides(config: string): Record<string, string> {
+  const parsed = parseProviderConfig(config)
+  const overrides: Record<string, string> = {}
+  for (const field of PATH_FIELDS) {
+    const value = parsed[field.name]
+    if (typeof value === 'string' && value.length > 0) overrides[field.name] = value
+  }
+  return overrides
 }
 
 export async function listProviders(): Promise<ProviderListItem[]> {
@@ -83,6 +100,7 @@ export async function listProviders(): Promise<ProviderListItem[]> {
     targetCount: targetsById.get(row.id) ?? 0,
     catalogModelCount: catalogById.get(row.id) ?? 0,
     registryNamespace: readRegistryNamespace(row.config),
+    pathOverrides: readPathOverrides(row.config),
     lastSyncedAt: row.lastSyncedAt,
     lastSyncStatus: row.lastSyncStatus,
     lastSyncError: row.lastSyncError,

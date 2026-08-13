@@ -27,6 +27,16 @@ export interface ProviderConfig {
    * and the gateway cannot tell which kind of model it is addressing.
    */
   requestReasoningSummary?: boolean
+  /**
+   * Per-endpoint path overrides, for clones that hang the OpenAI shape off
+   * somewhere other than where the SDK looks for it. Each is joined onto the
+   * base URL the same way the default is, so the base URL keeps carrying
+   * whatever prefix (`/v1`) it carries today. Absent means the default —
+   * see DEFAULT_PATHS in ./openai/paths.
+   */
+  modelsPath?: string
+  chatCompletionsPath?: string
+  responsesPath?: string
   [key: string]: unknown
 }
 

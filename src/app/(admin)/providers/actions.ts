@@ -7,6 +7,9 @@ import {
 } from '@/lib/admin/providers'
 import { adapterTypes, type AdapterType } from '@/lib/adapters/credentials'
 import { apiFlavors, type ApiFlavor } from '@/lib/adapters/types'
+import {
+  PATH_FIELDS, mergeProviderPaths, type ProviderPathInput,
+} from '@/lib/adapters/openai/paths'
 import { parseRegistryNamespace } from '@/lib/catalog/config'
 import { syncProvider, type SyncResult } from '@/lib/catalog/sync'
 
@@ -38,6 +41,21 @@ function credentialsFrom(formData: FormData, adapter: AdapterType) {
 }
 
 /**
+ * The path fields are rendered under the same condition as the flavor field, so
+ * an absent one means "not applicable". Only what the form actually submitted
+ * is forwarded; mergeProviderPaths reads a missing key as "leave it alone" and
+ * a submitted blank as "clear the override".
+ */
+function pathInputFrom(formData: FormData): ProviderPathInput {
+  const input: ProviderPathInput = {}
+  for (const field of PATH_FIELDS) {
+    const value = formData.get(field.name)
+    if (typeof value === 'string') input[field.name] = value
+  }
+  return input
+}
+
+/**
  * The flavor field is only rendered for OpenAI-shaped adapters, so an absent
  * value means "not applicable" rather than "cleared" — createProvider defaults
  * it and updateProvider keeps whatever is stored.
@@ -61,11 +79,17 @@ export async function createProviderAction(
   }
   const adapter = rawAdapter as AdapterType
 
-  let namespace: string | null
+  // Both of these are set at create time so the sync this action fires can
+  // already enrich, and already reach a non-standard models endpoint.
+  let config: Record<string, unknown>
   try {
-    namespace = parseRegistryNamespace(String(formData.get('registryNamespace') ?? ''))
+    const namespace = parseRegistryNamespace(String(formData.get('registryNamespace') ?? ''))
+    config = mergeProviderPaths(
+      namespace ? { registryNamespace: namespace } : {},
+      pathInputFrom(formData),
+    )
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Invalid registry namespace.' }
+    return { error: err instanceof Error ? err.message : 'Invalid provider configuration.' }
   }
 
   let created
@@ -75,8 +99,7 @@ export async function createProviderAction(
       adapter,
       baseUrl: (formData.get('baseUrl') as string) || null,
       credentials: credentialsFrom(formData, adapter),
-      // Set at create time so the sync this action fires can already enrich.
-      config: namespace ? { registryNamespace: namespace } : {},
+      config,
       apiFlavor: apiFlavorFrom(formData),
     })
   } catch (err) {
@@ -165,12 +188,12 @@ export async function updateProviderAction(
   try {
     const namespace = parseRegistryNamespace(String(formData.get('registryNamespace') ?? ''))
 
-    // registryNamespace is the only config key this form edits. Merge it onto
-    // the stored config instead of replacing the object outright — {} is
-    // truthy, so passing it unconditionally would clobber keys no form
-    // exposes yet (timeoutMs, disableStreamUsage) that are still read on the
-    // request path.
-    const config = await getProviderConfig(id)
+    // registryNamespace and the three endpoint paths are the config keys this
+    // form edits. They are merged onto the stored config rather than replacing
+    // the object outright — {} is truthy, so passing it unconditionally would
+    // clobber keys no form exposes yet (timeoutMs, disableStreamUsage) that are
+    // still read on the request path.
+    const config = mergeProviderPaths(await getProviderConfig(id), pathInputFrom(formData))
     if (namespace) config.registryNamespace = namespace
     else delete config.registryNamespace
 
