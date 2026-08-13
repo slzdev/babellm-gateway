@@ -127,6 +127,53 @@ test('an assistant message with both text and tool calls emits both, text first'
   ])
 })
 
+test('a legacy function message is carried as text rather than a dangling call_id', () => {
+  const params = toResponsesRequest(
+    request({
+      messages: [
+        { role: 'user', content: 'weather?' },
+        { role: 'function', name: 'get_weather', content: '18C' },
+      ],
+    } as never),
+    'm',
+  )
+
+  expect(params.input).toEqual([
+    { role: 'user', content: 'weather?' },
+    { role: 'developer', content: '[function result: get_weather] 18C' },
+  ])
+})
+
+test('no function_call_output is emitted for a legacy function message', () => {
+  const params = toResponsesRequest(
+    request({ messages: [{ role: 'function', name: 'f', content: 'x' }] } as never),
+    'm',
+  )
+  const items = params.input as { type?: string }[]
+  expect(items.some((item) => item.type === 'function_call_output')).toBe(false)
+})
+
+test('droppedParams reports a legacy function message', () => {
+  expect(
+    droppedParams(request({
+      messages: [{ role: 'function', name: 'f', content: 'x' }],
+    } as never)),
+  ).toEqual(['legacy_function_message'])
+})
+
+test('a modern tool message still becomes function_call_output', () => {
+  const params = toResponsesRequest(
+    request({
+      messages: [{ role: 'tool', tool_call_id: 'call_1', content: '{"temp":21}' }],
+    } as never),
+    'm',
+  )
+
+  expect(params.input).toEqual([
+    { type: 'function_call_output', call_id: 'call_1', output: '{"temp":21}' },
+  ])
+})
+
 test('tools flatten out of their function wrapper', () => {
   const params = toResponsesRequest(
     request({

@@ -52,6 +52,11 @@ export function droppedParams(req: ChatCompletionRequest): string[] {
   }
 
   if (hasAudioPart(req)) dropped.push('audio_content')
+
+  if (req.messages.some((message) => message.role === 'function')) {
+    dropped.push('legacy_function_message')
+  }
+
   return dropped
 }
 
@@ -91,11 +96,25 @@ function toInput(messages: ChatMessage[]): ResponseInputItem[] {
   const input: ResponseInputItem[] = []
 
   for (const message of messages) {
-    if (message.role === 'tool' || message.role === 'function') {
+    if (message.role === 'tool') {
       input.push({
         type: 'function_call_output',
         call_id: message.tool_call_id ?? '',
         output: textOf(message.content),
+      } as ResponseInputItem)
+      continue
+    }
+
+    // The deprecated functions API has no call id at all — a `function`
+    // message carries only a name — so there is nothing for a
+    // `function_call_output` to correlate to. Emitting one with a fabricated
+    // id would send an item upstream referencing nothing, so the result is
+    // carried as text instead: the model still sees what the function
+    // returned, and droppedParams reports that the structure was lost.
+    if (message.role === 'function') {
+      input.push({
+        role: 'developer',
+        content: `[function result: ${message.name ?? 'unknown'}] ${textOf(message.content)}`,
       } as ResponseInputItem)
       continue
     }
