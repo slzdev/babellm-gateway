@@ -127,19 +127,19 @@ target that actually served — which under failover is not the first one tried.
 
 ### Direct addressing
 
-A request does not have to go through a virtual model. `<provider>:<model>`
+A request does not have to go through a virtual model. `<provider>/<model>`
 reaches any model on the **Catalog** page directly:
 
 ```ts
-client.chat.completions.create({ model: "xai:grok-4.5", messages })
+client.chat.completions.create({ model: "xai/grok-4.5", messages })
 ```
 
 The prefix is the provider's name as it appears on the Providers page, and
-everything after the **first** colon is the model id — so a fine-tune keeps its
-own colons (`openai:ft:gpt-4o:acme::abc123`).
+everything after the **first** slash is the model id — so a namespaced model id
+keeps its own slashes (`together/meta-llama/Llama-3-70b`).
 
 The name is looked up as a virtual model first, and only falls through to a
-direct address when nothing matches. Naming a virtual model `xai:grok-4.5`
+direct address when nothing matches. Naming a virtual model `xai/grok-4.5`
 therefore shadows the direct route rather than being unreachable behind it,
 which is the supported way to put a policy in front of a name your clients
 already send.

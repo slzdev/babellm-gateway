@@ -50,12 +50,12 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-test('routes `provider:model` to that provider with no virtual model defined', async () => {
+test('routes `provider/model` to that provider with no virtual model defined', async () => {
   const { apiKey } = await seedCatalogOnly()
   const chat = vi.fn().mockResolvedValue(upstreamCompletion)
 
   const res = await handleChatCompletions(
-    chatRequest(directBody('xai:grok-4.5'), apiKey),
+    chatRequest(directBody('xai/grok-4.5'), apiKey),
     fakeAdapterDeps({ chat }),
   )
   const json = await res.json()
@@ -64,12 +64,12 @@ test('routes `provider:model` to that provider with no virtual model defined', a
   expect(chat.mock.calls[0][1].upstreamModel).toBe('grok-4.5')
   expect(res.headers.get('x-babellm-provider')).toBe('xai')
   expect(res.headers.get('x-babellm-upstream-model')).toBe('grok-4.5')
-  // The client asked for `xai:grok-4.5`, so that is the name it gets back.
-  expect(json.model).toBe('xai:grok-4.5')
+  // The client asked for `xai/grok-4.5`, so that is the name it gets back.
+  expect(json.model).toBe('xai/grok-4.5')
   expect(json.choices[0].message.content).toBe('hello')
 })
 
-test('streams a `provider:model` request', async () => {
+test('streams a `provider/model` request', async () => {
   const { apiKey } = await seedCatalogOnly()
   const chunk = {
     id: 'chatcmpl-upstream',
@@ -83,13 +83,13 @@ test('streams a `provider:model` request', async () => {
   })
 
   const res = await handleChatCompletions(
-    chatRequest({ ...directBody('xai:grok-4.5'), stream: true }, apiKey),
+    chatRequest({ ...directBody('xai/grok-4.5'), stream: true }, apiKey),
     fakeAdapterDeps({ chatStream }),
   )
 
   expect(res.status).toBe(200)
   expect(res.headers.get('x-babellm-upstream-model')).toBe('grok-4.5')
-  expect(await res.text()).toContain('"model":"xai:grok-4.5"')
+  expect(await res.text()).toContain('"model":"xai/grok-4.5"')
 })
 
 test('answers 501 for a direct address on a provider with no adapter', async () => {
@@ -98,7 +98,7 @@ test('answers 501 for a direct address on a provider with no adapter', async () 
   // Deliberately the real adapter registry: a direct address is a chain of
   // one, so execute's "skip this target and let a sibling serve" path has no
   // sibling to fall to and must still surface the real reason.
-  const res = await handleChatCompletions(chatRequest(directBody('xai:grok-4.5'), apiKey))
+  const res = await handleChatCompletions(chatRequest(directBody('xai/grok-4.5'), apiKey))
   const json = await res.json()
 
   expect(res.status).toBe(501)
@@ -110,7 +110,7 @@ test('answers 404 for a model the provider’s catalog does not list', async () 
   const chat = vi.fn()
 
   const res = await handleChatCompletions(
-    chatRequest(directBody('xai:grok-9'), apiKey),
+    chatRequest(directBody('xai/grok-9'), apiKey),
     fakeAdapterDeps({ chat }),
   )
   const json = await res.json()

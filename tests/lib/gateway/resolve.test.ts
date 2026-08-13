@@ -93,11 +93,11 @@ test('throws 503 when a model exists but has no usable targets', async () => {
   })
 })
 
-test('routes `provider:model` straight to that provider’s catalog model', async () => {
+test('routes `provider/model` straight to that provider’s catalog model', async () => {
   const { fast } = await seed()
   await db.insert(catalogModels).values({ providerId: fast.id, modelId: 'grok-4.5' })
 
-  const { candidates } = await resolveModel('fast-provider:grok-4.5')
+  const { candidates } = await resolveModel('fast-provider/grok-4.5')
 
   expect(candidates).toHaveLength(1)
   expect(candidates[0].provider.id).toBe(fast.id)
@@ -108,7 +108,7 @@ test('gives a direct address a single-attempt failover chain', async () => {
   const { fast } = await seed()
   await db.insert(catalogModels).values({ providerId: fast.id, modelId: 'grok-4.5' })
 
-  const { model } = await resolveModel('fast-provider:grok-4.5')
+  const { model } = await resolveModel('fast-provider/grok-4.5')
 
   // There is only ever one candidate, so the policy must not be one that
   // reads a round-robin cursor or rolls dice against an empty pool.
@@ -116,27 +116,27 @@ test('gives a direct address a single-attempt failover chain', async () => {
   expect(model.maxAttempts).toBe(1)
 })
 
-test('splits on the first colon so colons inside a model id survive', async () => {
+test('splits on the first slash so slashes inside a model id survive', async () => {
   const { fast } = await seed()
   await db.insert(catalogModels).values({
-    providerId: fast.id, modelId: 'ft:gpt-4o:acme::abc123',
+    providerId: fast.id, modelId: 'meta-llama/Llama-3-70b',
   })
 
-  const { candidates } = await resolveModel('fast-provider:ft:gpt-4o:acme::abc123')
+  const { candidates } = await resolveModel('fast-provider/meta-llama/Llama-3-70b')
 
-  expect(candidates[0].upstreamModel).toBe('ft:gpt-4o:acme::abc123')
+  expect(candidates[0].upstreamModel).toBe('meta-llama/Llama-3-70b')
 })
 
 test('prefers a virtual model over a direct address of the same name', async () => {
   const { fast } = await seed()
   await db.insert(catalogModels).values({ providerId: fast.id, modelId: 'grok-4.5' })
   const [shadow] = await db.insert(virtualModels)
-    .values({ name: 'fast-provider:grok-4.5' }).returning()
+    .values({ name: 'fast-provider/grok-4.5' }).returning()
   await db.insert(routeTargets).values({
     virtualModelId: shadow.id, providerId: fast.id, upstreamModel: 'shadowed-1',
   })
 
-  const { candidates } = await resolveModel('fast-provider:grok-4.5')
+  const { candidates } = await resolveModel('fast-provider/grok-4.5')
 
   expect(candidates.map((c) => c.upstreamModel)).toEqual(['shadowed-1'])
 })
@@ -149,13 +149,13 @@ test('routes a direct address whose catalog row is marked missing', async () => 
 
   // A bad sync day marks rows missing rather than deleting them; that must
   // not take a real model off the air.
-  const { candidates } = await resolveModel('fast-provider:grok-4.5')
+  const { candidates } = await resolveModel('fast-provider/grok-4.5')
   expect(candidates[0].upstreamModel).toBe('grok-4.5')
 })
 
 test('throws 404 when the provider prefix is unknown', async () => {
   await seed()
-  await expect(resolveModel('nope-provider:grok-4.5')).rejects.toMatchObject({
+  await expect(resolveModel('nope-provider/grok-4.5')).rejects.toMatchObject({
     status: 404, code: 'model_not_found', param: 'model',
   })
 })
@@ -164,7 +164,7 @@ test('throws 404 when the provider does not serve that model', async () => {
   const { fast } = await seed()
   await db.insert(catalogModels).values({ providerId: fast.id, modelId: 'grok-4.5' })
 
-  await expect(resolveModel('fast-provider:grok-9')).rejects.toMatchObject({
+  await expect(resolveModel('fast-provider/grok-9')).rejects.toMatchObject({
     status: 404, code: 'model_not_found', param: 'model',
   })
 })
@@ -173,7 +173,7 @@ test('does not match a catalog model on another provider', async () => {
   const { fast, slow } = await seed()
   await db.insert(catalogModels).values({ providerId: slow.id, modelId: 'grok-4.5' })
 
-  await expect(resolveModel('fast-provider:grok-4.5')).rejects.toMatchObject({
+  await expect(resolveModel('fast-provider/grok-4.5')).rejects.toMatchObject({
     status: 404, code: 'model_not_found',
   })
   expect(fast.id).not.toBe(slow.id)
@@ -184,7 +184,7 @@ test('throws 503 when the addressed provider is disabled', async () => {
   await db.insert(catalogModels).values({ providerId: slow.id, modelId: 'grok-4.5' })
   await db.update(providers).set({ enabled: false }).where(eq(providers.id, slow.id))
 
-  await expect(resolveModel('slow-provider:grok-4.5')).rejects.toMatchObject({
+  await expect(resolveModel('slow-provider/grok-4.5')).rejects.toMatchObject({
     status: 503, code: 'no_targets_available',
   })
 })

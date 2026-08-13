@@ -20,7 +20,7 @@ export interface Candidate {
 }
 
 export interface ResolvedModel {
-  // Only the fields selection reads, so a direct `provider:model` address can
+  // Only the fields selection reads, so a direct `provider/model` address can
   // synthesize one without inventing a whole virtual_models row.
   model: SelectableModel
   candidates: Candidate[]
@@ -40,18 +40,18 @@ function modelNotFound(name: string): GatewayError {
  * Resolves the `model` field of a request to the chain of targets to try.
  *
  * A name is first looked up as a virtual model. Only if that misses does a
- * name containing a colon get read as a direct `provider:model` address — so
- * naming a virtual model `openai:gpt-5` shadows the direct route rather than
+ * name containing a slash get read as a direct `provider/model` address — so
+ * naming a virtual model `openai/gpt-5` shadows the direct route rather than
  * being unreachable behind it.
  */
 export async function resolveModel(name: string): Promise<ResolvedModel> {
   const virtual = await findVirtualModel(name)
   if (virtual) return virtual
 
-  const colon = name.indexOf(':')
-  // Split on the FIRST colon: provider names have none, and model ids very
-  // much do (`ft:gpt-4o:acme::abc123`), so everything after it is the model.
-  if (colon > 0) return resolveDirect(name, name.slice(0, colon), name.slice(colon + 1))
+  const slash = name.indexOf('/')
+  // Split on the FIRST slash: provider names have none, and model ids very
+  // much do (`meta-llama/Llama-3-70b`), so everything after it is the model.
+  if (slash > 0) return resolveDirect(name, name.slice(0, slash), name.slice(slash + 1))
 
   throw modelNotFound(name)
 }
@@ -100,7 +100,7 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
 }
 
 /**
- * Routes `provider:model` to a single catalog entry on that provider.
+ * Routes `provider/model` to a single catalog entry on that provider.
  *
  * The catalog is the allow-list: only a model the provider has actually been
  * seen to serve (or that an admin added by hand) can be addressed this way,
