@@ -48,6 +48,19 @@ test('cached tokens fall back to the input rate when the catalog has no cached p
   expect(cost?.totalUsd).toBe('2.000000000')
 })
 
+test('cached tokens beyond the reported prompt count are clamped, not overbilled', () => {
+  const cost = computeCost(
+    { inputPerMtok: '1.000000', cachedInputPerMtok: '0.250000', outputPerMtok: '0' },
+    usage({ promptTokens: 100, cachedTokens: 150, completionTokens: 0 }),
+  )
+  // Cached is a subset of prompt, so a provider reporting more cached than
+  // prompt tokens can only mean the whole prompt was cached — 100 tokens at
+  // the cached rate, nothing at the full input rate.
+  expect(cost?.inputUsd).toBe('0.000000000')
+  expect(cost?.cachedUsd).toBe('0.000025000')
+  expect(cost?.totalUsd).toBe('0.000025000')
+})
+
 test('a sub-micro-dollar request keeps its value instead of rounding to zero', () => {
   const cost = computeCost(
     { inputPerMtok: '0.100000', cachedInputPerMtok: null, outputPerMtok: '0' },
@@ -73,6 +86,21 @@ test('no usage means unpriced', () => {
     { inputPerMtok: '1.000000', cachedInputPerMtok: null, outputPerMtok: '1.000000' },
     usage({ promptTokens: null, completionTokens: null }),
   )).toBeNull()
+})
+
+test('one side missing means unpriced, not half a price', () => {
+  const prices = { inputPerMtok: '1.000000', cachedInputPerMtok: null, outputPerMtok: '1.000000' }
+  expect(computeCost(prices, usage({ promptTokens: null, completionTokens: 500 }))).toBeNull()
+  expect(computeCost(prices, usage({ promptTokens: 500, completionTokens: null }))).toBeNull()
+})
+
+test('a measured zero on one side still prices normally', () => {
+  const cost = computeCost(
+    { inputPerMtok: '1.000000', cachedInputPerMtok: null, outputPerMtok: '1.000000' },
+    usage({ promptTokens: 500, completionTokens: 0 }),
+  )
+  expect(cost).not.toBeNull()
+  expect(cost?.outputUsd).toBe('0.000000000')
 })
 
 test('the snapshot records the rates actually used', () => {
