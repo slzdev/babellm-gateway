@@ -117,7 +117,7 @@ test('an unknown reasoning_effort asks for no thinking config', () => {
 })
 
 test('requestReasoningSummary asks for thoughts without a level', () => {
-  const result = toGeminiRequest(base, 'gemini-2.5-flash', new Map(), {
+  const result = toGeminiRequest(base, 'gemini-2.5-flash', {
     requestReasoningSummary: true,
   })
   expect(result.config?.thinkingConfig).toEqual({ includeThoughts: true })
@@ -209,6 +209,16 @@ test('a content part Gemini cannot carry is reported', () => {
     ...base,
     messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: 'x' } }] }],
   } as ChatCompletionRequest)).toEqual(['unsupported_content_part'])
+})
+
+test('a video part is carried rather than reported as unsupported', () => {
+  expect(droppedParams({
+    ...base,
+    messages: [{
+      role: 'user',
+      content: [{ type: 'video_url', video_url: { url: 'https://example.com/clip.mp4' } }],
+    }],
+  } as ChatCompletionRequest)).toEqual([])
 })
 
 test('an unknown reasoning_effort is reported', () => {

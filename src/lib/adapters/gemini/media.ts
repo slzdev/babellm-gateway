@@ -1,41 +1,71 @@
-import type { GoogleGenAI, Part } from '@google/genai'
-import type { ChatMessage } from '@/lib/schemas/chat'
-import type { MediaParts } from '@/lib/translate/chat-to-gemini'
+import type { Part } from '@google/genai'
+import { ProviderError } from '@/lib/gateway/errors'
 
-/** Gemini's own inline request limit, which an upload body should not exceed. */
-const DEFAULT_MAX_BYTES = 20 * 1024 * 1024
-
-/** URIs Gemini already accepts by reference, so they need no upload. */
-const FILE_URI = /^(gs:\/\/|https:\/\/generativelanguage\.googleapis\.com\/)/
+/**
+ * URIs Gemini resolves by itself, from its own storage, and which already carry
+ * a type server-side — so no mimeType is derived for them.
+ */
+const OWNED_URI = /^(gs:\/\/|https:\/\/generativelanguage\.googleapis\.com\/)/
 
 const DATA_URI = /^data:([^;,]+)(;base64)?,([\s\S]*)$/
 
-export interface MediaDeps {
-  client: Pick<GoogleGenAI, 'files'>
-  signal: AbortSignal
-  requestId: string
-  /** Injected by tests; production passes nothing and gets global fetch. */
-  fetchImpl?: typeof fetch
-  maxBytes?: number
+/**
+ * Extension to MIME type, covering what Gemini documents as accepted for URL
+ * input. The map exists because `fileData` requires a mimeType next to the uri
+ * — an empty one is a documented 400 — while a Chat Completions content part
+ * carries only a url. A caller who has a url this cannot type can say so
+ * directly with `mime_type` on the part.
+ */
+const MIME_BY_EXTENSION: Record<string, string> = {
+  // Images
+  bmp: 'image/bmp',
+  gif: 'image/gif',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  // Videos
+  '3gp': 'video/3gpp',
+  '3gpp': 'video/3gpp',
+  avi: 'video/avi',
+  flv: 'video/x-flv',
+  mov: 'video/quicktime',
+  mp4: 'video/mp4',
+  mpeg: 'video/mpeg',
+  mpg: 'video/mpg',
+  webm: 'video/webm',
+  wmv: 'video/wmv',
 }
 
-/** Every distinct image url in the request, in first-seen order. */
-export function imageUrls(messages: ChatMessage[]): string[] {
-  const urls: string[] = []
-  for (const message of messages) {
-    if (!Array.isArray(message.content)) continue
-    for (const part of message.content) {
-      if (part.type !== 'image_url') continue
-      const url = (part as { image_url?: { url?: unknown } }).image_url?.url
-      if (typeof url === 'string' && url.length > 0 && !urls.includes(url)) urls.push(url)
-    }
-  }
-  return urls
+export type MediaKind = 'image' | 'video'
+
+/**
+ * A url with its query string and fragment removed. Both are stripped before
+ * the extension is read — a pre-signed S3 or Azure url carries `?X-Amz-...`
+ * after the object key — and this is also the only form of a url that reaches
+ * an error message, because the query string of a pre-signed url is a usable
+ * credential that must not be echoed back to a caller or into a log.
+ */
+function withoutQuery(url: string): string {
+  return url.split(/[?#]/)[0]
 }
 
-function inlinePart(url: string): Part | null {
+function badRequest(message: string): ProviderError {
+  return new ProviderError({ status: 400, code: 'invalid_media', message, retryable: false })
+}
+
+function extensionMime(url: string): string | null {
+  const match = /\.([a-z0-9]+)$/i.exec(withoutQuery(url))
+  return match ? (MIME_BY_EXTENSION[match[1].toLowerCase()] ?? null) : null
+}
+
+function inlinePart(url: string): Part {
   const match = DATA_URI.exec(url)
-  if (!match) return null
+  // Only reached for a url that already matched `data:`, so a failure here is a
+  // malformed one rather than a different scheme.
+  if (!match) throw badRequest('a data: URI could not be parsed')
 
   const [, mimeType, base64, payload] = match
   try {
@@ -47,131 +77,40 @@ function inlinePart(url: string): Part | null {
 
     return { inlineData: { mimeType, data } }
   } catch {
-    return null
+    throw badRequest(`the ${mimeType} data: URI could not be decoded`)
   }
 }
 
 /**
- * Reads the body while counting, rather than trusting Content-Length: a server
- * that lies about it — or omits it — would otherwise let an unbounded body into
- * memory.
+ * Turns one client-supplied media url into the Part Gemini expects.
+ *
+ * Gemini accepts a public https or pre-signed url directly in `fileData`, so
+ * nothing here fetches, uploads, or waits: the gateway never dereferences a
+ * caller's url, which is what keeps this free of the SSRF surface and the
+ * host-allowlist question that fetching one would raise. The retrieval, and
+ * any failure of it, belongs to Google.
+ *
+ * A url that cannot be typed fails the whole request rather than being dropped
+ * silently — a 400, and non-retryable, so the failover loop does not re-offer
+ * the same unusable url to every remaining target.
  */
-async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> {
-  const reader = res.body?.getReader()
-  if (!reader) throw new Error('the image response carried no body')
+export function mediaPart(url: string, kind: MediaKind, mimeType?: string): Part {
+  if (url.startsWith('data:')) return inlinePart(url)
 
-  const chunks: Uint8Array[] = []
-  let total = 0
-
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > maxBytes) {
-      await reader.cancel()
-      throw new Error(`the image is over the ${maxBytes} byte limit`)
-    }
-    chunks.push(value)
+  if (OWNED_URI.test(url)) {
+    return { fileData: { fileUri: url, ...(mimeType ? { mimeType } : {}) } }
   }
 
-  const body = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    body.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return body
-}
-
-async function uploadedPart(url: string, deps: MediaDeps): Promise<Part> {
-  const fetchImpl = deps.fetchImpl ?? fetch
-  // Redirects are followed by default. That is fine today — nothing here is
-  // host-restricted yet — but whoever adds the host allowlist this ingress
-  // needs must also set `redirect: 'manual'` and re-check each hop, or the
-  // allowlist can be defeated by a redirect to an unlisted host.
-  const res = await fetchImpl(url, { signal: deps.signal })
-  if (!res.ok) throw new Error(`fetching it returned ${res.status}`)
-
-  const mimeType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
-  if (!mimeType.startsWith('image/')) {
-    throw new Error(`expected an image, got "${mimeType || 'no content type'}"`)
+  const resolved = mimeType ?? extensionMime(url)
+  if (!resolved) {
+    throw badRequest(
+      `cannot determine the media type of ${withoutQuery(url)} — give it a known file extension, or set mime_type on the content part`,
+    )
   }
 
-  const body = await readCapped(res, deps.maxBytes ?? DEFAULT_MAX_BYTES)
-
-  const file = await deps.client.files.upload({
-    file: new Blob([body as BlobPart], { type: mimeType }),
-    config: { mimeType, abortSignal: deps.signal },
-  })
-
-  // Images come back ACTIVE immediately, so `file.state` is not polled; the
-  // wait would only pay off for the video and audio inputs this ingress cannot
-  // carry anyway.
-  if (!file.uri) throw new Error('the upload returned no file uri')
-
-  return { fileData: { fileUri: file.uri, mimeType: file.mimeType ?? mimeType } }
-}
-
-function warn(requestId: string, url: string, err: unknown): void {
-  const reason = err instanceof Error ? err.message : String(err)
-  // A pre-signed URL (S3, GCS, Azure SAS) carries its credential in the query
-  // string, so this must never log past the `?` — doing so would write a
-  // usable capability into stdout logs.
-  const safeUrl = url.split('?')[0]
-  console.warn(`[gemini] request_id=${requestId} dropped image ${safeUrl}: ${reason}`)
-}
-
-/**
- * Resolves every image in a request to something Gemini accepts, before any
- * translation runs. This is the only I/O on the translation path, and it lives
- * here precisely so `chat-to-gemini.ts` can stay pure and synchronous.
- *
- * A url that cannot be resolved is left out of the map, which the translator
- * reads as "omit this part". Failing the whole request over one unreachable
- * image would contradict the compatibility stance the layer is built on. It is
- * logged rather than reported through `x-babellm-dropped-params`, because that
- * header is computed from the request body before any attempt runs.
- *
- * Resolution is sequential rather than concurrent: a request carrying enough
- * images for that to matter is already the exception, and serial failures
- * produce log lines in a stable order.
- *
- * The one failure not swallowed is an aborted signal: it propagates so the
- * caller's own abort classification handles it, rather than being logged as
- * a dropped image.
- */
-export async function resolveMedia(
-  messages: ChatMessage[],
-  deps: MediaDeps,
-): Promise<MediaParts> {
-  const resolved: MediaParts = new Map()
-
-  for (const url of imageUrls(messages)) {
-    if (url.startsWith('data:')) {
-      const part = inlinePart(url)
-      if (part) resolved.set(url, part)
-      else warn(deps.requestId, url, new Error('the data: URI could not be parsed'))
-      continue
-    }
-
-    if (FILE_URI.test(url)) {
-      resolved.set(url, { fileData: { fileUri: url } })
-      continue
-    }
-
-    try {
-      resolved.set(url, await uploadedPart(url, deps))
-    } catch (err) {
-      // A client disconnect or attempt timeout mid-fetch surfaces here as an
-      // AbortError too, and swallowing it would log a misleading "dropped
-      // image" for what is actually a timeout, then spend a pointless
-      // upstream call before the aborted signal fails it anyway. Re-throwing
-      // is safe: resolveMedia already runs inside the same try block that
-      // classifies upstream errors, so this becomes the 504 it should be.
-      if (deps.signal.aborted) throw err
-      warn(deps.requestId, url, err)
-    }
+  if (!resolved.startsWith(`${kind}/`)) {
+    throw badRequest(`${withoutQuery(url)} is ${resolved}, which is not a ${kind}`)
   }
 
-  return resolved
+  return { fileData: { fileUri: url, mimeType: resolved } }
 }

@@ -11,18 +11,20 @@ import {
   type Part,
   type ToolConfig,
 } from '@google/genai'
+import { mediaPart, type MediaKind } from '@/lib/adapters/gemini/media'
+import { ProviderError } from '@/lib/gateway/errors'
 import type { ChatCompletion, ChatCompletionChunk, ProviderConfig } from '@/lib/adapters/types'
 import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
 
 /**
- * Image parts already resolved to something Gemini accepts, keyed by the
- * client's original `image_url.url`. Built by `adapters/gemini/media.ts`,
- * because resolving one can mean a network fetch and an upload — the only I/O
- * this translation needs, and the reason it is done before translation rather
- * than during it. A url absent from the map could not be resolved; the part is
- * left out rather than failing the request.
+ * The media part types this translation carries, and the kind each denotes. A
+ * Map rather than an object literal because the key is untrusted client input:
+ * an object would answer to `constructor` and every other Object prototype key.
  */
-export type MediaParts = Map<string, Part>
+const MEDIA_PARTS = new Map<string, MediaKind>([
+  ['image_url', 'image'],
+  ['video_url', 'video'],
+])
 
 function textOf(content: ChatMessage['content']): string {
   if (typeof content === 'string') return content
@@ -33,7 +35,7 @@ function textOf(content: ChatMessage['content']): string {
     .join('')
 }
 
-function userParts(content: ChatMessage['content'], media: MediaParts): Part[] {
+function userParts(content: ChatMessage['content']): Part[] {
   if (typeof content === 'string') return content.length > 0 ? [{ text: content }] : []
   if (!content) return []
 
@@ -42,11 +44,35 @@ function userParts(content: ChatMessage['content'], media: MediaParts): Part[] {
     if (part.type === 'text') {
       const { text } = part as { text: string }
       if (text.length > 0) parts.push({ text })
-    } else if (part.type === 'image_url') {
-      const { url } = (part as { image_url: { url: string } }).image_url
-      const resolved = media.get(url)
-      if (resolved) parts.push(resolved)
+      continue
     }
+
+    const kind = MEDIA_PARTS.get(part.type)
+    if (kind) {
+      // Gemini takes a public or pre-signed url by reference, so this needs no
+      // I/O and the translation stays pure. An unusable url throws from here,
+      // which is deliberate: a request naming media the gateway cannot express
+      // is a request whose answer would silently ignore what it was asked about.
+      const media = (part as Record<string, { url?: unknown; mime_type?: unknown } | undefined>)[
+        part.type
+      ]
+      // The schema's media shapes require a url, but a part that fails them
+      // still parses through the catch-all member of the content union, so it
+      // arrives here with the type of a media part and none of the substance.
+      const url = media?.url
+      const mimeType = media?.mime_type
+      if (typeof url !== 'string' || url.length === 0) {
+        throw new ProviderError({
+          status: 400,
+          code: 'invalid_media',
+          message: `a ${part.type} content part carries no url`,
+          retryable: false,
+        })
+      }
+      parts.push(mediaPart(url, kind, typeof mimeType === 'string' ? mimeType : undefined))
+      continue
+    }
+
     // Audio and every other part type has no Gemini equivalent reachable from
     // this ingress. droppedParams reports it; failing here would contradict the
     // compatibility decision the whole module is built on.
@@ -93,7 +119,6 @@ function toResponsePayload(text: string): Record<string, unknown> {
 
 export function toContents(
   messages: ChatMessage[],
-  media: MediaParts,
 ): { contents: Content[]; systemInstruction: string } {
   const names = toolNamesById(messages)
   const contents: Content[] = []
@@ -170,7 +195,7 @@ export function toContents(
       continue
     }
 
-    push('user', userParts(message.content, media))
+    push('user', userParts(message.content))
   }
 
   return { contents, systemInstruction: system.join('\n\n') }
@@ -249,10 +274,9 @@ function numberOf(req: ChatCompletionRequest, name: string): number | undefined 
 export function toGeminiRequest(
   req: ChatCompletionRequest,
   upstreamModel: string,
-  media: MediaParts = new Map(),
   config: ProviderConfig = {},
 ): GenerateContentParameters {
-  const { contents, systemInstruction } = toContents(req.messages, media)
+  const { contents, systemInstruction } = toContents(req.messages)
   const maxTokens = req.max_completion_tokens ?? req.max_tokens ?? undefined
   const stopSequences = toStopSequences(req.stop)
   const toolConfig = toToolConfig(req.tool_choice)
@@ -390,7 +414,7 @@ export function droppedParams(req: ChatCompletionRequest): string[] {
     req.messages.some(
       (m) =>
         Array.isArray(m.content) &&
-        m.content.some((part) => part.type !== 'text' && part.type !== 'image_url'),
+        m.content.some((part) => part.type !== 'text' && !MEDIA_PARTS.has(part.type)),
     )
   ) {
     dropped.push('unsupported_content_part')

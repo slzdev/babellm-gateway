@@ -14,7 +14,6 @@ import type {
 } from '../types'
 import { createGeminiClient, listModels, type GeminiClientFactory } from './client'
 import { toProviderError } from './errors'
-import { resolveMedia } from './media'
 
 // Re-exported because tests and the registry import the factory type from the
 // adapter module rather than reaching past it.
@@ -34,26 +33,21 @@ export function createGeminiAdapter(
   const client = createGeminiClient(runtime, createClient)
 
   /**
-   * Media resolution is the one part of building a request that does I/O, so it
-   * happens here rather than inside the translator, which stays pure.
+   * Gemini takes a caller's media url by reference, so building a request needs
+   * no I/O of its own and this stays a thin wrapper over the pure translator.
    */
-  async function upstreamParams(
+  function upstreamParams(
     req: ChatCompletionRequest,
     ctx: AttemptContext,
-  ): Promise<GenerateContentParameters> {
-    const media = await resolveMedia(req.messages, {
-      client,
-      signal: ctx.signal,
-      requestId: ctx.requestId,
-    })
-    const params = toGeminiRequest(req, ctx.upstreamModel, media, runtime.config)
+  ): GenerateContentParameters {
+    const params = toGeminiRequest(req, ctx.upstreamModel, runtime.config)
     return { ...params, config: { ...params.config, abortSignal: ctx.signal } }
   }
 
   return {
     async chat(req, ctx): Promise<ChatCompletion> {
       try {
-        const result = await client.models.generateContent(await upstreamParams(req, ctx))
+        const result = await client.models.generateContent(upstreamParams(req, ctx))
         return fromGenerateContent(result, ctx.upstreamModel)
       } catch (err) {
         throw toProviderError(err)
@@ -67,7 +61,7 @@ export function createGeminiAdapter(
       // loop already interpreted.
       let stream: AsyncGenerator<GenerateContentResponse>
       try {
-        stream = await client.models.generateContentStream(await upstreamParams(req, ctx))
+        stream = await client.models.generateContentStream(upstreamParams(req, ctx))
       } catch (err) {
         throw toProviderError(err)
       }

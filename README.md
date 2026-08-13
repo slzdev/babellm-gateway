@@ -334,8 +334,32 @@ is, because Gemini has no way to honour it. A `tool` message whose
 `tool_call_id` cannot be resolved to a function name is carried as a `user`
 message reading `[tool result] <content>` and reports
 `unmatched_tool_call_id`; an assistant tool call whose arguments are not valid
-JSON reports `malformed_tool_arguments`; a content part that is neither text
-nor an image (audio, for instance) reports `unsupported_content_part`.
+JSON reports `malformed_tool_arguments`; a content part that is none of text,
+`image_url`, or `video_url` (audio, for instance) reports
+`unsupported_content_part`.
+
+### Images and video
+
+Gemini accepts a caller's media by reference, so an `image_url` or `video_url`
+part is passed straight through as its `fileData.fileUri` — the gateway never
+downloads it. Public HTTPS and pre-signed URLs (S3, GCS, Azure SAS) both work,
+and a `data:` URI is still inlined. Note that external URL input requires
+Gemini 2.5 or newer; an older model will reject it upstream.
+
+Gemini requires a MIME type alongside the URL, which a Chat Completions part
+does not carry, so it is derived from the URL's file extension. For a URL that
+has no usable extension, name it on the part:
+
+```json
+{ "type": "video_url",
+  "video_url": { "url": "https://cdn.example.com/v/9f2b", "mime_type": "video/mp4" } }
+```
+
+`mime_type` is an extension to the OpenAI schema and is accepted on `image_url`
+too. A media URL whose type cannot be determined, or whose type contradicts the
+part it appears in, fails the request with a `400` rather than being dropped —
+answering a question about a video the model never received is worse than
+refusing it.
 
 ### Endpoint paths
 
@@ -431,15 +455,14 @@ policy-driven routing across every route target. Everything below is
 - **No Bedrock adapter, no `/v1/models`, no `/v1/embeddings`** (Phase 3).
   Configuring a `bedrock` provider is accepted by the dashboard but every
   request to it returns `501 unsupported_operation`.
-- **A Gemini provider fetches remote images on a caller's behalf.** Chat
-  Completions carries images as URLs; Gemini does not accept them, so the
-  gateway downloads any `image_url` that is not a `data:` URI and uploads it to
-  the Files API. The fetch is capped at 20 MB, bounded by the request timeout,
-  and refuses non-image content types — but it is not restricted to an
-  allowlist of hosts. A caller who can reach the gateway can make it issue a GET
-  to any URL it can route to. Resolution happens fresh on every failover
-  attempt, so a chain of Gemini targets fetches and re-uploads each image once
-  per target rather than once per request.
+- **A Gemini provider hands caller-supplied media URLs to Google.** An
+  `image_url` or `video_url` is forwarded by reference rather than downloaded,
+  so a pre-signed URL and whatever credential its query string carries are
+  passed to Google to dereference. Retrieval failures — unreachable, behind a
+  login, or refused by Google's content-moderation check on the URL — surface
+  as an upstream error rather than a gateway one. Media on a Gemini target
+  older than 2.5 fails upstream, because external URL input is not supported
+  there.
 - **No cost computation, price table, opt-in payload logging, or retention
   pruning** (Phase 4). `cost_usd` is always null.
 
