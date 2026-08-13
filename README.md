@@ -192,6 +192,62 @@ provider — sync a provider before addressing its models directly. A model whos
 catalog row is marked *missing* still routes; a disabled provider answers
 `503 no_targets_available`.
 
+### API flavor
+
+Some OpenAI-compatible providers serve `/v1/responses` but not
+`/v1/chat/completions`. Each `openai` or `openai_compatible` provider therefore
+carries an **API flavor** — `Chat Completions` (the default) or `Responses` —
+set on the Providers page. The gateway's own endpoint does not change: clients
+always call `/v1/chat/completions`, and a Responses-flavored provider is
+translated in both directions. A single virtual model can mix the two, and
+failover crosses between them freely.
+
+A few things to know before pointing production traffic at a Responses
+provider:
+
+- **`n` and `stop` are silently ineffective.** The Responses API cannot
+  express them, and the gateway drops unmappable parameters rather than
+  rejecting requests that would otherwise work. Asking for `n: 3` returns one
+  choice, and `stop` sequences do not apply. A dropped parameter that changes
+  the answer is named in the `x-babellm-dropped-params` response header and in
+  the request log line — `logit_bias`, `logprobs`, `top_logprobs`,
+  `frequency_penalty`, `presence_penalty` and `seed` are dropped the same way,
+  as is an `input_audio` content part (reported as `audio_content`). Sending
+  `n: 1`, `frequency_penalty: 0`, `presence_penalty: 0`, `stop: []`,
+  `logprobs: false`, or `logit_bias: {}` is **not** reported — those values
+  already match what the Responses API does on its own, and reporting them
+  would put a line in the header on nearly every request and bury the cases
+  that actually change the answer. An absent header therefore means "nothing
+  that would change the answer was dropped," not "nothing was dropped."
+- **The deprecated functions API is not structurally supported.** A
+  `role: 'function'` message carries only a `name` and no call id, so it
+  cannot become a `function_call_output` the way a `role: 'tool'` message can.
+  The gateway instead carries the result through as a `user` message reading
+  `[function result: <name>] <content>` — `user`, not `developer`, because the
+  content is third-party data and `developer` is a high-authority instruction
+  channel — and reports `legacy_function_message` in the dropped-params
+  header. Use `tools` and `tool_call_id` instead.
+- **A `tool` message without a `tool_call_id` is carried the same way.**
+  `tool_call_id` is optional in the request schema, so a valid request can
+  omit it; emitting a `function_call_output` with a fabricated `call_id`
+  would send a dangling reference upstream, so the result is carried as a
+  `user` message reading `[tool result] <content>` instead, and reports
+  `tool_message_without_call_id` in the dropped-params header.
+- **Reasoning travels one way.** Reasoning summaries are surfaced as
+  `message.reasoning_content` (and `delta.reasoning_content` when streaming) —
+  a de-facto convention rather than part of the OpenAI API — but are never fed
+  back upstream. Requests are stateless: `store` is always `false` and
+  `previous_response_id` is never sent. On models that expect their own
+  reasoning item before a function call, long tool loops may degrade.
+
+Summaries are requested only when the client sends `reasoning_effort`, because
+asking a non-reasoning model for them is an error. To request them regardless,
+set `requestReasoningSummary: true` in the provider's config.
+
+A provider on the wrong flavor fails fast in either direction: a `404` from the
+upstream, whichever flavor is misconfigured, comes back with the error naming
+the setting to change.
+
 Each settled request writes one JSON line to stdout: request id, key name,
 virtual model, status, outcome, latency, time-to-first-token for streams, and
 every attempt with its provider, upstream model, status and error. **That line
@@ -256,11 +312,14 @@ schema changes) and `pnpm db:migrate` (apply pending migrations).
 ## Not yet implemented
 
 Phases 1 and 2 cover the schema, admin auth, provider/virtual-model/key CRUD,
-the model catalog, the `openai` and `openai_compatible` adapters, and
-`/v1/chat/completions` with streaming, tool calling, and policy-driven routing
-across every route target. Everything below is **recorded but not yet acted
-on**, or not built at all:
+the model catalog, the `openai` and `openai_compatible` adapters in both API
+flavors, and `/v1/chat/completions` with streaming, tool calling, and
+policy-driven routing across every route target. Everything below is
+**recorded but not yet acted on**, or not built at all:
 
+- **No `/v1/responses` endpoint.** Responses-flavored *providers* are
+  supported; a Responses-shaped *client* is not. Everything enters through
+  `/v1/chat/completions`.
 - **Rate limits and spend budgets are enforced nowhere.** A key's
   `rpm_limit`, `tpm_limit`, `budget_monthly_usd`, and `budget_total_usd` can
   be set in the dashboard and are stored, but no request is ever rejected

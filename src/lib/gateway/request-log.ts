@@ -19,6 +19,11 @@ export interface RequestLogFields {
   /** Streaming only: time to the first chunk. */
   ttftMs?: number
   attempts: AttemptRecord[]
+  /**
+   * Parameters the winning target's protocol could not express. Empty for a
+   * Chat Completions target, which drops nothing.
+   */
+  droppedParams?: string[]
 }
 
 function level(fields: RequestLogFields): 'info' | 'warn' | 'error' {
@@ -49,6 +54,7 @@ export function buildRequestLog(fields: RequestLogFields): Record<string, unknow
     outcome: fields.outcome,
     latency_ms: fields.latencyMs,
     ...(fields.ttftMs === undefined ? {} : { ttft_ms: fields.ttftMs }),
+    ...(fields.droppedParams?.length ? { dropped_params: fields.droppedParams } : {}),
     attempts: fields.attempts.map((attempt) => ({
       n: attempt.n,
       provider: attempt.provider,

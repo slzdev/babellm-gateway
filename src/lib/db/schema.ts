@@ -20,6 +20,8 @@ export const modelKindEnum = pgEnum('model_kind', [
 
 export const syncStatusEnum = pgEnum('sync_status', ['ok', 'failed', 'unsupported'])
 
+export const apiFlavorEnum = pgEnum('api_flavor', ['chat_completions', 'responses'])
+
 export const providers = pgTable('providers', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull().unique(),
@@ -27,6 +29,10 @@ export const providers = pgTable('providers', {
   baseUrl: text('base_url'),
   credentials: text('credentials').notNull(),
   config: text('config').notNull().default('{}'),
+  // Which upstream protocol this provider speaks. A column rather than a
+  // `config` key because it decides whether a request can be served at all,
+  // which is the same class of fact as `adapter` and `base_url`.
+  apiFlavor: apiFlavorEnum('api_flavor').notNull().default('chat_completions'),
   enabled: boolean('enabled').notNull().default(true),
   lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
   lastSyncStatus: syncStatusEnum('last_sync_status'),

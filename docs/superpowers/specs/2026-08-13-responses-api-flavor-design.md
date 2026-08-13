@@ -194,9 +194,10 @@ The default makes the migration additive with no backfill; every existing row
 keeps its current behaviour.
 
 This is the fifth `pgEnum` in the schema. The SQLite design
-(`2026-08-13-sqlite-support-design.md`) maps enums to text columns with check
-constraints, so its enum inventory needs this one added. That is a one-line
-follow-up on that spec, not work in this phase.
+(`2026-08-13-sqlite-support-design.md`) maps every `pgEnum` to
+`text({ enum: [...] })` under one general rule rather than listing enums
+individually, so `api_flavor` needs no entry there and that spec is
+unaffected by this phase.
 
 ### 4.2 `src/lib/adapters/types.ts`
 
@@ -371,6 +372,7 @@ from Section 3.5.
 | `response.function_call_arguments.delta` | `delta.tool_calls[{index, function.arguments}]` |
 | `response.completed` / `response.incomplete` | final chunk with `finish_reason`, then a usage chunk unless `include_usage: false` |
 | `response.failed` | throw, so `toProviderError` classifies it |
+| `error` | throw, same as `response.failed` — it is a top-level stream event, not a response status, and a clone can emit it mid-stream instead of `response.failed`. Dropping it would end the stream cleanly, so a truncated answer would reach the client as a successful response. |
 
 Every other event is ignored: all `.done` events, `response.created`,
 `response.in_progress`, `response.queued`, `content_part.*`,
@@ -408,11 +410,16 @@ for a fact the client already has.
 `toProviderError` classifies `OpenAI.APIError`, which is the same class from
 both endpoints, so retryability, status mapping and failover need no changes.
 
-One addition: when a `chat_completions`-flavored provider returns `404`, the
-message is extended to name the flavor setting. A `404` is already fatal, so the
+One addition: when either flavor's provider returns `404`, the message is
+extended to name the flavor setting to change. A `404` is already fatal, so the
 request fails fast with the provider named in `x-babellm-provider`; the only
 thing missing is the hint. This converts the most likely configuration mistake
-from a mystery into an instruction.
+from a mystery into an instruction, in both directions — the dashboard's
+one-click flavor control makes the `responses`-set-on-a-Chat-Completions-only
+endpoint mistake exactly as reachable as the reverse, so the hint is
+symmetric: `src/lib/adapters/openai/index.ts` and
+`src/lib/adapters/openai/responses.ts` each carry their own `FLAVOR_HINT`
+constant naming the other flavor.
 
 ### 4.9 Admin UI
 
@@ -453,9 +460,10 @@ over to a Chat Completions provider and the client sees one coherent response.
 | Situation | Behaviour |
 |---|---|
 | Upstream `404` on a `chat_completions` provider | Fatal, with a message naming the flavor setting. |
-| Upstream `404` on a `responses` provider | Fatal, unchanged. |
+| Upstream `404` on a `responses` provider | Fatal, with a mirrored message naming the flavor setting — the dashboard makes this misconfiguration exactly as reachable as the other one. |
 | Upstream 429 / 5xx / timeout | Retryable; fails over, possibly onto the other flavor. |
 | `response.failed` mid-stream | Thrown, classified, surfaced as an SSE `error` event by `sse.ts`. |
+| `error` top-level stream event | Thrown, same as `response.failed`. |
 | Unmappable request parameter | Never an error. Dropped and reported. |
 | Hosted-tool output item | Never an error. Dropped and reported. |
 
@@ -550,5 +558,7 @@ Modified:
 - `src/app/(admin)/providers/{provider-form,edit-provider-form,page}.tsx`
 - `src/app/(admin)/providers/actions.ts`
 - `README.md` — flavor setting, `reasoning_content`, and the `n`/`stop` caveat
-- `docs/superpowers/specs/2026-08-13-sqlite-support-design.md` — one line adding
-  `api_flavor` to its enum inventory
+
+Not modified: `docs/superpowers/specs/2026-08-13-sqlite-support-design.md`. Its
+general `pgEnum` → `text({ enum: [...] })` rule already covers `api_flavor`;
+see §4.1.

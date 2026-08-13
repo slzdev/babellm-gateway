@@ -133,3 +133,22 @@ test('a failure to report the failure never escapes either', () => {
 
   expect(() => emitRequestLog(fields())).not.toThrow()
 })
+
+test('dropped parameters appear on the log line', () => {
+  const line = buildRequestLog({
+    requestId: 'req_1', key: 'k', model: 'm', stream: false,
+    status: 200, outcome: 'ok', latencyMs: 5, attempts: [],
+    droppedParams: ['n', 'stop'],
+  })
+
+  expect(line.dropped_params).toEqual(['n', 'stop'])
+})
+
+test('an empty dropped list is left off the log line entirely', () => {
+  const line = buildRequestLog({
+    requestId: 'req_1', key: 'k', model: 'm', stream: false,
+    status: 200, outcome: 'ok', latencyMs: 5, attempts: [], droppedParams: [],
+  })
+
+  expect(line).not.toHaveProperty('dropped_params')
+})

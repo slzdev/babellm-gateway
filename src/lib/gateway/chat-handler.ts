@@ -1,9 +1,10 @@
 import 'server-only'
 import { z } from 'zod'
-import { createAdapter as defaultCreateAdapter } from '@/lib/adapters/registry'
+import { createAdapter as defaultCreateAdapter, resolveApiFlavor } from '@/lib/adapters/registry'
 import type { ProviderAdapter } from '@/lib/adapters/types'
 import type { ProviderRow } from '@/lib/db/schema'
-import { chatCompletionRequestSchema } from '@/lib/schemas/chat'
+import { chatCompletionRequestSchema, type ChatCompletionRequest } from '@/lib/schemas/chat'
+import { droppedParams } from '@/lib/translate/chat-to-responses'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
 import { GatewayError, RoutedError, errorResponse } from './errors'
 import { execute, type AttemptRecord } from './execute'
@@ -46,11 +47,26 @@ async function parseBody(request: Request) {
   return result.data
 }
 
-export function attemptHeaders(candidate: Candidate, requestId: string): HeadersInit {
+/**
+ * Which request parameters the winning target could not express. Computed here
+ * rather than returned by the adapter: the alternative is a channel through
+ * ProviderAdapter, which would put translation-specific knowledge into the
+ * interface every future adapter implements.
+ */
+function droppedFor(candidate: Candidate, body: ChatCompletionRequest): string[] {
+  return resolveApiFlavor(candidate.provider) === 'responses' ? droppedParams(body) : []
+}
+
+export function attemptHeaders(
+  candidate: Candidate,
+  requestId: string,
+  dropped: string[] = [],
+): HeadersInit {
   return {
     'x-request-id': requestId,
     'x-babellm-provider': candidate.provider.name,
     'x-babellm-upstream-model': candidate.upstreamModel,
+    ...(dropped.length > 0 ? { 'x-babellm-dropped-params': dropped.join(',') } : {}),
   }
 }
 
@@ -66,6 +82,7 @@ export async function handleChatCompletions(
   let keyName: string | null = null
   let modelName: string | null = null
   let stream = false
+  let dropped: string[] = []
 
   function log(
     status: number,
@@ -83,6 +100,7 @@ export async function handleChatCompletions(
       latencyMs: Date.now() - startedAt,
       ...(ttftMs === undefined ? {} : { ttftMs }),
       attempts,
+      ...(dropped.length > 0 ? { droppedParams: dropped } : {}),
     })
   }
 
@@ -112,11 +130,12 @@ export async function handleChatCompletions(
       // execute resolves only once the first chunk is in hand, so this is
       // time-to-first-token without any plumbing into the stream itself.
       const ttftMs = Date.now() - startedAt
+      dropped = droppedFor(result.candidate, body)
 
       return sseResponse(
         result.value,
         identity,
-        attemptHeaders(result.candidate, requestId),
+        attemptHeaders(result.candidate, requestId, dropped),
         (outcome) => log(200, outcome, result.attempts, ttftMs),
       )
     }
@@ -124,10 +143,11 @@ export async function handleChatCompletions(
     const result = await execute(chain, requestId, request.signal, deps, (adapter, ctx) =>
       adapter.chat(body, ctx),
     )
+    dropped = droppedFor(result.candidate, body)
 
     log(200, 'ok', result.attempts)
     return Response.json(rewriteCompletion(result.value, identity), {
-      headers: attemptHeaders(result.candidate, requestId),
+      headers: attemptHeaders(result.candidate, requestId, dropped),
     })
   } catch (err) {
     const status = err instanceof GatewayError ? err.status : 500

@@ -2,13 +2,14 @@ import { db } from '@/lib/db'
 import { apiKeys, providers, routeTargets, virtualModels } from '@/lib/db/schema'
 import { encryptJson } from '@/lib/crypto'
 import { generateApiKey } from '@/lib/gateway/auth'
-import type { ProviderAdapter } from '@/lib/adapters/types'
+import type { ApiFlavor, ProviderAdapter } from '@/lib/adapters/types'
 
 export interface SeedOptions {
   virtualModel?: string
   upstreamModel?: string
   adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
   credentials?: Record<string, unknown>
+  apiFlavor?: ApiFlavor
 }
 
 export async function seedGateway(options: SeedOptions = {}) {
@@ -19,6 +20,7 @@ export async function seedGateway(options: SeedOptions = {}) {
     name: 'test-provider',
     adapter: options.adapter ?? 'openai',
     credentials: encryptJson(options.credentials ?? { apiKey: 'sk-upstream' }),
+    apiFlavor: options.apiFlavor ?? 'chat_completions',
   }).returning()
 
   const [model] = await db.insert(virtualModels).values({ name: virtualModel }).returning()
@@ -71,6 +73,7 @@ export interface TargetSpec {
   weight?: number
   enabled?: boolean
   adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
+  apiFlavor?: ApiFlavor
 }
 
 export interface SeedTargetsOptions {
@@ -98,6 +101,7 @@ export async function seedTargets(options: SeedTargetsOptions) {
       name: spec.name,
       adapter: spec.adapter ?? 'openai',
       credentials: encryptJson({ apiKey: `sk-${spec.name}` }),
+      apiFlavor: spec.apiFlavor ?? 'chat_completions',
     }).returning()
 
     const [target] = await db.insert(routeTargets).values({

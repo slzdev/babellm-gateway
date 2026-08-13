@@ -67,6 +67,10 @@ export const chatCompletionRequestSchema = z.looseObject({
   max_completion_tokens: z.number().int().positive().nullable().optional(),
   temperature: z.number().nullable().optional(),
   top_p: z.number().nullable().optional(),
+  // Typed as a free string rather than an enum: the translator only needs to
+  // know whether the client is addressing a reasoning model, and new effort
+  // tiers appear faster than this schema would be updated.
+  reasoning_effort: z.string().nullable().optional(),
   n: z.number().int().positive().nullable().optional(),
   stop: z.union([z.string(), z.array(z.string())]).nullable().optional(),
   seed: z.number().int().nullable().optional(),

@@ -155,3 +155,12 @@ test('accepts the legacy function role', () => {
   })
   expect(parsed.messages[0].role).toBe('function')
 })
+
+test('reasoning_effort is accepted', () => {
+  const parsed = chatCompletionRequestSchema.parse({
+    model: 'm',
+    messages: [{ role: 'user', content: 'hi' }],
+    reasoning_effort: 'high',
+  })
+  expect(parsed.reasoning_effort).toBe('high')
+})

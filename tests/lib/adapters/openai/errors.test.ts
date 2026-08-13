@@ -50,3 +50,33 @@ test('an already-mapped ProviderError passes through untouched', () => {
   const original = new ProviderError({ status: 429, message: 'slow down', retryable: true })
   expect(toProviderError(original)).toBe(original)
 })
+
+test('a 404 carries the flavor hint when one is supplied', () => {
+  const error = toProviderError(
+    new OpenAI.APIError(404, { message: 'Not Found' }, 'Not Found', undefined),
+    'try the responses flavor',
+  )
+
+  expect(error.status).toBe(404)
+  expect(error.message).toContain('Not Found')
+  expect(error.message).toContain('try the responses flavor')
+})
+
+test('a non-404 is left alone even when a hint is supplied', () => {
+  const error = toProviderError(
+    new OpenAI.APIError(401, { message: 'Unauthorized' }, 'Unauthorized', undefined),
+    'try the responses flavor',
+  )
+
+  expect(error.message).toContain('Unauthorized')
+  expect(error.message).not.toContain('try the responses flavor')
+})
+
+test('a 404 without a hint is unchanged', () => {
+  const error = toProviderError(
+    new OpenAI.APIError(404, { message: 'Not Found' }, 'Not Found', undefined),
+  )
+
+  expect(error.message).toContain('Not Found')
+  expect(error.message).not.toContain('try the responses flavor')
+})

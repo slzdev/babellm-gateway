@@ -13,7 +13,7 @@ const RETRYABLE_STATUSES = new Set([408, 409, 429])
  * This is the file every future adapter writes its own version of; the
  * gateway's own classifier is only a fallback for errors that escape one.
  */
-export function toProviderError(err: unknown): ProviderError {
+export function toProviderError(err: unknown, hint?: string): ProviderError {
   if (err instanceof ProviderError) return err
 
   if (err instanceof OpenAI.APIError) {
@@ -24,7 +24,11 @@ export function toProviderError(err: unknown): ProviderError {
       status: status ?? 502,
       code: err.code ?? null,
       ...(err.type ? { type: err.type } : {}),
-      message: err.message,
+      // A 404 from an OpenAI-shaped endpoint usually means the endpoint itself
+      // is absent rather than the model, which is the single most likely
+      // configuration mistake this gateway produces. The caller supplies the
+      // instruction; only the status decides whether it is relevant.
+      message: status === 404 && hint ? `${err.message}. ${hint}` : err.message,
       retryable,
     })
   }

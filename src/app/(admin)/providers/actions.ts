@@ -6,6 +6,7 @@ import {
   createProvider, deleteProvider, getProviderConfig, testProvider, updateProvider,
 } from '@/lib/admin/providers'
 import { adapterTypes, type AdapterType } from '@/lib/adapters/credentials'
+import { apiFlavors, type ApiFlavor } from '@/lib/adapters/types'
 import { parseRegistryNamespace } from '@/lib/catalog/config'
 import { syncProvider, type SyncResult } from '@/lib/catalog/sync'
 
@@ -36,6 +37,19 @@ function credentialsFrom(formData: FormData, adapter: AdapterType) {
   return entries
 }
 
+/**
+ * The flavor field is only rendered for OpenAI-shaped adapters, so an absent
+ * value means "not applicable" rather than "cleared" — createProvider defaults
+ * it and updateProvider keeps whatever is stored.
+ */
+function apiFlavorFrom(formData: FormData): ApiFlavor | undefined {
+  const value = formData.get('apiFlavor')
+  if (typeof value !== 'string') return undefined
+  return (apiFlavors as readonly string[]).includes(value)
+    ? (value as ApiFlavor)
+    : undefined
+}
+
 export async function createProviderAction(
   _prev: ActionState | undefined,
   formData: FormData,
@@ -63,6 +77,7 @@ export async function createProviderAction(
       credentials: credentialsFrom(formData, adapter),
       // Set at create time so the sync this action fires can already enrich.
       config: namespace ? { registryNamespace: namespace } : {},
+      apiFlavor: apiFlavorFrom(formData),
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not create the provider.' }
@@ -167,6 +182,7 @@ export async function updateProviderAction(
       // never sent the current secret, so a blank field cannot mean "erase".
       ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
       config,
+      apiFlavor: apiFlavorFrom(formData),
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not update the provider.' }

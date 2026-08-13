@@ -1,42 +1,27 @@
-import OpenAI, { type ClientOptions } from 'openai'
+import type OpenAI from 'openai'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
 import type {
   AttemptContext,
   ChatCompletion,
   ChatCompletionChunk,
-  DiscoveredModel,
-  ListModelsContext,
   ProviderAdapter,
   ProviderRuntime,
 } from '../types'
+import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { toProviderError } from './errors'
 
-export type OpenAIClientFactory = (opts: ClientOptions) => OpenAI
+// Re-exported because tests and the registry import the factory type from the
+// adapter module rather than reaching past it.
+export type { OpenAIClientFactory }
 
-const defaultFactory: OpenAIClientFactory = (opts) => new OpenAI(opts)
-
-interface OpenAICredentials {
-  apiKey?: string
-  organization?: string
-  project?: string
-}
+const FLAVOR_HINT =
+  'If this provider only implements the Responses API, set its API flavor to "responses" on the Providers page.'
 
 export function createOpenAIAdapter(
   runtime: ProviderRuntime,
-  createClient: OpenAIClientFactory = defaultFactory,
+  createClient?: OpenAIClientFactory,
 ): ProviderAdapter {
-  const credentials = runtime.credentials as OpenAICredentials
-  if (!credentials.apiKey) {
-    throw new Error(`Provider "${runtime.name}" is missing an apiKey credential.`)
-  }
-
-  const client = createClient({
-    apiKey: credentials.apiKey,
-    ...(runtime.baseUrl ? { baseURL: runtime.baseUrl } : {}),
-    ...(credentials.organization ? { organization: credentials.organization } : {}),
-    ...(credentials.project ? { project: credentials.project } : {}),
-    maxRetries: 0,
-  })
+  const client = createOpenAIClient(runtime, createClient)
 
   function upstreamParams(req: ChatCompletionRequest, ctx: AttemptContext) {
     return { ...req, model: ctx.upstreamModel }
@@ -52,7 +37,7 @@ export function createOpenAIAdapter(
       try {
         return await client.chat.completions.create(params, { signal: ctx.signal })
       } catch (err) {
-        throw toProviderError(err)
+        throw toProviderError(err, FLAVOR_HINT)
       }
     },
 
@@ -76,29 +61,16 @@ export function createOpenAIAdapter(
       try {
         stream = await client.chat.completions.create(params, { signal: ctx.signal })
       } catch (err) {
-        throw toProviderError(err)
+        throw toProviderError(err, FLAVOR_HINT)
       }
 
       try {
         for await (const chunk of stream) yield chunk
       } catch (err) {
-        throw toProviderError(err)
+        throw toProviderError(err, FLAVOR_HINT)
       }
     },
 
-    async listModels(ctx: ListModelsContext): Promise<DiscoveredModel[]> {
-      const page = await client.models.list({ signal: ctx.signal })
-      const models: DiscoveredModel[] = []
-
-      for await (const model of page) {
-        // Some openai_compatible clones return entries with no id at all.
-        if (typeof model?.id !== 'string' || model.id.length === 0) continue
-        // /v1/models reports id, created and owned_by — nothing the catalog
-        // can merge. Enrichment comes from the registry and seed layers.
-        models.push({ id: model.id, fields: {}, raw: model })
-      }
-
-      return models
-    },
+    listModels: (ctx) => listModels(client, ctx),
   }
 }

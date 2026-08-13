@@ -99,3 +99,20 @@ test('deleting a user leaves its keys with a null user_id', async () => {
   const [key] = await db.select().from(apiKeys)
   expect(key.userId).toBeNull()
 })
+
+test('a provider defaults to the chat_completions flavor', async () => {
+  const [row] = await db.insert(providers).values({
+    name: 'legacy', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
+  }).returning()
+
+  expect(row.apiFlavor).toBe('chat_completions')
+})
+
+test('a provider can be stored with the responses flavor', async () => {
+  const [row] = await db.insert(providers).values({
+    name: 'resp', adapter: 'openai_compatible', baseUrl: 'https://api.example/v1',
+    credentials: encryptJson({ apiKey: 'a' }), apiFlavor: 'responses',
+  }).returning()
+
+  expect(row.apiFlavor).toBe('responses')
+})
