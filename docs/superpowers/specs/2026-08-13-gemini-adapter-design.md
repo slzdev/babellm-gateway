@@ -369,11 +369,23 @@ says so plainly: a caller who can reach the gateway can make it issue a GET to
 any URL it can route to. An allowlist is the obvious follow-up if this is ever
 exposed to untrusted callers.
 
-A failed fetch or upload drops that one part and reports `image_fetch_failed`
-rather than failing the request — the same compatibility stance the whole
-translation layer is built on. Uploaded files expire on Google's own 48-hour
-schedule; the gateway does not delete them, because a delete racing a
-still-running generation would break it.
+A failed fetch or upload drops that one part rather than failing the request —
+the same compatibility stance the whole translation layer is built on — and
+emits a `[gemini]` warning carrying the request id.
+
+It cannot use the dropped-parameter report, and that is a structural fact
+rather than an oversight: `droppedParams` is derived from the request body in
+`chat-handler`, statically, before any attempt runs (section 3.12). A fetch
+failure is only knowable mid-attempt. Routing it into the header would mean
+giving `ProviderAdapter` a return channel for it, which is exactly the coupling
+that function's comment exists to prevent. So everything the report names is
+knowable from the body alone; runtime degradations go to the log.
+
+Uploaded files expire on Google's own 48-hour schedule; the gateway does not
+delete them, because a delete racing a still-running generation would break it.
+The upload response's `state` is not polled: images return `ACTIVE`
+immediately, and the polling loop would only pay off for the video and audio
+inputs this ingress cannot carry anyway.
 
 ### 3.12 Dropped-parameter reporting dispatches on adapter
 
@@ -427,7 +439,7 @@ Unit, no network:
 - `tests/lib/adapters/gemini/models.test.ts` — field extraction, `models/`
   stripping, embedding-vs-chat classification.
 - `tests/lib/adapters/gemini/media.test.ts` — all three cases plus
-  deduplication, the byte cap, and fetch failure reporting.
+  deduplication, the byte cap, and the drop-and-warn path on fetch failure.
 
 Integration, injected client:
 
