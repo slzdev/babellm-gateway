@@ -1,6 +1,8 @@
 import {
   boolean, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid,
+  varchar,
 } from 'drizzle-orm/pg-core'
+import { uuidv7 } from '@/lib/uuid'
 
 export const adapterEnum = pgEnum('adapter', [
   'openai', 'openai_compatible', 'gemini', 'bedrock',
@@ -160,6 +162,101 @@ export const settings = pgTable('settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+export const requestOutcomeEnum = pgEnum('request_outcome', [
+  'ok', 'error', 'client_closed', 'stream_interrupted',
+])
+
+/** One attempt against one route target. Structural, so schema.ts stays free
+ * of a dependency on the routing loop and the OpenAI SDK. Mirrors
+ * AttemptRecord in src/lib/gateway/execute.ts. */
+type LoggedAttempt = {
+  n: number
+  targetId: string
+  provider: string
+  model: string
+  status: number
+  latencyMs: number
+  error?: string
+}
+
+/** The per-Mtok rates used to price this request, snapshotted so a later
+ * catalog price edit cannot make historical arithmetic unexplainable. */
+type LoggedPricing = {
+  inputPerMtok: string | null
+  cachedInputPerMtok: string | null
+  outputPerMtok: string | null
+}
+
+export const requestLogs = pgTable(
+  'request_logs',
+  {
+    // v7: time-ordered, so inserts append to the right edge of the B-tree
+    // instead of scattering, and the primary key doubles as the pagination,
+    // time-range and prune index.
+    id: uuid('id').primaryKey().$defaultFn(uuidv7),
+    requestId: text('request_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+
+    // set null, not cascade: a deleted key must not erase the history of what
+    // it did. key_name is denormalized for the same reason.
+    apiKeyId: uuid('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+    keyName: text('key_name'),
+
+    // What the client asked for — a virtual model name or a direct
+    // `provider/model` address. Deliberately not a virtual_models FK: a direct
+    // address resolves to a catalog row, so the key would point at the wrong
+    // table half the time.
+    model: varchar('model', { length: 128 }),
+
+    stream: boolean('stream').notNull().default(false),
+    status: integer('status').notNull(),
+    outcome: requestOutcomeEnum('outcome').notNull(),
+    errorType: text('error_type'),
+    errorCode: text('error_code'),
+    errorMessage: text('error_message'),
+
+    latencyMs: integer('latency_ms').notNull(),
+    ttftMs: integer('ttft_ms'),
+    attempts: jsonb('attempts').$type<LoggedAttempt[]>().notNull().default([]),
+
+    finalTargetId: uuid('final_target_id'),
+    finalProviderId: uuid('final_provider_id'),
+    finalProvider: text('final_provider'),
+    finalUpstreamModel: varchar('final_upstream_model', { length: 128 }),
+
+    promptTokens: integer('prompt_tokens'),
+    completionTokens: integer('completion_tokens'),
+    cachedTokens: integer('cached_tokens'),
+    reasoningTokens: integer('reasoning_tokens'),
+
+    // scale 9, not 6: a small request can cost less than a micro-dollar, and
+    // rounding that to 0.000000 is the silent-zero lie in another disguise.
+    inputCostUsd: numeric('input_cost_usd', { precision: 18, scale: 9 }),
+    cachedCostUsd: numeric('cached_cost_usd', { precision: 18, scale: 9 }),
+    outputCostUsd: numeric('output_cost_usd', { precision: 18, scale: 9 }),
+    costUsd: numeric('cost_usd', { precision: 18, scale: 9 }),
+    pricing: jsonb('pricing').$type<LoggedPricing | null>(),
+
+    droppedParams: jsonb('dropped_params').$type<string[]>(),
+    payloadCaptured: boolean('payload_captured').notNull().default(false),
+  },
+  (table) => [
+    uniqueIndex('request_logs_request_id_idx').on(table.requestId),
+    index('request_logs_api_key_idx').on(table.apiKeyId, table.id.desc()),
+    index('request_logs_model_idx').on(table.model, table.id.desc()),
+  ],
+)
+
+export const requestPayloads = pgTable('request_payloads', {
+  // cascade: pruning a log prunes its payload in the same statement.
+  requestLogId: uuid('request_log_id')
+    .primaryKey()
+    .references(() => requestLogs.id, { onDelete: 'cascade' }),
+  requestJson: jsonb('request_json').$type<unknown>(),
+  responseJson: jsonb('response_json').$type<unknown>(),
+  truncated: boolean('truncated').notNull().default(false),
+})
+
 export type ProviderRow = typeof providers.$inferSelect
 export type VirtualModelRow = typeof virtualModels.$inferSelect
 export type RouteTargetRow = typeof routeTargets.$inferSelect
@@ -168,3 +265,5 @@ export type UserRow = typeof users.$inferSelect
 export type CatalogModelRow = typeof catalogModels.$inferSelect
 export type RegistryCacheRow = typeof registryCache.$inferSelect
 export type SettingRow = typeof settings.$inferSelect
+export type RequestLogRow = typeof requestLogs.$inferSelect
+export type RequestPayloadRow = typeof requestPayloads.$inferSelect

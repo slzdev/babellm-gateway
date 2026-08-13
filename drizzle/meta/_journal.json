@@ -22,6 +22,13 @@
       "when": 1786612853761,
       "tag": "0002_strange_carlie_cooper",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786639405933,
+      "tag": "0003_black_susan_delgado",
+      "breakpoints": true
     }
   ]
 }
