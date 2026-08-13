@@ -565,7 +565,10 @@ invisible the other. It drops those whose month falls outside the keep window
 and skips anything whose name does not parse as `request_logs_YYYY_MM`.
 `retentionMonths: 0` skips the drop half entirely and keeps provisioning.
 
-**`maintainPartitions(now)`** runs both under `pg_try_advisory_lock` on a new
+`src/lib/logs/maintenance.ts` — `retention.ts` renamed, since retention is no
+longer what it does — owns the job itself. **`runLogMaintenance(now)`** resolves
+the settings, calls `maintain` on every registered driver, and writes
+`logs.last_maintenance`, all under `pg_try_advisory_lock` on a new
 `PARTITION_LOCK_KEY`, distinct from the migration runner's key. The lock is
 taken and released on **one client checked out from the pool**, not through
 `db`: an advisory lock belongs to the session that took it, and a bare
