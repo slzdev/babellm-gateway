@@ -2,7 +2,16 @@ import { decryptJson } from '@/lib/crypto'
 import type { ProviderRow } from '@/lib/db/schema'
 import { UnsupportedOperationError } from '@/lib/gateway/errors'
 import { createOpenAIAdapter } from './openai'
-import type { ProviderAdapter, ProviderConfig, ProviderRuntime } from './types'
+import type { ApiFlavor, ProviderAdapter, ProviderConfig, ProviderRuntime } from './types'
+
+/**
+ * The single place flavor is decided. It reads one column today, but every
+ * caller goes through it so that a per-model layer — which the catalog could
+ * supply — lands here rather than in each call site.
+ */
+export function resolveApiFlavor(provider: ProviderRow): ApiFlavor {
+  return provider.apiFlavor
+}
 
 export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
   return {
@@ -12,6 +21,7 @@ export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
     baseUrl: provider.baseUrl,
     credentials: decryptJson<Record<string, unknown>>(provider.credentials),
     config: JSON.parse(provider.config) as ProviderConfig,
+    apiFlavor: resolveApiFlavor(provider),
   }
 }
 

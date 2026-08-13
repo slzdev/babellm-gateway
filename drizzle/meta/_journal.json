@@ -15,6 +15,13 @@
       "when": 1786537244730,
       "tag": "0001_special_grandmaster",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786612853761,
+      "tag": "0002_strange_carlie_cooper",
+      "breakpoints": true
     }
   ]
 }

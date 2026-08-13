@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from 'vitest'
-import { createAdapter, resolveProviderRuntime } from '@/lib/adapters/registry'
+import { createAdapter, resolveApiFlavor, resolveProviderRuntime } from '@/lib/adapters/registry'
 import { UnsupportedOperationError } from '@/lib/gateway/errors'
 import { encryptJson } from '@/lib/crypto'
 import type { ProviderRow } from '@/lib/db/schema'
@@ -16,6 +16,7 @@ function provider(overrides: Partial<ProviderRow> = {}): ProviderRow {
     baseUrl: null,
     credentials: encryptJson({ apiKey: 'sk-test' }),
     config: '{}',
+    apiFlavor: 'chat_completions',
     enabled: true,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -56,4 +57,17 @@ test('openai_compatible without a base URL is rejected', () => {
 
 test.each(['gemini', 'bedrock'] as const)('%s is not yet implemented', (adapter) => {
   expect(() => createAdapter(provider({ adapter }))).toThrow(UnsupportedOperationError)
+})
+
+test('resolveApiFlavor defaults to chat_completions', () => {
+  expect(resolveApiFlavor(provider())).toBe('chat_completions')
+})
+
+test('resolveApiFlavor reads the stored flavor', () => {
+  expect(resolveApiFlavor(provider({ apiFlavor: 'responses' }))).toBe('responses')
+})
+
+test('resolveProviderRuntime carries the flavor onto the runtime', () => {
+  expect(resolveProviderRuntime(provider({ apiFlavor: 'responses' })).apiFlavor)
+    .toBe('responses')
 })
