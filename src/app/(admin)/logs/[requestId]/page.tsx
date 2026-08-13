@@ -69,6 +69,20 @@ export default async function LogDetailPage({
   const log = await loadLogDetail(decodeURIComponent(requestId))
   if (!log) notFound()
 
+  // `payload.truncated` has three sources, only two of which stamp an
+  // envelope on the value itself (capPayload replacing an oversized or
+  // unserializable stored request/response). The third — a streaming
+  // response whose assistant text hit the byte cap mid-relay
+  // (chat-handler.ts's `truncatedUpstream`) — stores an ordinary,
+  // envelope-free completion object. When neither field carries a
+  // recognizable envelope but the payload is still marked truncated, that
+  // third source is the only thing it can be.
+  const requestTruncationNote = log.payload ? truncationNote(log.payload.request) : null
+  const responseTruncationNote = log.payload ? truncationNote(log.payload.response) : null
+  const streamClippedSilently = Boolean(
+    log.payload?.truncated && !requestTruncationNote && !responseTruncationNote,
+  )
+
   return (
     <div className="space-y-6">
       <div className="space-y-3">
@@ -195,12 +209,20 @@ export default async function LogDetailPage({
         {log.payload ? (
           <div className="space-y-2">
             <Json label="Request" value={log.payload.request} />
-            {truncationNote(log.payload.request) ? (
-              <p className="text-xs text-muted-foreground">{truncationNote(log.payload.request)}</p>
+            {requestTruncationNote ? (
+              <p className="text-xs text-muted-foreground">{requestTruncationNote}</p>
             ) : null}
             <Json label="Response" value={log.payload.response} />
-            {truncationNote(log.payload.response) ? (
-              <p className="text-xs text-muted-foreground">{truncationNote(log.payload.response)}</p>
+            {responseTruncationNote ? (
+              <p className="text-xs text-muted-foreground">{responseTruncationNote}</p>
+            ) : null}
+            {streamClippedSilently ? (
+              <p className="text-xs text-muted-foreground">
+                This response was still streaming to the client when the assistant text hit
+                the configured size cap, so the captured copy above stops mid-stream. That is
+                distinct from a stored payload being replaced with a preview — nothing here
+                was clipped after the fact.
+              </p>
             ) : null}
           </div>
         ) : (

@@ -109,6 +109,55 @@ test('an oversized payload is replaced by the truncation envelope', async () => 
   expect(detail?.payload?.request).toMatchObject({ truncated: true })
 })
 
+test('a stream clipped mid-flight is marked truncated without a stored-payload envelope', async () => {
+  // payload.truncated has three sources: an oversized *stored* request, an
+  // oversized *stored* response (both via capPayload, which stamps a
+  // {truncated: true, ...} envelope on the value), and a streaming
+  // response whose assistant text hit the byte cap mid-relay
+  // (sse.ts's `accumulate`, surfaced as chat-handler.ts's
+  // `truncatedUpstream`). The third source stores an ordinary,
+  // envelope-free completion object — this is the shape the detail page's
+  // per-field truncation notice cannot explain on its own, and the
+  // regression this test guards against.
+  const { apiKey } = await seedWithCapture(true)
+  await setLoggingSettings({ payloadMaxBytes: 1000 })
+  clearRequestLogStoreCache()
+
+  const chatStream = async function* () {
+    yield {
+      id: 'up', object: 'chat.completion.chunk', created: 1, model: 'gpt-4o-mini',
+      choices: [{ index: 0, delta: { content: 'hello' }, finish_reason: null }],
+    }
+    // Far larger than the remaining budget, so the accumulator stops and
+    // marks the capture truncated. The assembled text stays tiny, so the
+    // final stored response JSON never itself crosses the cap.
+    yield {
+      id: 'up', object: 'chat.completion.chunk', created: 1, model: 'gpt-4o-mini',
+      choices: [{ index: 0, delta: { content: 'x'.repeat(20_000) }, finish_reason: null }],
+    }
+  }
+
+  const res = await handleChatCompletions(
+    chatRequest({ ...body, stream: true }, apiKey),
+    fakeAdapterDeps({ chatStream: chatStream as never }),
+  )
+  await res.text()
+  await waitForLogs()
+
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  const detail = await postgresStore.get(row.requestId)
+
+  expect(detail?.payload?.truncated).toBe(true)
+
+  const response = detail?.payload?.response as Record<string, unknown>
+  expect(response.object).toBe('chat.completion')
+  expect(response).not.toHaveProperty('error')
+  expect(response).not.toHaveProperty('preview')
+
+  const request = detail?.payload?.request as Record<string, unknown>
+  expect(request).not.toHaveProperty('preview')
+})
+
 test('a request that fails before parsing records no payload', async () => {
   await seedWithCapture(true)
 
