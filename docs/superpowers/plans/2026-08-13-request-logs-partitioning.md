@@ -241,6 +241,20 @@ git commit -m "feat(db): declare request_logs PARTITION BY RANGE on the v7 id"
   - `ensurePartitions(client: Queryable, now: Date): Promise<string[]>` — names created (already-present months are not listed)
   - `dropExpiredPartitions(client: Queryable, now: Date, retentionMonths: number): Promise<string[]>` — names dropped
 
+- [ ] **Step 0: Stop `resetDb` truncating a table that no longer exists**
+
+This task's tests call `resetDb`, which still names `request_payloads` in its `TRUNCATE` list — a table Tasks 1–2 deleted. Every test here would fail on a missing relation before reaching what it asserts. Task 4 fixes `resetDb` properly, but it cannot run first: it imports `ensurePartitions` from this task.
+
+In `tests/helpers/db.ts`, delete `'request_payloads', ` from the `TABLES` array, leaving `'request_logs',` as the first entry. Change nothing else in that file — the partition provisioning is Task 4's.
+
+```ts
+const TABLES = [
+  'request_logs',
+  'catalog_models', 'route_targets', 'virtual_models', 'api_keys', 'users',
+  'providers', 'registry_cache', 'settings',
+]
+```
+
 - [ ] **Step 1: Write the failing unit tests for the arithmetic**
 
 Create `tests/lib/logs/partitions.test.ts`:
@@ -587,6 +601,8 @@ git commit -m "feat(logs): add month-partition create and drop"
 - Produces: `resetDb()` leaves the current month provisioned. Every test that writes a log row depends on this.
 
 - [ ] **Step 1: Rewrite `resetDb`**
+
+Task 3 Step 0 already removed `request_payloads` from `TABLES`. What this step adds is the provisioning call and the comment explaining why it is needed. Write the file to exactly the state below.
 
 ```ts
 import { sql } from 'drizzle-orm'
