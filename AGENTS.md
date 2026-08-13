@@ -58,6 +58,8 @@ Once the implementation is complete and verified (`superpowers:verification-befo
 
 Then follow `superpowers:finishing-a-development-branch`.
 
+**Merging a worktree into `main` is always a squash merge** — `git merge --squash <branch>` followed by a single commit that describes the whole change, never a merge commit or a replay of the branch's intermediate commits. Worktree branches accumulate WIP, fixup, and review-feedback commits that mean nothing once the work has landed; `main` should carry one commit per unit of work. Delete the branch and remove the worktree afterwards.
+
 ## Defaults
 
 If the user does not answer, or the session is non-interactive: **subagent-driven execution in a git worktree**, and create a branch + PR when finished.
