@@ -98,8 +98,11 @@ export function createDynamoStore(config: DynamoStoreConfig): ReadableRequestLog
     ...(config.region ? { region: config.region } : {}),
     ...(config.endpoint ? { endpoint: config.endpoint } : {}),
   })
-  // removeUndefinedValues because the item mapper omits nullish attributes by
-  // leaving them off entirely; without it the client rejects the write.
+  // removeUndefinedValues guards nested undefined values that toItem's
+  // top-level `put()` helper never sees — a key `put()` never assigns needs
+  // no such guard, but a nested object or array (e.g. an attempt spread as
+  // `{ ...attempt, error: undefined }` inside item.attempts) can still carry
+  // one, and the client rejects the write if it does.
   const doc = DynamoDBDocumentClient.from(raw, {
     marshallOptions: { removeUndefinedValues: true },
   })
@@ -119,6 +122,15 @@ export function createDynamoStore(config: DynamoStoreConfig): ReadableRequestLog
 
     async query(filter: LogFilter): Promise<LogPage> {
       const { lo, hi, exclude } = boundsFor(filter)
+      // A hand-edited URL can carry both `after` and `before`; boundsFor
+      // sets lo from `before` and hi from `after`, so when before > after
+      // that produces lo > hi, which DynamoDB's BETWEEN rejects outright.
+      // Postgres's equivalent
+      // query silently returns nothing for the same input — it only ever
+      // applies one of `after`/`before` per query — so this matches that
+      // contract rather than surfacing a query error for an input
+      // parseLogFilter already treats as falling back to the default view.
+      if (lo > hi) return { rows: [], nextCursor: null, prevCursor: null }
       // `before` walks toward newer rows, so it queries ascending and the
       // page is reversed at the end — the same branch as postgres.ts.
       const descending = !filter.before
@@ -178,10 +190,16 @@ export function createDynamoStore(config: DynamoStoreConfig): ReadableRequestLog
 
     async get(id: string): Promise<LogDetail | null> {
       if (!UUID_RE.test(id)) return null
+      // UUID_RE accepts uppercase hex, but shardKey() only lowercases the
+      // last character and sk is stored (and compared) as a case-sensitive
+      // string. Normalize once here so an uppercase-hex uuid from a
+      // hand-edited URL still resolves — the same row Postgres would find,
+      // since it normalizes uuid literals on comparison.
+      const normalized = id.toLowerCase()
       try {
         const out = await doc.send(new GetCommand({
           TableName: table,
-          Key: { pk: shardKey(id), sk: id },
+          Key: { pk: shardKey(normalized), sk: normalized },
         }))
         return out.Item ? toDetail(out.Item) : null
       } catch (err) {

@@ -80,6 +80,67 @@ when('filters narrow the page', async () => {
   expect((await store.query({ limit: 10, outcome: 'error' })).rows).toHaveLength(1)
 })
 
+when('the apiKeyId filter matches its key and excludes others', async () => {
+  // apiKeyId is the one filter that crosses a name change: RequestLogEntry
+  // carries it as `keyId` but toItem writes it, and filtersFor matches it,
+  // as `apiKeyId`. A rename bug on either side returns zero rows forever
+  // with no error, which the other three filters (matched under their own
+  // names) cannot catch.
+  await store.write(entry({ keyId: 'key-abc' }), settings)
+  await store.write(entry({ keyId: 'key-xyz' }), settings)
+  await store.write(entry({ keyId: null }), settings)
+
+  expect((await store.query({ limit: 10, apiKeyId: 'key-abc' })).rows).toHaveLength(1)
+})
+
+when('a written row comes back with every projected field intact', async () => {
+  // Every other test only inspects `id`, `.length`, or set membership, so a
+  // LIST_ATTRIBUTES entry silently dropped (or a field wired to the wrong
+  // attribute) would leave every other test green while the list view
+  // rendered "Invalid Date", NaN, or an undefined outcome. This asserts the
+  // whole row's projected content against distinctive values.
+  const id = uuidv7()
+  await store.write(entry({
+    id,
+    keyName: 'distinctive-key-name',
+    model: 'distinctive-model',
+    stream: true,
+    status: 201,
+    outcome: 'error',
+    latencyMs: 4321,
+    ttftMs: 123,
+    final: {
+      targetId: 'target-1',
+      providerId: 'provider-1',
+      provider: 'distinctive-provider',
+      upstreamModel: 'distinctive-upstream-model',
+    },
+    usage: { promptTokens: 11, completionTokens: 22, cachedTokens: null, reasoningTokens: null },
+    cost: { inputUsd: '0.01', cachedUsd: null, outputUsd: '0.02', totalUsd: '0.03', pricing: null },
+  }), settings)
+
+  const page = await store.query({ limit: 10 })
+  expect(page.rows).toHaveLength(1)
+  const [row] = page.rows
+  expect(Number.isNaN(row.createdAt.getTime())).toBe(false)
+  expect(row).toMatchObject({
+    id,
+    keyName: 'distinctive-key-name',
+    model: 'distinctive-model',
+    stream: true,
+    status: 201,
+    outcome: 'error',
+    latencyMs: 4321,
+    ttftMs: 123,
+    finalProvider: 'distinctive-provider',
+    finalUpstreamModel: 'distinctive-upstream-model',
+    promptTokens: 11,
+    completionTokens: 22,
+    costUsd: '0.03',
+    payloadCaptured: false,
+  })
+})
+
 when('a shard needing more than one round trip still returns every row in order', async () => {
   // All twenty-five ids are forced into the same shard (last hex digit fixed
   // at 'a'), and the per-shard page size for limit:10 is small enough that
@@ -93,6 +154,30 @@ when('a shard needing more than one round trip still returns every row in order'
   const sorted = [...ids].sort()
   const page = await store.query({ limit: 10 })
   expect(page.rows.map((r) => r.id)).toEqual(sorted.slice(-10).reverse())
+})
+
+when('an inverted before/after range returns empty instead of throwing', async () => {
+  // A hand-edited URL can carry both cursors with before > after — boundsFor
+  // then produces lo > hi, which DynamoDB's BETWEEN rejects outright.
+  // parseLogFilter's contract is that a malformed URL falls back to the
+  // default view, not an error page, and that's what Postgres does for the
+  // same input (it only ever applies one of after/before per query).
+  const ids = Array.from({ length: 5 }, () => uuidv7())
+  for (const id of ids) await store.write(entry({ id }), settings)
+
+  const page = await store.query({ limit: 10, after: ids[0], before: ids[4] })
+  expect(page).toEqual({ rows: [], nextCursor: null, prevCursor: null })
+})
+
+when('get resolves an uppercase-hex form of a written id', async () => {
+  // UUID_RE accepts uppercase hex, but shardKey() only lowercases the last
+  // character and sk is a case-sensitive string, so an unnormalized get()
+  // would miss a row Postgres — which normalizes uuid literals — still
+  // finds for the same hand-edited URL.
+  const id = uuidv7()
+  await store.write(entry({ id }), settings)
+
+  expect((await store.get(id.toUpperCase()))?.id).toBe(id)
 })
 
 when('a time range selects on the id, which is the clock', async () => {
