@@ -18,6 +18,15 @@ import { collectPage } from './merge'
  * "no such row" — the same contract the Postgres driver keeps. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/** The per-shard `Limit` for a filtered Query. DynamoDB reads up to 1 MB
+ * server-side once a FilterExpression is present, regardless of Limit — so a
+ * Limit this size costs the very same round trip as the small unfiltered one
+ * below while covering far more ground, and it is what makes
+ * MAX_ITEMS_EXAMINED in merge.ts reachable within a handful of rounds rather
+ * than never (16 shards × 250 = 4,000 examined per round; three rounds
+ * crosses the 10,000-item budget). */
+const FILTERED_SHARD_LIMIT = 250
+
 /** Bounds the TTL health check in maintain(). runLogMaintenance awaits every
  * registered driver's maintain() on the boot path, so an unbounded call here
  * — the AWS SDK sets no default request timeout — would let an unreachable
@@ -130,14 +139,13 @@ export function createDynamoStore(config: DynamoStoreConfig): ReadableRequestLog
 
     async query(filter: LogFilter): Promise<LogPage> {
       const { lo, hi, exclude } = boundsFor(filter)
-      // A hand-edited URL can carry both `after` and `before`; boundsFor
-      // sets lo from `before` and hi from `after`, so when before > after
-      // that produces lo > hi, which DynamoDB's BETWEEN rejects outright.
-      // Postgres's equivalent
-      // query silently returns nothing for the same input — it only ever
-      // applies one of `after`/`before` per query — so this matches that
-      // contract rather than surfacing a query error for an input
-      // parseLogFilter already treats as falling back to the default view.
+      // boundsFor mirrors postgres.ts exactly: when `before` is set, `after`
+      // is ignored entirely, so an after+before URL cannot produce lo > hi on
+      // its own. What still can is an inverted `from`/`to` range (a
+      // hand-edited URL with from > to) — DynamoDB's BETWEEN rejects that
+      // outright, so it is caught here and treated the way parseLogFilter
+      // treats any malformed cursor: falling back to an empty page rather
+      // than an error.
       if (lo > hi) return { rows: [], nextCursor: null, prevCursor: null }
       // `before` walks toward newer rows, so it queries ascending and the
       // page is reversed at the end — the same branch as postgres.ts.
@@ -145,7 +153,13 @@ export function createDynamoStore(config: DynamoStoreConfig): ReadableRequestLog
       const filters = filtersFor(filter)
       // The merge's frontier invariant makes a small per-shard limit safe:
       // under-supply costs another round trip rather than a wrong answer.
-      const perShard = Math.ceil((filter.limit + 1) / SHARDS) + 4
+      // Unfiltered, every scanned item is also a candidate row, so this small
+      // Limit already keeps a single Query cheap. Filtered, ScannedCount and
+      // rows-returned diverge — see FILTERED_SHARD_LIMIT — so a much larger
+      // Limit is used instead.
+      const perShard = filters.expression
+        ? FILTERED_SHARD_LIMIT
+        : Math.ceil((filter.limit + 1) / SHARDS) + 4
 
       const collected = await collectPage<LogItem>({
         shards: SHARD_KEYS,

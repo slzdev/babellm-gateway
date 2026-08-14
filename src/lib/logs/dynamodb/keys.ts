@@ -40,14 +40,19 @@ export interface Bounds {
 }
 
 export function boundsFor(filter: LogFilter): Bounds {
+  // Mirrors postgres.ts's ternary (`paging.bound` in query()): when `before`
+  // is set, `after` is ignored outright rather than intersected with it. A
+  // hand-edited URL carrying both cursors must page by `before` alone on
+  // both drivers — anything else is two stores answering the same input
+  // differently.
   const lowerBounds = [filter.from ? uuidv7Bound(filter.from) : MIN_UUID]
   if (filter.before) lowerBounds.push(filter.before)
 
   const upperBounds = [filter.to ? uuidv7Bound(filter.to) : MAX_UUID]
-  if (filter.after) upperBounds.push(filter.after)
+  if (filter.after && !filter.before) upperBounds.push(filter.after)
 
   const exclude: string[] = []
-  if (filter.after) exclude.push(filter.after)
+  if (filter.after && !filter.before) exclude.push(filter.after)
   if (filter.before) exclude.push(filter.before)
   if (filter.to) exclude.push(uuidv7Bound(filter.to))
 

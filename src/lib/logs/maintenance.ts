@@ -38,16 +38,14 @@ export async function runLogMaintenance(
   now: Date = new Date(),
   { wait = false }: { wait?: boolean } = {},
 ): Promise<MaintenanceResult | null> {
-  const { settings: config, fallback } = await resolveRequestLogStore()
+  const { settings: effective, fallback } = await resolveRequestLogStore()
 
-  // A settings read that failed hands back DEFAULT_RETENTION_MONTHS, which is
-  // a guess at the operator's policy rather than the policy itself.
-  // Provisioning on a guess is harmless; dropping on one destroys captured
-  // prompt content past the configured window, and DROP TABLE has no undo.
-  // retentionMonths 0 already means "provision, drop nothing".
-  const effective = fallback === 'settings_error'
-    ? { ...config, retentionMonths: 0 }
-    : config
+  // A settings read that failed already comes back from resolveRequestLogStore
+  // with retentionMonths: 0 — "provision, drop nothing" — rather than a guess
+  // at the operator's policy. Provisioning on a guess is harmless; dropping on
+  // one destroys captured prompt content past the configured window, and DROP
+  // TABLE has no undo. No local override needed here: the zero already flowed
+  // through in `effective`.
   if (fallback === 'settings_error') {
     console.error(
       '[gateway] logging settings were unreadable; this run provisions but skips dropping expired partitions',

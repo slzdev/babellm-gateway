@@ -244,6 +244,14 @@ run checks this and logs an error if it is missing.
   any row is found, the page comes back empty but is still resumable: paging
   further keeps scanning from where the budget ran out, rather than looking
   like "no matching logs".
+- **A filtered search over a long history advances in bounded steps, not one
+  full scan.** There are no secondary indexes, so a non-time filter (model,
+  outcome, status class, API key) is evaluated row by row across whatever the
+  time range covers. Each page request examines at most 10,000 items before
+  giving up and handing back a resumable cursor rather than reading further —
+  the accepted cost of having no GSIs. A search across months of history can
+  take many page requests to surface a match; Postgres finds the same row in
+  one indexed pass.
 - **Deletion is best-effort.** DynamoDB may take up to ~48 hours to remove an
   expired item, and it stays queryable until it does.
 - **Retention changes are not retroactive.** `expiresAt` is stamped when the

@@ -96,6 +96,20 @@ test('a failed settings read falls back to the default store and caches the fall
   expect(spy).toHaveBeenCalledTimes(1)
 })
 
+test('a failed settings read resolves retentionMonths to 0, never a guessed default', async () => {
+  // A guessed retention is harmless for provisioning but not for deletion:
+  // maintenance.ts trusts this value to decide what to drop, and the
+  // DynamoDB driver stamps it into every item's TTL at write time — a value
+  // written during an outage is permanent there, since that driver's
+  // retention is explicitly non-retroactive. 0 means "keep forever" to both,
+  // so a guess must never be anything else.
+  vi.spyOn(settingsModule, 'getLoggingSettings').mockRejectedValue(new Error('connection refused'))
+
+  const resolved = await resolveRequestLogStore()
+  expect(resolved.fallback).toBe('settings_error')
+  expect(resolved.settings.retentionMonths).toBe(0)
+})
+
 test('concurrent callers on a cold cache share one resolution', async () => {
   const spy = vi.spyOn(settingsModule, 'getLoggingSettings')
 

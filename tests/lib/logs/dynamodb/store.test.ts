@@ -1,6 +1,8 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
+import { DynamoDBClient, GetItemCommand } from '@aws-sdk/client-dynamodb'
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { createDynamoStore } from '@/lib/logs/dynamodb'
+import { shardKey } from '@/lib/logs/dynamodb/keys'
 import { uuidv7 } from '@/lib/uuid'
 import type { LoggingSettings } from '@/lib/settings'
 import type { ReadableRequestLogStore, RequestLogEntry } from '@/lib/logs/types'
@@ -87,6 +89,28 @@ when('filters narrow the page', async () => {
   expect((await store.query({ limit: 10, outcome: 'error' })).rows).toHaveLength(1)
 })
 
+when('a filtered query uses a far larger per-shard Limit than an unfiltered one', async () => {
+  // Pins FILTERED_SHARD_LIMIT (dynamodb/index.ts) directly and cheaply. The
+  // budget-tripping tests further down prove the value is "large enough to
+  // make MAX_ITEMS_EXAMINED reachable"; this proves the specific number,
+  // without needing thousands of writes to observe it.
+  // QueryCommand goes through the document client's own send(), not the raw
+  // DynamoDBClient's — unlike the DescribeTimeToLive call the TTL test above
+  // spies on.
+  const sendSpy = vi.spyOn(DynamoDBDocumentClient.prototype, 'send')
+
+  await store.query({ limit: 10 })
+  const unfiltered = sendSpy.mock.calls[0][0] as { input: { Limit?: number } }
+
+  sendSpy.mockClear()
+  await store.query({ limit: 10, model: 'anything' })
+  const filtered = sendSpy.mock.calls[0][0] as { input: { Limit?: number } }
+
+  sendSpy.mockRestore()
+  expect(filtered.input.Limit).toBe(250)
+  expect(unfiltered.input.Limit).toBeLessThan(20)
+})
+
 when('the apiKeyId filter matches its key and excludes others', async () => {
   // apiKeyId is the one filter that crosses a name change: RequestLogEntry
   // carries it as `keyId` but toItem writes it, and filtersFor matches it,
@@ -169,18 +193,28 @@ when('a shard needing more than one round trip still returns every row in order'
   expect(page.rows.map((r) => r.id)).toEqual(sorted.slice(-10).reverse())
 })
 
+// A filtered Query's per-shard Limit is 250 (FILTERED_SHARD_LIMIT in
+// dynamodb/index.ts) — DynamoDB reads up to 1 MB server-side once a
+// FilterExpression is present regardless of Limit, so a larger Limit costs
+// the same round trip while making MAX_ITEMS_EXAMINED (10,000) reachable at
+// all. With every non-matching id forced into one shard, that shard alone
+// accumulates ~250 examined per round after round one, so it takes forty
+// rounds — MAX_ROUND_TRIPS — to cross the item budget. NO_MATCH_COUNT clears
+// that with margin so the shard is still not exhausted (has more items left
+// to page through) when the budget trips, rather than finishing early and
+// changing what these tests are actually exercising.
+const NO_MATCH_COUNT = 10_050
+
 when('a budget-truncated query still surfaces a match it already fetched', async () => {
-  // End-to-end regression for the drain in collectPage: shard 'b' gets 210
-  // items that never match the filter, forcing MAX_ROUND_TRIPS (40) rounds
-  // of filtered-empty-but-not-exhausted pages (perShard is 5 at limit:1, and
-  // 40 rounds x 5 = 200 < 210, so shard 'b' is still not exhausted when the
-  // round-trip budget trips). Shard 'a' gets exactly one item that *does*
-  // match, generated after all of shard 'b's ids so it sorts newest and
-  // wins the merge outright in round one — then sits untouched in its
-  // buffer while shard 'b' alone burns through the rest of the budget.
+  // End-to-end regression for the drain in collectPage: shard 'b' gets
+  // NO_MATCH_COUNT items that never match the filter, forcing the budget to
+  // trip with shard 'b' still not exhausted. Shard 'a' gets exactly one item
+  // that *does* match, generated after all of shard 'b's ids so it sorts
+  // newest and wins the merge outright in round one — then sits untouched in
+  // its buffer while shard 'b' alone burns through the rest of the budget.
   // Without the drain, that already-fetched match would be silently
   // dropped; with it, it comes back as a normal row.
-  const noMatchIds = Array.from({ length: 210 }, () => `${uuidv7().slice(0, -1)}b`)
+  const noMatchIds = Array.from({ length: NO_MATCH_COUNT }, () => `${uuidv7().slice(0, -1)}b`)
   const matchId = `${uuidv7().slice(0, -1)}a`
   await Promise.all(noMatchIds.map((id) => store.write(entry({ id, model: 'no-match' }), settings)))
   await store.write(entry({ id: matchId, model: 'match-me' }), settings)
@@ -189,37 +223,24 @@ when('a budget-truncated query still surfaces a match it already fetched', async
 
   expect(page.rows.map((r) => r.id)).toEqual([matchId])
   expect(page.nextCursor).toBe(matchId)
-})
+}, 30_000)
 
 when('a query matching nothing anywhere still gets a resumable cursor after truncation', async () => {
   // The original bug, end-to-end: a narrow filter over a wide range reads a
   // great deal and matches nothing until it goes deep. Shard 'b' alone
-  // supplies 210 non-matching items — same round-trip-budget arithmetic as
+  // supplies NO_MATCH_COUNT non-matching items — same budget arithmetic as
   // above — so this trips the budget with every shard's buffer empty (no
   // match exists anywhere for the drain to recover). The page must not
   // render as an indistinguishable "no matching logs": nextCursor has to be
   // non-null so the viewer can keep paging into the unscanned tail.
-  const noMatchIds = Array.from({ length: 210 }, () => `${uuidv7().slice(0, -1)}b`)
+  const noMatchIds = Array.from({ length: NO_MATCH_COUNT }, () => `${uuidv7().slice(0, -1)}b`)
   await Promise.all(noMatchIds.map((id) => store.write(entry({ id, model: 'no-match' }), settings)))
 
   const page = await store.query({ limit: 1, model: 'match-me' })
 
   expect(page.rows).toEqual([])
   expect(page.nextCursor).not.toBeNull()
-})
-
-when('an inverted before/after range returns empty instead of throwing', async () => {
-  // A hand-edited URL can carry both cursors with before > after — boundsFor
-  // then produces lo > hi, which DynamoDB's BETWEEN rejects outright.
-  // parseLogFilter's contract is that a malformed URL falls back to the
-  // default view, not an error page, and that's what Postgres does for the
-  // same input (it only ever applies one of after/before per query).
-  const ids = Array.from({ length: 5 }, () => uuidv7())
-  for (const id of ids) await store.write(entry({ id }), settings)
-
-  const page = await store.query({ limit: 10, after: ids[0], before: ids[4] })
-  expect(page).toEqual({ rows: [], nextCursor: null, prevCursor: null })
-})
+}, 30_000)
 
 when('get resolves an uppercase-hex form of a written id', async () => {
   // UUID_RE accepts uppercase hex, but shardKey() only lowercases the last
@@ -266,6 +287,25 @@ when('maintain bounds its TTL check with an abort signal', async () => {
   const options = sendSpy.mock.calls.at(-1)?.[1] as { abortSignal?: unknown } | undefined
   expect(options?.abortSignal).toBeInstanceOf(AbortSignal)
   sendSpy.mockRestore()
+})
+
+when('a settings-error resolution never stamps a TTL', async () => {
+  // registry.ts's settings_error fallback hands back retentionMonths: 0, not
+  // DEFAULT_RETENTION_MONTHS — because this driver stamps TTL from
+  // `settings` at write time and its retention is explicitly non-retroactive,
+  // a guessed value written here would be permanent for as long as the
+  // outage that produced it. This writes with exactly the settings shape
+  // that fallback returns and inspects the raw item, since get()'s LogDetail
+  // never surfaces expiresAt at all.
+  const id = uuidv7()
+  await store.write(entry({ id }), { store: 'postgres', retentionMonths: 0, payloadMaxBytes: 262_144 })
+
+  const raw = new DynamoDBClient({ region: config!.region, endpoint: config!.endpoint })
+  const out = await raw.send(new GetItemCommand({
+    TableName: config!.table,
+    Key: { pk: { S: shardKey(id) }, sk: { S: id } },
+  }))
+  expect(out.Item?.expiresAt).toBeUndefined()
 })
 
 when('a missing table produces an error naming it', async () => {

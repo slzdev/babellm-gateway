@@ -63,7 +63,7 @@ export const postgresStore: ReadableRequestLogStore = {
   name: 'postgres',
   readable: true,
 
-  async write(entry: RequestLogEntry, _settings: LoggingSettings): Promise<void> {
+  async write(entry: RequestLogEntry): Promise<void> {
     // One row. The payload columns live here, so the two-row transaction this
     // replaced — and the window where a log row could claim a payload that
     // was never written — are both gone.

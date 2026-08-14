@@ -126,11 +126,19 @@ export function storeContract(
       await store().write(entry({ model: 'alpha', status: 200 }), settings)
       await store().write(entry({ model: 'beta', status: 500, outcome: 'error' }), settings)
       await store().write(entry({ model: 'alpha', status: 404 }), settings)
+      // Boundary values, not just interior ones: 399/400 straddle the
+      // success/client_error line and 499/500 straddle client_error/server_error.
+      // A driver whose comparison used the wrong operator at either edge would
+      // still pass with interior-only values.
+      await store().write(entry({ status: 399 }), settings)
+      await store().write(entry({ status: 400 }), settings)
+      await store().write(entry({ status: 499 }), settings)
+      await store().write(entry({ status: 500 }), settings)
 
       expect((await store().query({ limit: 10, model: 'alpha' })).rows).toHaveLength(2)
-      expect((await store().query({ limit: 10, statusClass: 'success' })).rows).toHaveLength(1)
-      expect((await store().query({ limit: 10, statusClass: 'client_error' })).rows).toHaveLength(1)
-      expect((await store().query({ limit: 10, statusClass: 'server_error' })).rows).toHaveLength(1)
+      expect((await store().query({ limit: 10, statusClass: 'success' })).rows).toHaveLength(2)
+      expect((await store().query({ limit: 10, statusClass: 'client_error' })).rows).toHaveLength(3)
+      expect((await store().query({ limit: 10, statusClass: 'server_error' })).rows).toHaveLength(2)
       expect((await store().query({ limit: 10, outcome: 'error' })).rows).toHaveLength(1)
     })
 
@@ -158,5 +166,44 @@ export function storeContract(
       expect(page.nextCursor).toBeNull()
       expect(page.prevCursor).toBeNull()
     })
+
+    test('after and before together page by before alone, matching the other driver', async () => {
+      // A hand-edited URL can carry both cursors. `before` wins outright —
+      // postgres.ts's ternary discards `after` entirely rather than
+      // intersecting the two — so both drivers must agree on what a combined
+      // cursor returns instead of one computing an intersection the other
+      // never produces. `before: ids[2]` is deliberately not the newest row:
+      // pinned there, Postgres would return an empty page for a reason that
+      // has nothing to do with after+before agreement, concealing exactly
+      // the divergence this test exists to catch.
+      const ids = Array.from({ length: 5 }, () => uuidv7())
+      for (const id of ids) await store().write(entry({ id }), settings)
+
+      const page = await store().query({ limit: 10, after: ids[0], before: ids[2] })
+      expect(page.rows.map((r) => r.id)).toEqual([ids[4], ids[3]])
+      expect(page.nextCursor).toBe(ids[3])
+      expect(page.prevCursor).toBe(ids[4])
+    })
+
+    test('cost fields parse to the same number regardless of the store\'s lexical form', async () => {
+      // Postgres's numeric(18,9) column normalizes '0.03' to '0.030000000' on
+      // read; DynamoDB stores the string verbatim and hands back '0.03'.
+      // Both typecheck as string | null and render identically, but a
+      // consumer comparing strings — or their length — would see different
+      // data depending on which store is configured. Only a numeric
+      // comparison holds the property that actually has to be true.
+      const id = uuidv7()
+      await store().write(entry({
+        id,
+        cost: { inputUsd: '0.03', cachedUsd: null, outputUsd: '0.07', totalUsd: '0.1', pricing: null },
+      }), settings)
+
+      const detail = await store().get(id)
+      expect(Number(detail?.costUsd)).toBe(0.1)
+      expect(Number(detail?.inputCostUsd)).toBe(0.03)
+      expect(Number(detail?.outputCostUsd)).toBe(0.07)
+      expect(detail?.cachedCostUsd).toBeNull()
+    })
+
   })
 }

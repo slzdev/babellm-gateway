@@ -222,18 +222,24 @@ tests. They are pure month arithmetic, and importing them from a module named
 
 ```
 lo = max( from ? uuidv7Bound(from) : MIN_UUID,  before ?? MIN_UUID )
-hi = min( to   ? uuidv7Bound(to)   : MAX_UUID,  after  ?? MAX_UUID )
+hi = min( to   ? uuidv7Bound(to)   : MAX_UUID,  (after && !before) ? after : MAX_UUID )
 
 KeyConditionExpression: pk = :pk AND sk BETWEEN :lo AND :hi
 ```
 
-where `MIN_UUID` is all zeros and `MAX_UUID` all `f`s.
+where `MIN_UUID` is all zeros and `MAX_UUID` all `f`s. `after` is folded into `hi`
+only when `before` is absent — a URL carrying both cursors pages by `before` alone,
+mirroring `postgres.ts`'s ternary in `query()`, which applies exactly one of
+`after`/`before` per query and never both. Without that guard the two drivers
+diverge on the same input: Postgres discards `after` outright, while a bare
+`min`/`max` here would apply both and return their intersection instead.
 
 DynamoDB permits exactly **one** sort-key condition, so `BETWEEN` — inclusive at
 both ends — is the only option. Postgres uses `lt` for `to` and excludes the cursor
-row. The difference is closed in the merge step by dropping any id equal to `after`,
-`before`, or `uuidv7Bound(to)`. That is provably identical to the Postgres predicate
-and costs one comparison, rather than string-predecessor arithmetic on uuids.
+row. The difference is closed in the merge step by dropping any id equal to `after`
+(when `before` is absent), `before`, or `uuidv7Bound(to)`. That is provably identical
+to the Postgres predicate and costs one comparison, rather than string-predecessor
+arithmetic on uuids.
 
 **Direction.** `before` set → `ScanIndexForward: true`, and the page is reversed
 before returning. Otherwise descending. This mirrors `postgres.ts:104` exactly.
@@ -254,20 +260,34 @@ outranked by rows a lagging shard has not yet returned. When fewer than `limit +
 rows are emittable and some shard is unexhausted, continue *those* shards with
 `ExclusiveStartKey` and re-merge.
 
-That invariant is what allows a small per-shard limit:
+That invariant is what allows a small per-shard limit — but the limit itself differs
+by query shape:
 
 ```
-Limit = ceil((limit + 1) / SHARDS) + 4
+Limit = filters.expression
+  ? 250                                    // filtered: see Budget below
+  : ceil((limit + 1) / SHARDS) + 4         // unfiltered
 ```
 
-Without it, correctness would require requesting `limit + 1` from all sixteen shards
-and reading ~16× the data displayed. With it, under-supply is merely another round
-trip.
+Without the small unfiltered limit, correctness would require requesting `limit + 1`
+from all sixteen shards and reading ~16× the data displayed. With it, under-supply is
+merely another round trip.
 
-**Budget.** The loop is capped at **8 round trips** and **10,000 items examined**
+**Budget.** The loop is capped at **40 round trips** and **10,000 items examined**
 (summed `ScannedCount`). On exhaustion it returns a short page with `nextCursor`
 set — paging still works, the page is just smaller than requested. This is a real,
 user-visible difference from Postgres and is stated as such rather than hidden.
+
+Which cap actually binds depends on the `Limit` above. DynamoDB's `Limit` bounds
+items *evaluated*, not returned, so a single Query's `ScannedCount` can never exceed
+its `Limit`. Unfiltered, every scanned item is also a candidate row, so the small
+`Limit` already keeps a page cheap and 10,000 examined items is unreachable within 40
+round trips — `MAX_ROUND_TRIPS` is what ends a truncated unfiltered page. Filtered,
+`ScannedCount` and rows returned diverge, and DynamoDB reads up to 1 MB server-side
+per Query regardless of `Limit` once a `FilterExpression` is present — so the larger
+250 Limit costs the same round trip while making the 10,000-item cap reachable within
+a handful of rounds (16 shards × 250 = 4,000 examined per round; three rounds crosses
+it), which is the case this budget actually exists for.
 
 **Cursors** mirror `postgres.ts:127-135` verbatim:
 
@@ -278,6 +298,19 @@ prevCursor = rows.length && (after || (before && hasMore)) ? rows[0].id : null
 
 with `hasMore` = *emitted `limit + 1` matches, **or** the budget ran out while shards
 were unexhausted*.
+
+**`resumeFrom`.** When the budget is spent with zero rows emitted — a narrow filter
+over a wide range can read a great deal and match nothing before the budget runs
+out — `rows.at(-1).id` above doesn't exist, so `nextCursor` would otherwise be
+indistinguishable from a genuinely empty result. `collectPage` reports `resumeFrom`
+in that case: the floor of the still-unexhausted shards' own continuation keys (the
+max when descending, the min when ascending) — provably the point past which nothing
+still unscanned can outrank, so it is safe to resume from. `query()` falls back to it
+for `nextCursor` only when `rows` is empty and `hasMore` is true, and only on the
+descending (default, `after`-paging) direction: that is the direction that walks
+backward through an unbounded amount of history, where truncation actually bites; the
+ascending `before` direction is bounded by the present and keeps the plain
+`rows.at(-1).id` cursor.
 
 **`ProjectionExpression`** excludes `requestJson`/`responseJson` from list queries.
 This is worth doing for latency and bandwidth, but note honestly what it does not do:

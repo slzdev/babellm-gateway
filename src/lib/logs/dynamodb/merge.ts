@@ -6,11 +6,18 @@ import 'server-only'
  * deal and match almost nothing.
  *
  * One round trip fetches every still-hungry shard in parallel — up to
- * shards.length queries — and each carries only a small per-shard Limit (the
- * driver computes roughly 4-11 items per shard per round). MAX_ITEMS_EXAMINED
- * is meant to be the binding cost constraint; MAX_ROUND_TRIPS is a backstop
- * against pathologically many round trips, not the primary budget, so it is
- * set high enough that the item cap trips first in the ordinary case.
+ * shards.length queries. The per-shard Limit the driver passes differs by
+ * query shape (see FILTERED_SHARD_LIMIT in index.ts): unfiltered, it is small
+ * (roughly 4-11 items per shard) because every scanned item is also a
+ * candidate row, so ScannedCount can never approach MAX_ITEMS_EXAMINED at
+ * that Limit — MAX_ROUND_TRIPS is what ends a truncated unfiltered page.
+ * Filtered, the Limit is far larger (250) because DynamoDB reads up to 1 MB
+ * server-side regardless of Limit once a FilterExpression is present, so
+ * raising it costs the same round trip while making MAX_ITEMS_EXAMINED
+ * reachable within a handful of rounds — that is the case this budget is
+ * actually sized for. MAX_ROUND_TRIPS remains a backstop against
+ * pathologically many round trips either way, not the primary budget for a
+ * filtered query.
  */
 export const MAX_ROUND_TRIPS = 40
 export const MAX_ITEMS_EXAMINED = 10_000

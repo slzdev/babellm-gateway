@@ -17,7 +17,7 @@
 - **`.env.test` is gitignored.** Create it with `cp .env.test.example .env.test`.
 - **The DynamoDB driver must not register during the test suite.** Its enable switch is `DYNAMODB_LOGS_TABLE`; tests use `TEST_DYNAMODB_TABLE` / `TEST_DYNAMODB_ENDPOINT` instead and construct the store directly. This mirrors the existing `TEST_REDIS_URL` precedent in `.env.test.example`.
 - **Payload limits:** `DYNAMO_PAYLOAD_MAX_BYTES = 150 * 1024` per side; `ITEM_MAX_BYTES = 380 * 1024` for the assembled item.
-- **Budget:** `MAX_ROUND_TRIPS = 8`, `MAX_ITEMS_EXAMINED = 10_000`.
+- **Budget:** `MAX_ROUND_TRIPS = 40`, `MAX_ITEMS_EXAMINED = 10_000`.
 - **Costs are strings.** `inputCostUsd`, `cachedCostUsd`, `outputCostUsd`, `costUsd` are DynamoDB `S`, never `N`.
 - **Model clamp:** 128 characters, matching `postgres.ts`.
 - Run `pnpm typecheck` and `pnpm lint` before every commit.
@@ -919,7 +919,7 @@ The riskiest algorithm in this plan, and the one most able to pass an integratio
 **Interfaces:**
 - Consumes: nothing
 - Produces:
-  - `MAX_ROUND_TRIPS: 8`, `MAX_ITEMS_EXAMINED: 10_000`
+  - `MAX_ROUND_TRIPS: 40`, `MAX_ITEMS_EXAMINED: 10_000`
   - `ShardItem` — `{ sk: string }`
   - `ShardPage<T>` — `{ items: T[]; scanned: number; lastEvaluatedKey: Record<string, unknown> | undefined }`
   - `ShardFetch<T>` — `(shard: string, startKey: Record<string, unknown> | undefined) => Promise<ShardPage<T>>`
@@ -1099,7 +1099,7 @@ import 'server-only'
 /** Bounds what one page of the log viewer can cost. A FilterExpression is
  * applied after Limit, so a narrow filter over a wide range can read a great
  * deal and match almost nothing. */
-export const MAX_ROUND_TRIPS = 8
+export const MAX_ROUND_TRIPS = 40
 export const MAX_ITEMS_EXAMINED = 10_000
 
 export interface ShardItem {

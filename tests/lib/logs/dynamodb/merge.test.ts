@@ -63,6 +63,24 @@ function fakeFetch(pages: Record<string, FakePage[]>): {
 
 const SHARDS = ['log#0', 'log#1']
 
+/** A single Query response's ScannedCount can never exceed its Limit — see
+ * FILTERED_SHARD_LIMIT in dynamodb/index.ts, which uses 250 for a filtered
+ * query, the largest Limit the real driver ever passes. A single fake page
+ * claiming to have scanned thousands of items is a shape DynamoDB could never
+ * hand back; these tests instead spend the item budget across this many
+ * pages, so they exercise page shapes the real driver can actually produce. */
+const REALISTIC_FILTERED_SCANNED = 250
+
+/** `rounds` identical heavy, filtered-empty, unexhausted pages, followed by
+ * one more so the shard is never accidentally reported exhausted on the exact
+ * round a test inspects it. */
+function heavyRun(rounds: number, stop: string): FakePage[] {
+  return [
+    ...Array.from({ length: rounds }, () => ({ items: [], scanned: REALISTIC_FILTERED_SCANNED, stop })),
+    [],
+  ]
+}
+
 test('merges shards into one descending run', async () => {
   const { fetch } = fakeFetch({
     'log#0': [['f', 'd', 'b']],
@@ -225,19 +243,22 @@ test('an exhausted shard is excluded from floor but its buffered match still dra
   //
   // Here the budget genuinely is spent, and the shards are a genuine mix:
   // log#0 is exhausted after one page but still has a real match ('z')
-  // sitting in its buffer; log#1 spends the whole item budget in a single
-  // heavy-scanned fetch and is left not exhausted, at continuation 'm';
-  // log#2 is exhausted immediately (nothing there at all). floor must come
-  // only from log#1 — the sole non-exhausted shard — and log#0's own
-  // exhausted status must not block its buffered 'z' from draining: 'z' is
-  // beyond floor regardless of whether log#0 itself ever contributes to it.
+  // sitting in its buffer; log#1 alone stays hungry every round after that —
+  // its filtered-empty pages, each capped at a realistic Limit, spend the
+  // whole item budget over many rounds and it is left not exhausted, at
+  // continuation 'm'; log#2 is exhausted immediately (nothing there at all).
+  // floor must come only from log#1 — the sole non-exhausted shard — and
+  // log#0's own exhausted status must not block its buffered 'z' from
+  // draining: 'z' is beyond floor regardless of whether log#0 itself ever
+  // contributes to it.
   const shards = ['log#0', 'log#1', 'log#2']
   const { fetch } = fakeFetch({
     'log#0': [['z']],
-    // A single heavy-scanned page crosses MAX_ITEMS_EXAMINED immediately, so
-    // log#1 is fetched exactly once and its continuation ('m') is still what
-    // it was on that one fetch — no second round to complicate the trace.
-    'log#1': [{ items: [], scanned: 10_000, stop: 'm' }, []],
+    // log#0 and log#2 are fetched once, in round one, and then stop being
+    // hungry (buffer non-empty / exhausted), so log#1 alone accumulates
+    // examined count every round after that — 40 rounds of 250 crosses
+    // MAX_ITEMS_EXAMINED.
+    'log#1': heavyRun(40, 'm'),
     'log#2': [[]],
   })
 
@@ -252,15 +273,16 @@ test('an exhausted shard is excluded from floor but its buffered match still dra
 
 test('an empty but unexhausted page contributes its own stopping point', async () => {
   // The central case: a page with zero items still carries a continuation
-  // key (a heavy scanned count, not the page count, trips the budget after
-  // one round here), and that key — not "nothing left" — is what
-  // resumeFrom must report. This is what lets the caller resume a page that
-  // would otherwise render as "no matching logs" with matches sitting just
-  // past where scanning gave up.
-  const heavy = { items: [], scanned: 6_000, stop: 'far-along' }
+  // key, and that key — not "nothing left" — is what resumeFrom must report.
+  // This is what lets the caller resume a page that would otherwise render as
+  // "no matching logs" with matches sitting just past where scanning gave up.
+  // Both shards stay hungry every round (every page is filtered-empty), so
+  // together they spend 500/round; 20 rounds crosses MAX_ITEMS_EXAMINED —
+  // well under the 40-round backstop, so the item cap is unambiguously what
+  // ends this page.
   const { fetch } = fakeFetch({
-    'log#0': [heavy, []],
-    'log#1': [heavy, []],
+    'log#0': heavyRun(20, 'far-along'),
+    'log#1': heavyRun(20, 'far-along'),
   })
 
   const out = await collectPage({
@@ -316,11 +338,12 @@ test('the drain picks the global-best candidate across shards, not the first one
   // decoupled to 'b' (below both of log#0's items) via the object page
   // form — realistic: DynamoDB's FilterExpression can drop the last
   // examined item even though an earlier one in the same page matched.
-  // log#2 alone spends the whole item budget in one heavy-scanned fetch,
-  // ending at continuation 'a' — the smallest of the three, so it never
-  // wins floor, just forces the budget to trip. log#3 is exhausted with a
-  // single buffered item 'c', which sits below floor and must be left
-  // behind.
+  // log#2 is the only shard still hungry after round one (log#0, log#1,
+  // log#3 all end round one with a non-empty buffer or exhausted), so it
+  // alone accumulates examined count across the remaining rounds, ending at
+  // continuation 'a' — the smallest of the three, so it never wins floor,
+  // just forces the budget to trip. log#3 is exhausted with a single
+  // buffered item 'c', which sits below floor and must be left behind.
   //
   // floor = max('g', 'b', 'a') = 'g'. Both log#0's 'n' and log#1's 't' are
   // >= 'g', so the drain must choose between them twice (t first, since
@@ -330,7 +353,7 @@ test('the drain picks the global-best candidate across shards, not the first one
   const { fetch } = fakeFetch({
     'log#0': [['n', 'g'], []],
     'log#1': [{ items: ['t'], stop: 'b' }, []],
-    'log#2': [{ items: [], scanned: 10_000, stop: 'a' }, []],
+    'log#2': heavyRun(40, 'a'),
     'log#3': [['c']],
   })
 
@@ -345,20 +368,17 @@ test('the drain picks the global-best candidate across shards, not the first one
 
 test('a buffered row below floor is not drained, since something unseen could still outrank it', async () => {
   // log#0 is exhausted after one page, leaving 'g' buffered and unconsumed.
-  // log#1 alone spends the whole item budget across two heavy-scanned empty
-  // pages, ending not exhausted with continuation 'j'. floor is therefore
-  // 'j' — but log#0's buffered 'g' is *below* floor ('g' < 'j'), meaning
-  // log#1 might still hold something unseen between 'j' and 'g' that
-  // outranks it. Draining 'g' anyway would be exactly the class of bug this
-  // whole design exists to prevent, just moved from "lost" to "returned out
-  // of order". Nothing should be emitted; only the cursor should resume.
+  // log#1 alone stays hungry every round after that, spending the whole item
+  // budget across many filtered-empty pages capped at a realistic Limit,
+  // ending not exhausted with continuation 'j'. floor is therefore 'j' — but
+  // log#0's buffered 'g' is *below* floor ('g' < 'j'), meaning log#1 might
+  // still hold something unseen between 'j' and 'g' that outranks it.
+  // Draining 'g' anyway would be exactly the class of bug this whole design
+  // exists to prevent, just moved from "lost" to "returned out of order".
+  // Nothing should be emitted; only the cursor should resume.
   const { fetch } = fakeFetch({
     'log#0': [['g']],
-    'log#1': [
-      { items: [], scanned: 6_000, stop: 'k' },
-      { items: [], scanned: 6_000, stop: 'j' },
-      [],
-    ],
+    'log#1': heavyRun(40, 'j'),
   })
 
   const out = await collectPage({
@@ -373,15 +393,16 @@ test('a buffered row below floor is not drained, since something unseen could st
 test('ascending: a buffered match at floor is drained and returned', async () => {
   // The ascending mirror of the descending boundary-drain test above. log#0
   // buffers ['c'] with its own continuation at 'c' (the boundary case: the
-  // last examined item passed the filter and is also the continuation key).
-  // log#1 alone spends the whole item budget in one heavy-scanned fetch,
-  // ending at continuation 'z' — well above 'c', so it never wins the
-  // ascending extremum (the minimum). floor = min('c', 'z') = 'c', and
-  // log#0's buffered 'c' sits exactly at floor: it must be drained under
-  // `<=`, the ascending mirror of the descending `>=` guard.
+  // last examined item passed the filter and is also the continuation key) —
+  // and, having a non-empty buffer, is never refetched, so log#1 alone
+  // accumulates examined count for the rest of the run, ending at
+  // continuation 'z' — well above 'c', so it never wins the ascending
+  // extremum (the minimum). floor = min('c', 'z') = 'c', and log#0's
+  // buffered 'c' sits exactly at floor: it must be drained under `<=`, the
+  // ascending mirror of the descending `>=` guard.
   const { fetch } = fakeFetch({
     'log#0': [['c'], []],
-    'log#1': [{ items: [], scanned: 10_000, stop: 'z' }, []],
+    'log#1': heavyRun(40, 'z'),
   })
 
   const out = await collectPage({
@@ -397,14 +418,15 @@ test('ascending: a buffered row above floor is not drained', async () => {
   // The ascending mirror of the descending below-floor test. log#0 is
   // exhausted after one page, leaving 'p' buffered and unconsumed — 'p' is
   // above where log#1 (the only non-exhausted shard, and the only
-  // contributor to floor) has scanned to. log#1 alone spends the whole item
-  // budget in one heavy-scanned fetch, ending at continuation 'j'. floor =
-  // 'j', and log#0's buffered 'p' is above it ('p' > 'j'): log#1 might still
-  // hold something unseen between 'j' and 'p' that belongs first, so 'p'
-  // must not be drained.
+  // contributor to floor) has scanned to. log#1 alone stays hungry every
+  // round after that, spending the whole item budget across many
+  // filtered-empty pages capped at a realistic Limit, ending at continuation
+  // 'j'. floor = 'j', and log#0's buffered 'p' is above it ('p' > 'j'): log#1
+  // might still hold something unseen between 'j' and 'p' that belongs
+  // first, so 'p' must not be drained.
   const { fetch } = fakeFetch({
     'log#0': [['p']],
-    'log#1': [{ items: [], scanned: 10_000, stop: 'j' }, []],
+    'log#1': heavyRun(40, 'j'),
   })
 
   const out = await collectPage({
@@ -443,11 +465,14 @@ test('a large scanned count trips the budget even when nothing is returned', asy
   // A narrow filter over a wide range can scan thousands of items while
   // returning almost none of them. The budget must react to what DynamoDB
   // read (scanned), not to what came back — otherwise a filtered query would
-  // look "cheap" and this exact scenario would go unbounded.
-  const heavyFilter = { items: [], scanned: 5_000 }
+  // look "cheap" and this exact scenario would go unbounded. Both shards stay
+  // hungry every round at a realistic per-fetch Limit (250 each), so together
+  // they cross MAX_ITEMS_EXAMINED after 20 round trips — well short of the
+  // 40-round backstop. If the budget counted returned items instead, nothing
+  // would trip here until both shards ran out of pages on their own.
   const { fetch, calls } = fakeFetch({
-    'log#0': [heavyFilter, heavyFilter],
-    'log#1': [heavyFilter, heavyFilter],
+    'log#0': heavyRun(20, 'stop-0'),
+    'log#1': heavyRun(20, 'stop-1'),
   })
 
   const out = await collectPage({
@@ -456,9 +481,5 @@ test('a large scanned count trips the budget even when nothing is returned', asy
 
   expect(out.rows).toEqual([])
   expect(out.hasMore).toBe(true)
-  // Two shards scanning 5,000 apiece cross MAX_ITEMS_EXAMINED (10,000) after
-  // a single round trip — far short of MAX_ROUND_TRIPS. If the budget
-  // counted returned items instead, nothing would trip here until both
-  // shards ran out of pages on their own, two round trips later.
-  expect(calls()).toBe(2)
+  expect(calls()).toBe(40)
 })

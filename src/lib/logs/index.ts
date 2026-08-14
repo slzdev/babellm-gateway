@@ -15,8 +15,7 @@ export async function logRequest(entry: RequestLogEntry): Promise<void> {
 }
 
 export {
-  DRIVERS, LOG_SETTINGS_TTL_MS, clearRequestLogStoreCache,
-  getRequestLogStore, resolveRequestLogStore,
+  DRIVERS, LOG_SETTINGS_TTL_MS, clearRequestLogStoreCache, resolveRequestLogStore,
 } from './registry'
 export type { StoreResolution } from './registry'
 export * from './types'

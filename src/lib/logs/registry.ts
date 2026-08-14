@@ -1,7 +1,7 @@
 import 'server-only'
 import * as settings from '@/lib/settings'
 import {
-  DEFAULT_PAYLOAD_MAX_BYTES, DEFAULT_RETENTION_MONTHS, type LoggingSettings,
+  DEFAULT_PAYLOAD_MAX_BYTES, type LoggingSettings,
 } from '@/lib/settings'
 import { dynamodbStore } from './dynamodb'
 import { postgresStore } from './postgres'
@@ -88,10 +88,6 @@ export async function resolveRequestLogStore(): Promise<StoreResolution> {
   return inflight
 }
 
-export async function getRequestLogStore(): Promise<RequestLogStore> {
-  return (await resolveRequestLogStore()).store
-}
-
 async function resolve(): Promise<StoreResolution> {
   let loggingSettings: LoggingSettings
   try {
@@ -102,13 +98,24 @@ async function resolve(): Promise<StoreResolution> {
     )
     // Refusing to serve requests because a *logging* setting could not be read
     // would be the wrong hierarchy of concerns.
+    //
+    // retentionMonths is 0 here, not DEFAULT_RETENTION_MONTHS — the same
+    // reasoning maintenance.ts already applies to a settings-read failure at
+    // its own layer ("a guess at the operator's policy rather than the
+    // policy itself"). For the DynamoDB driver this settings object is not
+    // just advisory: it is stamped into every item's TTL at write time, and
+    // that driver's retention is explicitly non-retroactive, so a guessed
+    // value written here is permanent — outliving a shorter configured
+    // policy, or dropping nothing under a longer one, for as long as the
+    // outage that produced it. 0 already means "keep forever" to every
+    // driver, so a guess never deletes on this path either.
     return {
       store: FALLBACK_STORE,
       configured: 'unknown',
       fallback: 'settings_error',
       settings: {
         store: FALLBACK_STORE.name,
-        retentionMonths: DEFAULT_RETENTION_MONTHS,
+        retentionMonths: 0,
         payloadMaxBytes: DEFAULT_PAYLOAD_MAX_BYTES,
       },
     }

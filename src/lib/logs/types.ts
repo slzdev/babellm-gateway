@@ -121,6 +121,12 @@ export interface LogRow {
   finalUpstreamModel: string | null
   promptTokens: number | null
   completionTokens: number | null
+  /** A decimal string. Its lexical form is driver-specific: Postgres's
+   * numeric(18,9) column normalizes on read ('0.03' comes back
+   * '0.030000000'), while DynamoDB stores the string verbatim ('0.03' stays
+   * '0.03'). Compare with `Number(...)`, never by string equality or
+   * length — both are true only by coincidence of which store is
+   * configured. */
   costUsd: string | null
   payloadCaptured: boolean
 }
@@ -139,6 +145,8 @@ export interface LogDetail extends LogRow {
   finalTargetId: string | null
   cachedTokens: number | null
   reasoningTokens: number | null
+  /** See the note on `LogRow.costUsd` — the same driver-specific lexical
+   * form applies here. */
   inputCostUsd: string | null
   cachedCostUsd: string | null
   outputCostUsd: string | null
