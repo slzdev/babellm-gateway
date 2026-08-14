@@ -1,5 +1,6 @@
 import 'server-only'
 import { uuidv7Bound } from '@/lib/uuid'
+import { addMonths, monthStart } from './months'
 
 /** Months provisioned beyond the current one. There is no DEFAULT partition
  * to catch a write for an unprovisioned month, so this lead time is the only
@@ -14,18 +15,7 @@ export interface Queryable {
   query(text: string): Promise<{ rows: Array<Record<string, unknown>> }>
 }
 
-/** The first instant of `date`'s month, in UTC. Never the local zone: a
- * partition boundary that moved with a deployment's timezone would put the
- * same row in different months on different instances. */
-export function monthStart(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1))
-}
-
-/** Month arithmetic on the truncated month, so a caller passing the 31st
- * cannot land two months out — Date.UTC(2026, 1, 31) is 3 March. */
-export function addMonths(date: Date, count: number): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + count, 1))
-}
+export { addMonths, monthStart } from './months'
 
 export function partitionName(date: Date): string {
   const start = monthStart(date)
