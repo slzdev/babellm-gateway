@@ -552,6 +552,29 @@ docker run -d \
 already have encrypted provider credentials under a different key** —
 rotating it makes existing rows undecryptable.
 
+### Health checks
+
+`GET /health/check` answers `200` with a small JSON body for as long as the
+process is serving:
+
+```json
+{ "status": "ok", "uptime": 1423 }
+```
+
+`uptime` is whole seconds since the process started, which tells a container
+that is simply up apart from one that is restart-looping. `HEAD /health/check`
+answers the same status with no body, for balancers that probe with it. The
+endpoint takes no API key and no admin session, so a load balancer reaches it
+directly, and it is never cached.
+
+It is a **liveness** check, not a readiness one: it reports that this instance
+is running, not that Postgres or the counter store is reachable. That is
+deliberate — those are shared by every instance, so failing the probe when one
+of them blips would pull the whole fleet out of rotation at once and turn a
+degraded gateway into an unreachable one. Watch the dependencies through
+monitoring instead: an instance that answers `/health/check` can still be
+failing requests.
+
 ### Migrations
 
 The container's entrypoint runs migrations before starting the server, so a
