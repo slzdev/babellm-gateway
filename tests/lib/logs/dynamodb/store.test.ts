@@ -4,6 +4,7 @@ import { uuidv7 } from '@/lib/uuid'
 import type { LoggingSettings } from '@/lib/settings'
 import type { ReadableRequestLogStore, RequestLogEntry } from '@/lib/logs/types'
 import { resetLogsTable, testDynamoConfig } from '../../../helpers/dynamo'
+import { storeContract } from '../store-contract'
 
 const config = testDynamoConfig()
 const when = config ? test : test.skip
@@ -19,6 +20,11 @@ beforeEach(async () => {
   await resetLogsTable()
   store = createDynamoStore({ table: config.table, endpoint: config.endpoint, region: config.region })
 })
+
+// Guarded, not skipped: without the container there is no `store` for the
+// suite to call at all. The driver-specific tests above use test.skip for the
+// same reason.
+if (config) storeContract('dynamodb', () => store)
 
 function entry(overrides: Partial<RequestLogEntry> = {}): RequestLogEntry {
   return {

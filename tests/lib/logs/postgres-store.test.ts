@@ -6,8 +6,11 @@ import { ensurePartitions } from '@/lib/logs/partitions'
 import { uuidv7 } from '@/lib/uuid'
 import type { RequestLogEntry } from '@/lib/logs/types'
 import { resetDb } from '../../helpers/db'
+import { storeContract } from './store-contract'
 
 beforeEach(resetDb)
+
+storeContract('postgres', () => postgresStore)
 
 // postgresStore.write ignores settings — this stands in for whatever the
 // registry would have resolved.
