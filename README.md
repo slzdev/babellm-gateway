@@ -185,10 +185,6 @@ primary key and the `/logs/<id>` detail page's URL:
 docker compose logs gateway | grep 018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e50
 ```
 
-The default store writes to the gateway's own database, which is right for
-development and low traffic; at high request rates the table and its three
-indexes compete with the queries that serve requests.
-
 ### Upgrading from an earlier version
 
 `postgres` is the default store, so a gateway upgraded from a version that
