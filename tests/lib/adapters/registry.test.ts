@@ -92,8 +92,16 @@ test('openai_compatible without a base URL is rejected', () => {
   ).toThrow(/base URL/i)
 })
 
-test.each(['gemini', 'bedrock'] as const)('%s is not yet implemented', (adapter) => {
-  expect(() => createAdapter(provider({ adapter }))).toThrow(UnsupportedOperationError)
+test('bedrock is not yet implemented', () => {
+  expect(() => createAdapter(provider({ adapter: 'bedrock' }))).toThrow(UnsupportedOperationError)
+})
+
+test('gemini gets a real adapter', () => {
+  const adapter = createAdapter(
+    provider({ adapter: 'gemini', credentials: encryptJson({ apiKey: 'g-key' }) }),
+  )
+  expect(typeof adapter.chat).toBe('function')
+  expect(typeof adapter.listModels).toBe('function')
 })
 
 test('resolveApiFlavor defaults to chat_completions', () => {

@@ -69,9 +69,9 @@ export async function syncAllAction(): Promise<SyncAllSummary> {
   revalidatePath('/catalog')
   revalidatePath('/providers')
 
-  // `unsupported` (gemini, bedrock — no adapter until Phase 3) is a normal
-  // outcome, not a failure, so it gets its own bucket rather than being
-  // folded into `failed`.
+  // `unsupported` (bedrock — no adapter until Phase 3) is a normal outcome,
+  // not a failure, so it gets its own bucket rather than being folded into
+  // `failed`.
   return {
     ok: results.filter((r) => r.status === 'ok').length,
     unsupported: results.filter((r) => r.status === 'unsupported').length,

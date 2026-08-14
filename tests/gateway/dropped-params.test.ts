@@ -105,3 +105,39 @@ test('a streaming response carries the header too', async () => {
   expect(res.headers.get('x-babellm-dropped-params')).toBe('n')
   await res.text()
 })
+
+test('a gemini target reports what Gemini cannot express', async () => {
+  const { apiKey } = await seedTargets({ targets: [{ name: 'gem', adapter: 'gemini' }] })
+
+  const res = await handleChatCompletions(
+    chatRequest(
+      {
+        model: 'house-model',
+        messages: [{ role: 'user', content: 'hi' }, { role: 'system', content: 'be terse' }],
+        logprobs: true,
+      },
+      apiKey,
+    ),
+    fakeAdapterByProvider({ gem: { chat: vi.fn().mockResolvedValue(completion('gem')) } }),
+  )
+
+  expect(res.status).toBe(200)
+  expect(res.headers.get('x-babellm-dropped-params')?.split(',').sort())
+    .toEqual(['logprobs', 'system_message_hoisted'])
+})
+
+test('a gemini target reports nothing for a request it can express fully', async () => {
+  // `n: 3` is the case that separates the two translators: the Responses
+  // flavor drops it, Gemini sends it as candidateCount.
+  const { apiKey } = await seedTargets({ targets: [{ name: 'gem', adapter: 'gemini' }] })
+
+  const res = await handleChatCompletions(
+    chatRequest(
+      { model: 'house-model', messages: [{ role: 'user', content: 'hi' }], n: 3 },
+      apiKey,
+    ),
+    fakeAdapterByProvider({ gem: { chat: vi.fn().mockResolvedValue(completion('gem')) } }),
+  )
+
+  expect(res.headers.get('x-babellm-dropped-params')).toBeNull()
+})

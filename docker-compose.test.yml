@@ -1,0 +1,51 @@
+# Disposable Postgres for the test suite and for browser checks, on port 5434.
+#
+#   pnpm test:db:up     # start it (waits until it accepts connections)
+#   pnpm test:db:down   # stop it and throw the data away
+#
+# It exists so that nothing automated ever touches the development database
+# on 5432. `resetDb()` in tests/helpers/db.ts TRUNCATEs every table it knows
+# about, and a browser check drives the real dashboard — either one aimed at
+# 5432 destroys whatever a developer had set up there.
+#
+# `name:` pins the Compose project. Without it, Compose derives the project
+# from the directory, this file would share a project with docker-compose.yml,
+# and bringing this stack up would *recreate the development container* with
+# these settings — the exact accident the file is meant to prevent. The
+# service is called `postgres-test` rather than `postgres` for the same
+# reason.
+name: babellm-test
+
+services:
+  postgres-test:
+    image: postgres:17-alpine
+    # Not `unless-stopped`: this database holds nothing worth resurrecting
+    # when Docker restarts.
+    restart: "no"
+    environment:
+      POSTGRES_USER: babellm
+      POSTGRES_PASSWORD: babellm
+      POSTGRES_DB: babellm_test
+      # Postgres refuses a data directory that is group- or world-readable,
+      # and a tmpfs mount is created 1777. Pointing PGDATA at a subdirectory
+      # lets initdb create that subdirectory itself, with the 0700 it wants.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5434:5432"
+    # In RAM, so the data cannot outlive the container and cannot accumulate
+    # across runs. Also the reason the suite is faster here than on 5432.
+    tmpfs:
+      - /var/lib/postgresql/data:size=1g
+    # Durability buys nothing on a database that dies with the container, and
+    # turning it off is the cheapest speedup available to the test suite.
+    command: postgres -c fsync=off -c full_page_writes=off -c synchronous_commit=off
+    # `pnpm dev:test-db` uses babellm_dev so that a suite run's TRUNCATE
+    # cannot pull state out from under a browser session. Created here
+    # because POSTGRES_DB only ever creates one database.
+    volumes:
+      - ./scripts/test-db-init.sql:/docker-entrypoint-initdb.d/10-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U babellm -d babellm_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

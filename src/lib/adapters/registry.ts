@@ -1,6 +1,7 @@
 import { decryptJson } from '@/lib/crypto'
 import type { ProviderRow } from '@/lib/db/schema'
 import { UnsupportedOperationError } from '@/lib/gateway/errors'
+import { createGeminiAdapter } from './gemini'
 import { createOpenAIAdapter } from './openai'
 import { createResponsesAdapter } from './openai/responses'
 import type { ApiFlavor, ProviderAdapter, ProviderConfig, ProviderRuntime } from './types'
@@ -55,6 +56,7 @@ export function createAdapter(provider: ProviderRow): ProviderAdapter {
       }
       return adapterFor(runtime)
     case 'gemini':
+      return createGeminiAdapter(runtime)
     case 'bedrock':
       throw new UnsupportedOperationError(
         `The "${runtime.adapter}" adapter is not available yet.`,

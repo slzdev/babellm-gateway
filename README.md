@@ -59,11 +59,32 @@ Copy `.env.example` to `.env` and fill these in for local development.
    The dashboard is at `http://localhost:3000` (redirects to `/login`), and
    the gateway is at `http://localhost:3000/v1/*`.
 
-Tests run against a disposable database, driven by `.env.test`:
+## Tests and browser checks
+
+Both run against a **disposable** Postgres on port 5434 — defined in
+`docker-compose.test.yml`, kept in a tmpfs, and thrown away with the
+container. Never the development database on 5432: the suite TRUNCATEs every
+table between tests, so pointing it at 5432 would delete whatever you had set
+up in the dashboard.
 
 ```bash
+pnpm test:db:up                  # start it
+cp .env.test.example .env.test   # once per checkout — .env.test is gitignored
 pnpm test
+pnpm test:db:down                # when you are done
 ```
+
+To click through the dashboard against a throwaway database — to try something
+out, or to verify a change without disturbing your own data:
+
+```bash
+pnpm dev:test-db
+```
+
+That migrates a separate `babellm_dev` database on 5434 and serves the
+dashboard on `http://localhost:3001`, so it runs *alongside* `pnpm dev` on 3000
+instead of replacing it. It still reads `.env` for everything but the database,
+so log in with your usual `ADMIN_PASSWORD`.
 
 ## Run the whole stack
 
@@ -250,7 +271,7 @@ a 400 or a 401 would fail the same way at every provider, so spending the
 rest of the chain on it only delays the answer. When the chain is exhausted
 the client gets the last provider's actual error rather than a blanket 502,
 so three rate-limited targets read as `429`. A target whose provider type has
-no adapter yet (`gemini`, `bedrock`) is skipped and the chain continues.
+no adapter yet (`bedrock`) is skipped and the chain continues.
 
 Streaming requests fail over on the same loop, up to their first chunk: the
 response is not committed until that chunk is in hand. After it the response
@@ -351,6 +372,82 @@ Two limitations worth planning around:
   more than one instance skews the distribution — each process starts at zero
   and they all favour the same target — and a restart resets it.
 
+### Gemini adapter
+
+A `gemini` provider speaks Google's `generateContent` API through the
+`@google/genai` SDK. As with a Responses-flavored provider, the gateway's own
+endpoint does not change: `/v1/chat/completions` stays the only ingress, and
+translation happens in both directions around it.
+
+A few things to know before pointing production traffic at a Gemini provider:
+
+- **System and developer messages are hoisted into `systemInstruction`.**
+  Gemini's `contents` accepts only `user` and `model` turns, so there is
+  nowhere else to put them. This only reorders the conversation when a system
+  message follows the first non-system turn — a client that sends its system
+  message first, as most do, sees no reordering at all — and only then is
+  `system_message_hoisted` named in `x-babellm-dropped-params`.
+- **`reasoning_effort` maps onto Gemini's thinking levels** — `minimal`,
+  `low`, `medium`, `high`, one to one — and thoughts come back the way a
+  Responses provider's reasoning summary does: as `message.reasoning_content`
+  (and `delta.reasoning_content` when streaming), a de-facto convention rather
+  than part of the OpenAI API, and never fed back upstream. Thinking is
+  requested only when the client sends a `reasoning_effort`, unless the
+  provider sets `requestReasoningSummary: true` — the same opt-in the
+  Responses flavor uses, honoured here so one provider setting means one thing
+  across adapters. A `reasoning_effort` value outside the four known levels is
+  dropped and reported as `reasoning_effort`.
+- **Thought signatures are not preserved.** A `functionCall` part's
+  `thoughtSignature` travels out with the response but is never sent back on
+  the next turn — thoughts leave the gateway one-way, the same as a Responses
+  provider's reasoning items. Some of Gemini's newer thinking models are known
+  to treat a returned function call that is missing its signature as a
+  request error, so multi-turn function calling against one of those models
+  may be rejected on the second turn. Prefer a non-thinking model for tool
+  loops until this is carried through.
+- **Model discovery fills in more of the catalog than an OpenAI-shaped
+  provider's model list does.** Syncing a Gemini provider's catalog records
+  each model's context window and maximum output tokens, plus whether it
+  streams and whether it is a chat or embedding model — fields an
+  OpenAI-shaped provider's `/models` response never reports.
+
+Parameters Gemini's `GenerateContentConfig` cannot express are dropped rather
+than rejected, and named in `x-babellm-dropped-params` and the request log
+line the same way a Responses provider's are: `logit_bias`, `logprobs`,
+`top_logprobs`, `parallel_tool_calls`, and `user`. As with Responses, a value
+that already matches what Gemini does by default — `logprobs: false`,
+`parallel_tool_calls: true` — is not reported; `parallel_tool_calls: false`
+is, because Gemini has no way to honour it. A `tool` message whose
+`tool_call_id` cannot be resolved to a function name is carried as a `user`
+message reading `[tool result] <content>` and reports
+`unmatched_tool_call_id`; an assistant tool call whose arguments are not valid
+JSON reports `malformed_tool_arguments`; a content part that is none of text,
+`image_url`, or `video_url` (audio, for instance) reports
+`unsupported_content_part`.
+
+### Images and video
+
+Gemini accepts a caller's media by reference, so an `image_url` or `video_url`
+part is passed straight through as its `fileData.fileUri` — the gateway never
+downloads it. Public HTTPS and pre-signed URLs (S3, GCS, Azure SAS) both work,
+and a `data:` URI is still inlined. Note that external URL input requires
+Gemini 2.5 or newer; an older model will reject it upstream.
+
+Gemini requires a MIME type alongside the URL, which a Chat Completions part
+does not carry, so it is derived from the URL's file extension. For a URL that
+has no usable extension, name it on the part:
+
+```json
+{ "type": "video_url",
+  "video_url": { "url": "https://cdn.example.com/v/9f2b", "mime_type": "video/mp4" } }
+```
+
+`mime_type` is an extension to the OpenAI schema and is accepted on `image_url`
+too. A media URL whose type cannot be determined, or whose type contradicts the
+part it appears in, fails the request with a `400` rather than being dropped —
+answering a question about a video the model never received is worse than
+refusing it.
+
 ### Endpoint paths
 
 An `openai` or `openai_compatible` provider asks its upstream for three
@@ -439,9 +536,20 @@ policy-driven routing across every route target. Everything below is
 - **No circuit breaker.** Routing tries every policy's chain on every
   request, so a provider that is down costs one wasted attempt each time
   rather than being taken out of rotation. See [Routing](#routing).
-- **No Gemini or Bedrock adapters, no `/v1/models`, no `/v1/embeddings`**
-  (Phase 3). Configuring a `gemini` or `bedrock` provider is accepted by
-  the dashboard but every request to it returns `501 unsupported_operation`.
+- **No Bedrock adapter, no `/v1/models`, no `/v1/embeddings`** (Phase 3).
+  Configuring a `bedrock` provider is accepted by the dashboard but every
+  request to it returns `501 unsupported_operation`.
+- **A Gemini provider hands caller-supplied media URLs to Google.** An
+  `image_url` or `video_url` is forwarded by reference rather than downloaded,
+  so a pre-signed URL and whatever credential its query string carries are
+  passed to Google to dereference. Retrieval failures — unreachable, behind a
+  login, or refused by Google's content-moderation check on the URL — surface
+  as an upstream error rather than a gateway one. Media on a Gemini target
+  older than 2.5 fails upstream, because external URL input is not supported
+  there.
+- **Retention is coarse: whole calendar months, never individual days.** See
+  [Retention](#retention). Prompt and completion content captured by a key
+  with payload logging enabled survives until its whole month rolls off.
 
 ## Learn more
 
