@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest'
+import { monthStart } from '@/lib/logs/months'
 import { uuidv7 } from '@/lib/uuid'
 import type { LoggingSettings } from '@/lib/settings'
 import type { ReadableRequestLogStore, RequestLogEntry } from '@/lib/logs/types'
@@ -134,20 +135,20 @@ export function storeContract(
     })
 
     test('a time range selects on the id, which carries the clock', async () => {
-      // Relative to the moment the suite runs, not hardcoded calendar dates:
-      // Postgres only ever has partitions for the current month plus a few
-      // ahead (there is no DEFAULT partition to catch a write outside that
-      // window — see partitions.ts), so an absolute "old" date risks landing
-      // in a month resetDb() never provisioned. Both ids below stay within
-      // the current month while still exercising the id-carries-the-clock
-      // filter.
-      const now = new Date()
-      const old = uuidv7(new Date(now.getTime() - 60 * 60 * 1000))
-      const recent = uuidv7(now)
+      // Anchored to the start of the current UTC month, not to `now`. Postgres
+      // provisions partitions for the current month and the three ahead, never
+      // behind, so a fixture reaching back across the month boundary has no
+      // partition to land in — which is what an absolute date, or a `now - 1h`
+      // offset run just after midnight on the 1st, would do.
+      const base = monthStart(new Date()).getTime()
+      const HOUR = 60 * 60 * 1000
+      const old = uuidv7(new Date(base + HOUR))
+      const from = new Date(base + 2 * HOUR)
+      const recent = uuidv7(new Date(base + 3 * HOUR))
       await store().write(entry({ id: old }), settings)
       await store().write(entry({ id: recent }), settings)
 
-      const page = await store().query({ limit: 10, from: new Date(now.getTime() - 30 * 60 * 1000) })
+      const page = await store().query({ limit: 10, from })
       expect(page.rows.map((r) => r.id)).toEqual([recent])
     })
 
