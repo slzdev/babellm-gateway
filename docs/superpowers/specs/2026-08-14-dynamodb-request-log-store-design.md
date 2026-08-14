@@ -164,13 +164,28 @@ limit. The driver applies a second, combined cap:
    2. `errorMessage` truncated to 4096, `droppedParams` dropped
    3. `attempts` capped at 100, their strings clamped to 128
 
-Capping payloads alone is not enough, because three other fields are unbounded:
-`attempts` grows with a misconfigured route, `errorMessage` is whatever an
-upstream provider chose to return, and `droppedParams` grows with the request.
-Any one of them can exceed 400 KB on its own.
+Alongside the shed, four identifier-like fields are clamped to 128 characters
+unconditionally at write, exactly as `model` and `finalUpstreamModel` already are:
+`errorType`, `errorCode`, `keyName`, and `finalProvider`.
 
-After stage 3 nothing unbounded remains, which is what makes the write **fit by
-construction** and lets the shed terminate. Each stage runs only when the item is
+Capping payloads alone is not enough, because several other fields are unbounded.
+`attempts` grows with a misconfigured route and `droppedParams` grows with the
+request. More importantly, three fields come straight from an upstream provider's
+error object (`src/lib/gateway/errors.ts:48-62`): `errorMessage`, `errorType`, and
+`errorCode` — the last of which the OpenAI adapter takes verbatim from the `code`
+field of an upstream's JSON error body (`src/lib/adapters/openai/errors.ts:25`).
+Any "OpenAI-compatible" third-party endpoint can therefore put an arbitrarily long
+string in it. Any one of these fields can exceed 400 KB on its own.
+
+The split between clamping and shedding follows what the field is. `errorType` and
+`errorCode` are short identifiers, so a 128-character bound costs nothing real and
+an unconditional clamp is simpler to reason about than another shed stage.
+`errorMessage` is prose — genuinely useful diagnostic content — so it is kept in
+full whenever the item has room, and only truncated under stage 2.
+
+After the clamps and stage 3, every remaining field is bounded: clamped strings,
+numbers, booleans, uuids, and fixed-shape objects. That is what makes the write
+**fit by construction** and lets the shed terminate. Each stage runs only when the item is
 still oversized, so an ordinary few-KB entry passes through untouched. Without
 this, a `ValidationException` loses the entire log line — and because
 `logRequest` is deliberately not awaited on the request path, that loss surfaces
