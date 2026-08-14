@@ -31,8 +31,8 @@ function usage(reading: UsageReading | undefined) {
   return [
     reading.rpm !== null && `${reading.rpm} rpm`,
     reading.tpm !== null && `${reading.tpm} tpm`,
-    reading.monthUsd !== null && `$${reading.monthUsd.toFixed(2)}/mo`,
-    reading.totalUsd !== null && `$${reading.totalUsd.toFixed(2)} total`,
+    reading.monthUsd !== null && `$${reading.monthUsd.toFixed(4)}/mo`,
+    reading.totalUsd !== null && `$${reading.totalUsd.toFixed(4)} total`,
   ].filter(Boolean).join(' · ') || '—'
 }
 
