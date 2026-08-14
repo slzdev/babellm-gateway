@@ -163,6 +163,33 @@ off the air.
 unlisted `openai_compatible` endpoint has no models.dev namespace, so those
 models stay unenriched unless you override them by hand.
 
+## Dashboard
+
+`/dashboard` — the page after login — shows usage, cost, and errors across
+the gateway: stat tiles with the period-over-period delta, time-series
+charts, and breakdowns by model, key, user, and provider. Filter by time
+range (including a custom from/to), key, user, or model; **View these
+requests** hands the same filter to `/logs` for the individual rows behind
+any number on the page.
+
+It reads an hourly rollup table (`usage_rollups`), never `request_logs`
+directly, so the page stays fast no matter how large the log table grows. A
+background job recomputes each hour for up to two hours after it ends, to
+catch requests that started in one hour but finished in the next — so
+figures for roughly the last two hours may still be settling. Older hours
+are sealed and never recomputed.
+
+The rollup is also backfilled from history in the background, newest-first —
+so recent periods, the ones you are most likely to be looking at, are
+complete within minutes of first boot while older ones fill in over the
+following hours — and independently of retention: **usage history outlives
+the request-log retention window**. A log's month can roll off under
+[Retention](#retention) while its hour's totals live on in `usage_rollups`,
+so `/dashboard` can still answer questions about a period `/logs` no longer
+holds the underlying rows for. While that backfill is still catching up to
+the oldest surviving log, the page says so and names how far back totals are
+complete.
+
 ## Governance
 
 ### Request logs

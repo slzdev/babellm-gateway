@@ -1,6 +1,6 @@
 import {
-  boolean, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid,
-  varchar,
+  bigint, boolean, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, unique,
+  uniqueIndex, uuid, varchar,
 } from 'drizzle-orm/pg-core'
 import { SERVICE_TIERS } from '@/lib/service-tiers'
 
@@ -257,6 +257,103 @@ export const requestLogs = pgTable(
   ],
 )
 
+/** The same three classes `conditions()` in src/lib/logs/postgres.ts derives
+ * from `status`, and the same three values as the StatusClass union in
+ * src/lib/logs/types.ts. An error rate on the dashboard and a status filter
+ * on /logs must mean the same thing; naming them identically in both places
+ * is what keeps that true. */
+export const statusClassEnum = pgEnum('status_class', [
+  'success', 'client_error', 'server_error',
+])
+
+/**
+ * Hourly pre-aggregation of request_logs, one row per
+ * (hour, key, user, model, provider, status class) that actually occurred.
+ *
+ * Row count grows with distinct traffic shapes per hour, not with request
+ * volume — which is the whole point. Reading this table is how the dashboard
+ * avoids scanning a log table that grows forever.
+ *
+ * Never dropped. dropExpiredPartitions() deletes raw logs past the retention
+ * window; usage and spend history outlives them here.
+ */
+export const usageRollups = pgTable(
+  'usage_rollups',
+  {
+    /** Hour start, UTC. Derived from the request's uuid v7 id (its start),
+     * never from created_at (its completion) — see the spec §5.2. */
+    bucket: timestamp('bucket', { withTimezone: true }).notNull(),
+
+    // Deliberately NOT a foreign key. `ON DELETE SET NULL` — what
+    // request_logs uses — would collide two deleted keys' rows on the unique
+    // constraint below and make deleting an API key throw. `ON DELETE
+    // CASCADE` would destroy spend history, which request_logs' own comment
+    // forbids. So: a plain uuid recording a historical fact, with the name
+    // denormalized beside it.
+    apiKeyId: uuid('api_key_id'),
+    keyName: text('key_name'),
+
+    // Resolved through api_keys at rollup time and then frozen. Reassigning a
+    // key to another user changes future buckets and leaves past ones alone:
+    // those requests really were made under the old owner.
+    userId: uuid('user_id'),
+    userName: text('user_name'),
+
+    model: varchar('model', { length: 128 }),
+    provider: text('provider'),
+    statusClass: statusClassEnum('status_class').notNull(),
+
+    requests: integer('requests').notNull(),
+    /** Requests whose cost_usd was NULL. sum(cost_usd) over unpriced requests
+     * reads as "$0 spent"; the logs page refuses that lie by rendering
+     * "unpriced", and this column is how the dashboard refuses it too. */
+    unpricedRequests: integer('unpriced_requests').notNull(),
+
+    promptTokens: bigint('prompt_tokens', { mode: 'number' }).notNull(),
+    completionTokens: bigint('completion_tokens', { mode: 'number' }).notNull(),
+    cachedTokens: bigint('cached_tokens', { mode: 'number' }).notNull(),
+    reasoningTokens: bigint('reasoning_tokens', { mode: 'number' }).notNull(),
+
+    // Scale 9 matches request_logs exactly. Re-rounding here would
+    // reintroduce one layer up the silent zero that column avoids.
+    inputCostUsd: numeric('input_cost_usd', { precision: 18, scale: 9 }).notNull(),
+    cachedCostUsd: numeric('cached_cost_usd', { precision: 18, scale: 9 }).notNull(),
+    outputCostUsd: numeric('output_cost_usd', { precision: 18, scale: 9 }).notNull(),
+    costUsd: numeric('cost_usd', { precision: 18, scale: 9 }).notNull(),
+
+    // latency_count is redundant with `requests` today — latency_ms is
+    // NOT NULL, so every request contributes to both — but it is still
+    // tracked as its own column so the average is well-defined without a
+    // reader needing to know that, and so latency and ttft carry a matching
+    // shape: sum, max, count. ttft_count is not redundant: ttft_ms is null
+    // for every non-streaming request, so dividing both sums by one count
+    // would drag average TTFT toward zero in proportion to non-streaming
+    // traffic.
+    latencySumMs: bigint('latency_sum_ms', { mode: 'number' }).notNull(),
+    latencyMaxMs: integer('latency_max_ms').notNull(),
+    latencyCount: integer('latency_count').notNull(),
+    ttftSumMs: bigint('ttft_sum_ms', { mode: 'number' }).notNull(),
+    ttftCount: integer('ttft_count').notNull(),
+  },
+  (table) => [
+    // NULLS NOT DISTINCT (Postgres 15+) is load-bearing: api_key_id, model
+    // and provider are all nullable, and by default Postgres considers two
+    // NULLs distinct — so without it this constraint would not constrain the
+    // rows that need it most, and duplicate buckets would accumulate
+    // invisibly, inflating every total on the page.
+    unique('usage_rollups_grain_key')
+      .on(
+        table.bucket, table.apiKeyId, table.userId,
+        table.model, table.provider, table.statusClass,
+      )
+      .nullsNotDistinct(),
+    index('usage_rollups_bucket_idx').on(table.bucket),
+    index('usage_rollups_key_bucket_idx').on(table.apiKeyId, table.bucket),
+    index('usage_rollups_user_bucket_idx').on(table.userId, table.bucket),
+    index('usage_rollups_model_bucket_idx').on(table.model, table.bucket),
+  ],
+)
+
 export type ProviderRow = typeof providers.$inferSelect
 export type VirtualModelRow = typeof virtualModels.$inferSelect
 export type RouteTargetRow = typeof routeTargets.$inferSelect
@@ -266,3 +363,4 @@ export type CatalogModelRow = typeof catalogModels.$inferSelect
 export type RegistryCacheRow = typeof registryCache.$inferSelect
 export type SettingRow = typeof settings.$inferSelect
 export type RequestLogRow = typeof requestLogs.$inferSelect
+export type UsageRollupRow = typeof usageRollups.$inferSelect

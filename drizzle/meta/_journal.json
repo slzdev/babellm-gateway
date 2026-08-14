@@ -43,6 +43,13 @@
       "when": 1786717531790,
       "tag": "0005_orange_valeria_richards",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786737301554,
+      "tag": "0006_clean_thunderbolt_ross",
+      "breakpoints": true
     }
   ]
 }

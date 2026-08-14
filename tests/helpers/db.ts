@@ -4,6 +4,7 @@ import { MONTHS_AHEAD, addMonths, ensurePartitions, partitionName } from '@/lib/
 
 const TABLES = [
   'request_logs',
+  'usage_rollups',
   'catalog_models', 'route_targets', 'virtual_models', 'api_keys', 'users',
   'providers', 'registry_cache', 'settings',
 ]
