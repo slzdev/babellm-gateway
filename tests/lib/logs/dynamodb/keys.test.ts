@@ -82,12 +82,24 @@ test('cursor before wins over time range when narrower on lo', () => {
   expect(bounds.lo > uuidv7Bound(from)).toBe(true)
 })
 
-test('time range wins when narrower than cursor', () => {
-  // When the range bound is narrower than the cursor, it should win.
+test('time range from wins over cursor before when narrower on lo', () => {
+  // Both from and before constrain lo: assert that the narrower (from) wins.
   const from = new Date('2026-08-10T00:00:00Z')
-  const after = uuidv7(new Date('2026-08-01T00:00:00Z'))
-  const bounds = boundsFor({ limit: 50, from, after })
+  const before = uuidv7(new Date('2026-08-01T00:00:00Z'))
+  const bounds = boundsFor({ limit: 50, from, before })
 
-  // from is later than after, so from is the narrower lower bound.
+  // from is later than before, so from is the narrower lower bound.
   expect(bounds.lo).toBe(uuidv7Bound(from))
+  expect(bounds.lo > before).toBe(true)
+})
+
+test('time range to wins over cursor after when narrower on hi', () => {
+  // Both to and after constrain hi: assert that the narrower (to) wins.
+  const to = new Date('2026-08-01T00:00:00Z')
+  const after = uuidv7(new Date('2026-08-10T00:00:00Z'))
+  const bounds = boundsFor({ limit: 50, to, after })
+
+  // to is earlier than after, so to is the narrower upper bound.
+  expect(bounds.hi).toBe(uuidv7Bound(to))
+  expect(bounds.hi < after).toBe(true)
 })
