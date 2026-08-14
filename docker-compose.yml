@@ -16,5 +16,21 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    # No persistence: the usage counters this holds are volatile by design,
+    # and losing them on restart is the same thing that happens when
+    # REDIS_URL is unset. Point .env at it with
+    # REDIS_URL=redis://localhost:6379.
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   babellm-pg:
