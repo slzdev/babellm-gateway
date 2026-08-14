@@ -158,14 +158,27 @@ limit. The driver applies a second, combined cap:
    `capPayload` means oversized bodies get the **same truncation envelope** the
    detail page already renders (`src/app/(admin)/logs/[id]/page.tsx:31`), not a new
    shape the UI would have to learn.
-2. Assemble the item and measure it. If it still exceeds 380 KB — pathological
-   metadata, such as an enormous `attempts` array — replace both payloads with
-   `{ truncated: true, error: 'too_large_for_store' }`.
+2. Assemble the item, then **shed** in order of least structural value while it
+   still exceeds 380 KB:
+   1. payloads → `{ truncated: true, error: 'too_large_for_store' }`
+   2. `errorMessage` truncated to 4096, `droppedParams` dropped
+   3. `attempts` capped at 100, their strings clamped to 128
 
-Step 2 is what makes the write **fit by construction**. Without it a
-`ValidationException` loses the entire log line, and because `logRequest` is
-deliberately not awaited on the request path, that loss would surface only as a
-stderr line.
+Capping payloads alone is not enough, because three other fields are unbounded:
+`attempts` grows with a misconfigured route, `errorMessage` is whatever an
+upstream provider chose to return, and `droppedParams` grows with the request.
+Any one of them can exceed 400 KB on its own.
+
+After stage 3 nothing unbounded remains, which is what makes the write **fit by
+construction** and lets the shed terminate. Each stage runs only when the item is
+still oversized, so an ordinary few-KB entry passes through untouched. Without
+this, a `ValidationException` loses the entire log line — and because
+`logRequest` is deliberately not awaited on the request path, that loss surfaces
+only as a stderr line.
+
+The retry chain is shed last because it is the most diagnostic thing in the
+item: a request that failed often enough to grow a long chain is exactly the one
+someone will open the detail page to read.
 
 ### TTL stamping
 
@@ -397,7 +410,10 @@ These are accepted, not defects, and belong in the README:
    Postgres applies retention retroactively by dropping partitions.
 4. **The payload cap is tighter.** 150 KiB per side on this driver, regardless of the
    configured `payloadMaxBytes`.
-5. **The shard count is immutable** once data exists.
+5. **Pathological entries are shed, not rejected.** An entry whose metadata alone
+   would exceed the item limit keeps at most 100 retry attempts and a 4096-character
+   error message. Postgres stores both in full.
+6. **The shard count is immutable** once data exists.
 
 ## Rejected alternatives
 

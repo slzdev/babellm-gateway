@@ -47,7 +47,7 @@ Splitting the driver into four files rather than one keeps the risky algorithm (
 **Files:**
 - Create: `src/lib/logs/months.ts`
 - Modify: `src/lib/logs/partitions.ts` (remove the two functions, re-export from the new module)
-- Test: `tests/lib/logs/months.test.ts` (new), `tests/lib/logs/partitions.test.ts` (move the relevant tests)
+- Test: `tests/lib/logs/months.test.ts` (new). Leave `tests/lib/logs/partitions.test.ts` alone — `partitions.ts` re-exports both functions, so its existing tests keep passing, and moving them would be churn with no change in coverage.
 
 **Interfaces:**
 - Consumes: nothing
@@ -165,7 +165,10 @@ import { afterEach, expect, test } from 'vitest'
 import { DRIVERS, clearRequestLogStoreCache, logRequest } from '@/lib/logs'
 import { setLoggingSettings } from '@/lib/settings'
 import { uuidv7 } from '@/lib/uuid'
-import type { LoggingSettings, RequestLogEntry, WriteOnlySink } from '@/lib/logs/types'
+// LoggingSettings comes from @/lib/settings, not from logs/types — types.ts
+// imports it for its own signatures and never re-exports it.
+import type { LoggingSettings } from '@/lib/settings'
+import type { RequestLogEntry, WriteOnlySink } from '@/lib/logs/types'
 import { resetDb } from '../../helpers/db'
 
 const DRIVER = 'test-settings-capture'
@@ -586,10 +589,12 @@ test('an oversized payload is capped to the driver limit', () => {
   expect(Buffer.byteLength(JSON.stringify(item), 'utf8')).toBeLessThanOrEqual(ITEM_MAX_BYTES)
 })
 
-test('pathological metadata still produces an item that fits', () => {
+test('a runaway retry chain sheds payloads and then attempts', () => {
   // A ValidationException here would lose the whole log line, and logRequest
   // is deliberately not awaited — the loss would surface only on stderr. So
-  // the item must fit by construction, not by luck.
+  // the item must fit by construction, not by luck. This entry is ~1.6 MB of
+  // attempts on top of two 140 KiB payloads, which exercises shed stages 1
+  // and 3.
   const attempts = Array.from({ length: 2000 }, (_, n) => ({
     n, targetId: 't'.repeat(200), provider: 'p'.repeat(200),
     model: 'm'.repeat(200), status: 503, latencyMs: 5, error: 'e'.repeat(200),
@@ -603,6 +608,25 @@ test('pathological metadata still produces an item that fits', () => {
   expect(JSON.parse(String(item.requestJson))).toEqual({
     truncated: true, error: 'too_large_for_store',
   })
+
+  const detail = toDetail(item)
+  expect(detail.attempts).toHaveLength(100)
+  expect(detail.attempts[0].targetId).toHaveLength(128)
+  expect(detail.attempts[0].error).toHaveLength(128)
+})
+
+test('an unbounded upstream error message is truncated rather than fatal', () => {
+  // errorMessage is whatever a provider chose to return, and nothing upstream
+  // bounds it. Shed stage 2.
+  const item = toItem(entry({
+    errorType: 'upstream_error',
+    errorMessage: 'e'.repeat(1024 * 1024),
+    droppedParams: ['top_k', 'seed'],
+  }), settings)
+
+  expect(Buffer.byteLength(JSON.stringify(item), 'utf8')).toBeLessThanOrEqual(ITEM_MAX_BYTES)
+  expect(String(item.errorMessage)).toHaveLength(4096)
+  expect(toDetail(item).errorType).toBe('upstream_error')
 })
 
 test('the TTL mirrors the partition retention policy', () => {
@@ -658,6 +682,13 @@ export const DYNAMO_PAYLOAD_MAX_BYTES = 150 * 1024
 export const ITEM_MAX_BYTES = 380 * 1024
 
 const MODEL_MAX_LENGTH = 128
+
+/** Retry chains are bounded by routing configuration long before this, and an
+ * upstream error message is usually a sentence. Neither is bounded by the
+ * type system, though, and "bounded in practice" is not bounded — see the
+ * shed stages in toItem. */
+const MAX_STORED_ATTEMPTS = 100
+const ERROR_MESSAGE_MAX_LENGTH = 4096
 
 export type LogItem = Record<string, unknown> & { pk: string; sk: string }
 
@@ -743,18 +774,65 @@ export function toItem(
     item.payloadTruncated = entry.payload.truncated || request.truncated || response.truncated
   }
 
-  // Measured on the serialized record. JSON punctuation makes this a slight
-  // over-estimate of DynamoDB's own accounting, which is the safe direction:
-  // a ValidationException would lose the entire log line, and logRequest is
-  // deliberately not awaited, so the loss would surface only on stderr.
-  if (Buffer.byteLength(JSON.stringify(item), 'utf8') > ITEM_MAX_BYTES) {
+  shed(item)
+  return item as LogItem
+}
+
+/** Measured on the serialized record. JSON punctuation makes this a slight
+ * over-estimate of DynamoDB's own accounting, which is the safe direction. */
+function fits(item: Record<string, unknown>): boolean {
+  return Buffer.byteLength(JSON.stringify(item), 'utf8') <= ITEM_MAX_BYTES
+}
+
+/**
+ * Sheds content, in order of least structural value, until the item fits.
+ *
+ * A ValidationException here would lose the entire log line, and logRequest is
+ * deliberately not awaited on the request path — the loss would surface only
+ * as a stderr line. So the item has to fit by construction, which means every
+ * unbounded field needs a stage: `attempts` grows with a misconfigured route,
+ * `errorMessage` is whatever an upstream provider chose to return, and
+ * `droppedParams` grows with the request. Capping payloads alone leaves all
+ * three able to blow the limit on their own.
+ *
+ * After stage 3 nothing unbounded remains, so the shed terminates. Each stage
+ * runs only if the item is still oversized, so an ordinary entry — which is a
+ * few KB — passes through untouched.
+ */
+function shed(item: Record<string, unknown>): void {
+  // 1. Payloads: the biggest, and the only part the UI already has a shape
+  //    for reporting as missing.
+  if (!fits(item)) {
     const envelope = JSON.stringify({ truncated: true, error: 'too_large_for_store' })
     if (item.requestJson !== undefined) item.requestJson = envelope
     if (item.responseJson !== undefined) item.responseJson = envelope
     item.payloadTruncated = true
   }
 
-  return item as LogItem
+  // 2. Unbounded scalars from upstream.
+  if (!fits(item)) {
+    if (typeof item.errorMessage === 'string') {
+      item.errorMessage = item.errorMessage.slice(0, ERROR_MESSAGE_MAX_LENGTH)
+    }
+    delete item.droppedParams
+  }
+
+  // 3. The retry chain. Kept last because it is the most diagnostic thing
+  //    here — a request that failed enough to grow a long chain is exactly
+  //    the one someone will open the detail page for.
+  if (!fits(item) && Array.isArray(item.attempts)) {
+    item.attempts = (item.attempts as LoggedAttempt[])
+      .slice(0, MAX_STORED_ATTEMPTS)
+      .map((attempt) => ({
+        ...attempt,
+        targetId: attempt.targetId.slice(0, MODEL_MAX_LENGTH),
+        provider: attempt.provider.slice(0, MODEL_MAX_LENGTH),
+        model: attempt.model.slice(0, MODEL_MAX_LENGTH),
+        ...(attempt.error === undefined
+          ? {}
+          : { error: attempt.error.slice(0, MODEL_MAX_LENGTH) }),
+      }))
+  }
 }
 
 function num(value: unknown): number | null {
@@ -818,7 +896,7 @@ export function toDetail(item: Record<string, unknown>): LogDetail {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pnpm vitest run tests/lib/logs/dynamodb/item.test.ts`
-Expected: PASS — 12 tests
+Expected: PASS — 13 tests
 
 - [ ] **Step 5: Typecheck, lint, and commit**
 
@@ -1395,7 +1473,7 @@ import { createDynamoStore } from '@/lib/logs/dynamodb'
 import { uuidv7 } from '@/lib/uuid'
 import type { LoggingSettings } from '@/lib/settings'
 import type { ReadableRequestLogStore, RequestLogEntry } from '@/lib/logs/types'
-import { createLogsTable, resetLogsTable, testDynamoConfig } from '../../../helpers/dynamo'
+import { resetLogsTable, testDynamoConfig } from '../../../helpers/dynamo'
 
 const config = testDynamoConfig()
 const when = config ? test : test.skip
@@ -1421,10 +1499,13 @@ function entry(overrides: Partial<RequestLogEntry> = {}): RequestLogEntry {
 }
 
 when('a written entry comes back from get under every shard', async () => {
-  // Sixteen entries is not sixteen shards, so this writes until each shard
-  // key has been exercised at least once. A get() that looked in the wrong
+  // One id per hex digit, built by substituting the last character, so all
+  // sixteen shards are covered deterministically in sixteen writes rather
+  // than probabilistically in two hundred. A get() that derived the wrong
   // partition would fail here and nowhere else.
-  const ids = Array.from({ length: 200 }, () => uuidv7())
+  const base = uuidv7()
+  const ids = '0123456789abcdef'.split('').map((hex) => base.slice(0, -1) + hex)
+
   for (const id of ids) await store.write(entry({ id }), settings)
 
   for (const id of ids) {
@@ -2128,6 +2209,10 @@ run checks this and logs an error if it is missing.
   dropping partitions.
 - **Payloads are capped at 150 KiB per side**, below the configured payload
   size cap, because a DynamoDB item cannot exceed 400 KB.
+- **Pathological entries are shortened rather than dropped.** An entry whose
+  metadata alone would exceed the item limit keeps at most 100 retry attempts
+  and a 4096-character error message. Postgres stores both in full. The
+  alternative is losing the log line entirely.
 ````
 
 - [ ] **Step 7: Verify and commit**
