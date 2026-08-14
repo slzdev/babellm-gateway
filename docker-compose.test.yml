@@ -67,3 +67,20 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  dynamodb-test:
+    image: amazon/dynamodb-local:2.5.2
+    # Nothing here is worth resurrecting; it dies with the container.
+    restart: "no"
+    # 8001, not 8000: the same courtesy the test Postgres pays 5432 and the
+    # test Redis pays 6379.
+    ports:
+      - "8001:8000"
+    # -inMemory is this service's tmpfs: no file is written, so the data
+    # cannot outlive the container or accumulate across runs.
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-port", "8000"]
+    # No healthcheck: the image ships no curl or wget, so `compose --wait`
+    # cannot probe it and treats a service without one as ready once it is
+    # running. The readiness gap this leaves is closed in
+    # tests/helpers/dynamo.ts's createLogsTable(), which retries while the
+    # JVM boots.
