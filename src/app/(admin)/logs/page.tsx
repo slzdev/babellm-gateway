@@ -62,16 +62,6 @@ export default async function LogsPage({
         </div>
       ) : null}
 
-      {view.storeName === 'postgres' ? (
-        <div className="rounded-md border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-          Logs are stored in this gateway&apos;s own PostgreSQL database. That is the
-          right choice for development and low traffic, but at high request rates this
-          table and its indexes will compete with the queries that serve requests.
-          Switch stores on the <Link className="underline" href="/settings">Settings</Link> page
-          before that day arrives.
-        </div>
-      ) : null}
-
       {view.error ? (
         <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-8 text-center">
           <p className="font-medium">The log store could not be read.</p>
