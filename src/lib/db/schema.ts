@@ -190,10 +190,9 @@ export const requestLogs = pgTable(
   'request_logs',
   {
     // v7, minted at request start rather than defaulted at insert: the same
-    // value is the client's x-request-id, the stdout correlation id, and the
-    // partition key. A column default would mint it too late to be any of
-    // those. Ordering by it is therefore by request start, while created_at
-    // records completion.
+    // value is the client's x-request-id and the partition key. A column
+    // default would mint it too late to be either. Ordering by it is
+    // therefore by request start, while created_at records completion.
     id: uuid('id').primaryKey(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 

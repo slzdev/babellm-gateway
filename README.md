@@ -169,29 +169,33 @@ page with the full attempt timeline and cost breakdown.
 
 ### Choosing a store
 
-Settings › Governance picks where request logs go: `postgres` (default,
-readable — this is what powers `/logs`) or `stdout` (write-only, one JSON
-line per request). A change takes effect on the instance that made it
-immediately, and on every other instance within 15 seconds — the resolved
-store is cached for that long so it isn't re-read on every request.
-Switching does not migrate existing logs: the previous store keeps its rows,
-and switching back brings them into view again. On `stdout`, `/logs` shows
-an empty state and debugging a past request goes back to searching container
-logs by the `x-request-id` header the gateway returns — a v7 uuid, e.g.
-`018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e50`, the same value as the log row's
-primary key and the `/logs/<id>` detail page's URL:
+Settings › Governance picks where request logs go. The gateway ships one
+driver, `postgres` — readable, and what powers `/logs`. The setting is a
+driver *name*, so a fork adds its own by implementing `RequestLogStore` and
+registering it in `src/lib/logs/registry.ts`; a name with no driver behind it
+falls back to `postgres` and says so on `/logs`.
 
-```bash
-docker compose logs gateway | grep 018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e50
-```
+A change takes effect on the instance that made it immediately, and on every
+other instance within 15 seconds — the resolved store is cached for that long
+so it isn't re-read on every request. Switching does not migrate existing
+logs: the previous store keeps its rows, and switching back brings them into
+view again. A write-only driver has no way to hand its rows back, so `/logs`
+shows an empty state under one and debugging a past request means searching
+wherever that driver writes, by the `x-request-id` header the gateway
+returns — a v7 uuid, e.g. `018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e50`, the same
+value as the log row's primary key and the `/logs/<id>` detail page's URL.
 
 ### Upgrading from an earlier version
 
 `postgres` is the default store, so a gateway upgraded from a version that
 predates this feature starts writing request logs into its own database as
-soon as it boots on the new code. Selecting `stdout` on the Settings page
-restores exactly the previous behavior. The stdout line itself gained token
-and cost keys — additively, so existing parsers keep working.
+soon as it boots on the new code.
+
+The `stdout` driver — one JSON line per request on the container's stdout —
+has been removed. An instance still configured for it logs to `postgres`
+instead, with a banner on `/logs` naming the driver it could not find, until
+the setting is changed. Anything that consumed those lines from container
+logs reads `/logs` (or the `request_logs` table) now.
 
 ### Payload capture
 
@@ -233,8 +237,8 @@ request logs, loudly, in stderr, rather than silently stranding rows outside
 every retention window.
 
 Maintenance runs for every store the gateway knows how to run, not only the
-one currently selected: switching Settings › Governance to `stdout` does not
-stop the postgres driver from provisioning and dropping partitions in the
+one currently selected: switching Settings › Governance to another driver does
+not stop the postgres driver from provisioning and dropping partitions in the
 gateway's own database, and any captured prompt or completion content already
 sitting in `request_logs` keeps aging out on the same schedule as before the
 switch.

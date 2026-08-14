@@ -4,15 +4,25 @@ import {
   DEFAULT_PAYLOAD_MAX_BYTES, DEFAULT_RETENTION_MONTHS, type LoggingSettings,
 } from '@/lib/settings'
 import { postgresStore } from './postgres'
-import { stdoutStore } from './stdout'
 import type { RequestLogStore } from './types'
 
 /** Every driver the gateway ships. Adding one is a fork's single entry here
  * plus a module implementing RequestLogStore. */
 export const DRIVERS: Record<string, RequestLogStore> = {
   postgres: postgresStore,
-  stdout: stdoutStore,
 }
+
+/**
+ * Where logging goes when the configured driver cannot be used.
+ *
+ * The default driver, not a store of its own. A settings read that failed is
+ * usually the database being unreachable, so this store's writes will
+ * generally fail too — each one reported on stderr by the caller's .catch()
+ * rather than becoming a serving failure. That is the honest outcome: a
+ * gateway that cannot reach its database cannot durably log either, and
+ * pretending otherwise would only move the loss somewhere quieter.
+ */
+const FALLBACK_STORE = postgresStore
 
 /**
  * How long a resolved store and its settings are trusted.
@@ -77,15 +87,17 @@ async function resolve(): Promise<StoreResolution> {
   try {
     loggingSettings = await settings.getLoggingSettings()
   } catch (err) {
-    console.error('[gateway] could not read logging settings; logging to stdout', err)
+    console.error(
+      `[gateway] could not read logging settings; logging to ${FALLBACK_STORE.name}`, err,
+    )
     // Refusing to serve requests because a *logging* setting could not be read
     // would be the wrong hierarchy of concerns.
     return {
-      store: stdoutStore,
+      store: FALLBACK_STORE,
       configured: 'unknown',
       fallback: 'settings_error',
       settings: {
-        store: stdoutStore.name,
+        store: FALLBACK_STORE.name,
         retentionMonths: DEFAULT_RETENTION_MONTHS,
         payloadMaxBytes: DEFAULT_PAYLOAD_MAX_BYTES,
       },
@@ -103,10 +115,10 @@ async function resolve(): Promise<StoreResolution> {
     : undefined
   if (!store) {
     console.error(
-      `[gateway] no request log driver named "${loggingSettings.store}"; logging to stdout`,
+      `[gateway] no request log driver named "${loggingSettings.store}"; logging to ${FALLBACK_STORE.name}`,
     )
     return {
-      store: stdoutStore, configured: loggingSettings.store, fallback: 'unknown_driver', settings: loggingSettings,
+      store: FALLBACK_STORE, configured: loggingSettings.store, fallback: 'unknown_driver', settings: loggingSettings,
     }
   }
 

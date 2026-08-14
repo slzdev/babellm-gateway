@@ -58,8 +58,9 @@ export default async function LogsPage({
       {view.fallback === 'unknown_driver' ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">
           No log driver named <span className="font-mono">{view.configured}</span> is
-          registered in this build, so logging has fallen back to stdout. Pick a
-          driver on the <Link className="underline" href="/settings">Settings</Link> page.
+          registered in this build, so logging has fallen back to{' '}
+          <span className="font-mono">{view.storeName}</span>. Pick a driver on the{' '}
+          <Link className="underline" href="/settings">Settings</Link> page.
         </div>
       ) : null}
 
@@ -78,10 +79,12 @@ export default async function LogsPage({
             The <span className="font-mono">{view.storeName}</span> store cannot be read back.
           </p>
           <p className="text-sm text-muted-foreground">
-            Requests are still being logged — one JSON line per request, on the
-            container&apos;s stdout. Read them with{' '}
-            <span className="font-mono">docker compose logs -f gateway</span> and search by
-            the <span className="font-mono">x-request-id</span> header the gateway returns.
+            Requests are still being logged — this store just has no way to hand them
+            back. Read them wherever it sends them, and correlate by the{' '}
+            <span className="font-mono">x-request-id</span> header the gateway returns.
+            Switch to a readable store on the{' '}
+            <Link className="underline" href="/settings">Settings</Link> page to see them
+            here.
           </p>
         </div>
       ) : (

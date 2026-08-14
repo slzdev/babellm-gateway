@@ -1,4 +1,5 @@
 import { beforeEach, expect, test, vi } from 'vitest'
+import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { postgresStore } from '@/lib/logs/postgres'
 import { clearRequestLogStoreCache } from '@/lib/logs/registry'
@@ -6,7 +7,9 @@ import * as pricing from '@/lib/pricing'
 import { clearPriceCache } from '@/lib/pricing'
 import { db } from '@/lib/db'
 import { catalogModels } from '@/lib/db/schema'
-import { chatRequest, fakeAdapterDeps, seedGateway } from '../helpers/gateway'
+import {
+  chatRequest, fakeAdapterByProvider, fakeAdapterDeps, seedGateway, seedTargets,
+} from '../helpers/gateway'
 import { waitFor, waitForLogs } from '../helpers/logs'
 import { resetDb } from '../helpers/db'
 
@@ -19,6 +22,10 @@ const upstreamCompletion = {
     prompt_tokens: 1_000_000, completion_tokens: 1_000_000, total_tokens: 2_000_000,
     prompt_tokens_details: { cached_tokens: 0 },
   },
+}
+
+function apiError(status: number, message = 'boom') {
+  return new OpenAI.APIError(status, { message, code: 'x' }, message, undefined)
 }
 
 beforeEach(async () => {
@@ -48,6 +55,46 @@ test('a successful request lands one row with its winning target', async () => {
   const detail = await postgresStore.get(page.rows[0].id)
   expect(detail?.finalTargetId).toBe(target.id)
   expect(detail?.attempts[0]).toMatchObject({ provider: 'test-provider', status: 200 })
+})
+
+test('the row records every attempt made, in order', async () => {
+  const { apiKey } = await seedTargets({
+    targets: [{ name: 'primary', priority: 0 }, { name: 'backup', priority: 1 }],
+  })
+
+  await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterByProvider({
+      primary: { chat: vi.fn().mockRejectedValue(apiError(503, 'down')) },
+      backup: { chat: vi.fn().mockResolvedValue(upstreamCompletion) },
+    }),
+  )
+  await waitForLogs()
+
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  const detail = await postgresStore.get(row.id)
+  expect(detail?.attempts).toHaveLength(2)
+  expect(detail?.attempts[0]).toMatchObject({ n: 1, provider: 'primary', status: 503 })
+  expect(detail?.attempts[1]).toMatchObject({ n: 2, provider: 'backup', status: 200 })
+})
+
+test('a request that exhausted every target still logs its attempts', async () => {
+  const { apiKey } = await seedTargets({
+    targets: [{ name: 'a', priority: 0 }, { name: 'b', priority: 1 }],
+  })
+
+  await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterByProvider({
+      a: { chat: vi.fn().mockRejectedValue(apiError(500)) },
+      b: { chat: vi.fn().mockRejectedValue(apiError(429)) },
+    }),
+  )
+  await waitForLogs()
+
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  expect(row).toMatchObject({ status: 429, outcome: 'error' })
+  expect((await postgresStore.get(row.id))?.attempts).toHaveLength(2)
 })
 
 test('cost is filled in when the catalog prices the winning model', async () => {
@@ -116,6 +163,32 @@ test('a streaming request logs usage captured from the final chunk', async () =>
   const [row] = (await postgresStore.query({ limit: 1 })).rows
   expect(row).toMatchObject({ stream: true, outcome: 'ok', promptTokens: 7, completionTokens: 2 })
   expect(row.ttftMs).not.toBeNull()
+})
+
+test('a streaming request logs nothing until the stream closes, then once', async () => {
+  const { apiKey } = await seedGateway()
+  const chatStream = async function* () {
+    yield {
+      id: 'up', object: 'chat.completion.chunk', created: 1, model: 'gpt-4o-mini',
+      choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }],
+    }
+  }
+
+  const res = await handleChatCompletions(
+    chatRequest({ ...body, stream: true }, apiKey),
+    fakeAdapterDeps({ chatStream: chatStream as never }),
+  )
+  // The response headers are out, but the request is not over: a row here
+  // would be a latency and an outcome measured before either was known.
+  expect((await postgresStore.query({ limit: 10 })).rows).toHaveLength(0)
+
+  await res.text()
+  await waitForLogs()
+
+  const page = await postgresStore.query({ limit: 10 })
+  expect(page.rows).toHaveLength(1)
+  expect(page.rows[0]).toMatchObject({ stream: true, status: 200, outcome: 'ok' })
+  expect(page.rows[0].ttftMs).not.toBeNull()
 })
 
 test('a provider that reports no stream usage logs nulls, not zeros', async () => {
@@ -206,6 +279,43 @@ test('a pricing failure never reaches the client', async () => {
   expect((await postgresStore.query({ limit: 10 })).rows).toHaveLength(0)
   failure.mockRestore()
   stderr.mockRestore()
+})
+
+test('a client disconnect mid-stream logs client_closed exactly once', async () => {
+  const { apiKey } = await seedGateway()
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => { release = resolve })
+
+  const chatStream = async function* () {
+    yield {
+      id: 'up', object: 'chat.completion.chunk', created: 1, model: 'gpt-4o-mini',
+      choices: [{ index: 0, delta: { content: 'a' }, finish_reason: null }],
+    }
+    await gate
+    yield {
+      id: 'up', object: 'chat.completion.chunk', created: 1, model: 'gpt-4o-mini',
+      choices: [{ index: 0, delta: { content: 'b' }, finish_reason: null }],
+    }
+  }
+
+  const res = await handleChatCompletions(
+    chatRequest({ ...body, stream: true }, apiKey),
+    fakeAdapterDeps({ chatStream: chatStream as never }),
+  )
+
+  const reader = res.body!.getReader()
+  await reader.read()
+  await reader.cancel()
+  // Only now does the generator resume and run to completion, which is the
+  // path that would settle a second time if the first-one-wins guard were
+  // not there.
+  release()
+  await waitForLogs()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  const page = await postgresStore.query({ limit: 10 })
+  expect(page.rows).toHaveLength(1)
+  expect(page.rows[0]).toMatchObject({ outcome: 'client_closed' })
 })
 
 test('a client disconnect on the non-streaming path logs client_closed, not an upstream timeout', async () => {

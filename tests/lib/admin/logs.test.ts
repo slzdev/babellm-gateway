@@ -1,4 +1,4 @@
-import { beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import {
   DEFAULT_LOG_PAGE_SIZE, LOG_PAGE_SIZES, loadLogDetail, loadLogs, parseLogFilter,
 } from '@/lib/admin/logs'
@@ -6,13 +6,21 @@ import { clearRequestLogStoreCache } from '@/lib/logs/registry'
 import { postgresStore } from '@/lib/logs/postgres'
 import { setLoggingSettings } from '@/lib/settings'
 import { uuidv7 } from '@/lib/uuid'
+import { WRITE_ONLY_DRIVER, registerWriteOnlyDriver } from '../../helpers/logs'
 import { resetDb } from '../../helpers/db'
 
 const NOW = new Date('2026-08-13T12:00:00.000Z')
 
+let unregister: (() => void) | null = null
+
 beforeEach(async () => {
   await resetDb()
   clearRequestLogStoreCache()
+})
+
+afterEach(() => {
+  unregister?.()
+  unregister = null
 })
 
 test('defaults to the last 24 hours and one page', () => {
@@ -102,12 +110,13 @@ test('loadLogs reports a readable store and its page', async () => {
 })
 
 test('loadLogs reports an unreadable store with no page instead of throwing', async () => {
-  await setLoggingSettings({ store: 'stdout' })
+  unregister = registerWriteOnlyDriver()
+  await setLoggingSettings({ store: WRITE_ONLY_DRIVER })
   clearRequestLogStoreCache()
 
   const view = await loadLogs(parseLogFilter({}))
   expect(view.readable).toBe(false)
-  expect(view.storeName).toBe('stdout')
+  expect(view.storeName).toBe(WRITE_ONLY_DRIVER)
   expect(view.page).toBeNull()
 })
 

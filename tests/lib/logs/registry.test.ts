@@ -4,7 +4,10 @@ import { setLoggingSettings, type LoggingSettings } from '@/lib/settings'
 import {
   LOG_SETTINGS_TTL_MS, clearRequestLogStoreCache, resolveRequestLogStore,
 } from '@/lib/logs/registry'
+import { WRITE_ONLY_DRIVER, registerWriteOnlyDriver } from '../../helpers/logs'
 import { resetDb } from '../../helpers/db'
+
+let unregister: (() => void) | null = null
 
 beforeEach(async () => {
   await resetDb()
@@ -14,6 +17,8 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.useRealTimers()
+  unregister?.()
+  unregister = null
 })
 
 test('resolves the postgres store by default', async () => {
@@ -23,13 +28,15 @@ test('resolves the postgres store by default', async () => {
   expect(resolved.fallback).toBeNull()
 })
 
-test('resolves the configured store', async () => {
-  await setLoggingSettings({ store: 'stdout' })
+test('resolves a configured store other than the default, write-only included', async () => {
+  unregister = registerWriteOnlyDriver()
+  await setLoggingSettings({ store: WRITE_ONLY_DRIVER })
   clearRequestLogStoreCache()
 
   const resolved = await resolveRequestLogStore()
-  expect(resolved.store.name).toBe('stdout')
+  expect(resolved.store.name).toBe(WRITE_ONLY_DRIVER)
   expect(resolved.store.readable).toBe(false)
+  expect(resolved.fallback).toBeNull()
 })
 
 test('serves from cache instead of querying again', async () => {
@@ -51,17 +58,17 @@ test('re-reads once the ttl expires', async () => {
   expect(spy).toHaveBeenCalledTimes(2)
 })
 
-test('an unknown driver name falls back to stdout and says so', async () => {
+test('an unknown driver name falls back to the default store and says so', async () => {
   await setLoggingSettings({ store: 'clickhouse' })
   clearRequestLogStoreCache()
 
   const resolved = await resolveRequestLogStore()
-  expect(resolved.store.name).toBe('stdout')
+  expect(resolved.store.name).toBe('postgres')
   expect(resolved.configured).toBe('clickhouse')
   expect(resolved.fallback).toBe('unknown_driver')
 })
 
-test('a driver name that collides with Object.prototype falls back to stdout, not the prototype value', async () => {
+test('a driver name that collides with Object.prototype falls back to the default store, not the prototype value', async () => {
   // DRIVERS is a plain object literal, so a bare `DRIVERS[name]` lookup
   // resolves "constructor" to the `Object` function via the prototype
   // chain instead of `undefined`.
@@ -69,18 +76,18 @@ test('a driver name that collides with Object.prototype falls back to stdout, no
   clearRequestLogStoreCache()
 
   const resolved = await resolveRequestLogStore()
-  expect(resolved.store.name).toBe('stdout')
+  expect(resolved.store.name).toBe('postgres')
   expect(resolved.configured).toBe('constructor')
   expect(resolved.fallback).toBe('unknown_driver')
 })
 
-test('a failed settings read falls back to stdout and caches the fallback', async () => {
+test('a failed settings read falls back to the default store and caches the fallback', async () => {
   const spy = vi
     .spyOn(settingsModule, 'getLoggingSettings')
     .mockRejectedValue(new Error('connection refused'))
 
   const resolved = await resolveRequestLogStore()
-  expect(resolved.store.name).toBe('stdout')
+  expect(resolved.store.name).toBe('postgres')
   expect(resolved.fallback).toBe('settings_error')
 
   // A database hiccup must not turn the cheapest path in a request into a
@@ -119,7 +126,7 @@ test('a resolution in flight when the cache is cleared does not repopulate it', 
   // still awaiting the pre-write settings read. That resolution must not
   // silently republish stale state once it finally settles.
   let resolveSettings: (value: LoggingSettings) => void = () => {}
-  const staleSettings: LoggingSettings = { store: 'stdout', retentionMonths: 3, payloadMaxBytes: 262_144 }
+  const staleSettings: LoggingSettings = { store: 'postgres', retentionMonths: 3, payloadMaxBytes: 262_144 }
   const spy = vi
     .spyOn(settingsModule, 'getLoggingSettings')
     .mockImplementationOnce(() => new Promise((resolve) => { resolveSettings = resolve }))

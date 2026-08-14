@@ -1,14 +1,15 @@
 import { postgresStore } from '@/lib/logs/postgres'
+import { DRIVERS } from '@/lib/logs/registry'
+import type { WriteOnlySink } from '@/lib/logs/types'
 
 /**
  * Polls `check` until it returns true, or throws once `timeoutMs` elapses.
  *
  * The handler deliberately does not await logRequest — a log write is not
  * worth client latency — so a test that asserts on its effect has to wait
- * for it. A fixed sleep is a race against a real database transaction (or,
- * for the stdout driver, a real event-loop turn); polling gives every
- * environment exactly the time it needs and fails with a clear message
- * instead of asserting on a write that never landed.
+ * for it. A fixed sleep is a race against a real database transaction;
+ * polling gives every environment exactly the time it needs and fails with a
+ * clear message instead of asserting on a write that never landed.
  */
 export async function waitFor(
   check: () => boolean | Promise<boolean>,
@@ -31,4 +32,33 @@ export async function waitForLogs(expected = 1, timeoutMs = 2000): Promise<void>
     const page = await postgresStore.query({ limit: expected })
     return page.rows.length >= expected
   }, timeoutMs)
+}
+
+export const WRITE_ONLY_DRIVER = 'test-write-only'
+
+const writeOnlySink: WriteOnlySink = {
+  name: WRITE_ONLY_DRIVER,
+  readable: false,
+  async write() {},
+  async maintain() {
+    return { created: [], dropped: [] }
+  },
+}
+
+/**
+ * Registers a write-only driver for the duration of one test and returns the
+ * call that unregisters it.
+ *
+ * Every driver the gateway ships is readable, so the write-only half of the
+ * RequestLogStore union — and every state that hangs off it, from the
+ * registry's narrowing to the "cannot be read back" panel — would otherwise
+ * have nothing exercising it. That is exactly the code a fork adding a
+ * write-only sink lands on, so it is kept honest here rather than left to be
+ * discovered broken.
+ */
+export function registerWriteOnlyDriver(): () => void {
+  DRIVERS[WRITE_ONLY_DRIVER] = writeOnlySink
+  return () => {
+    delete DRIVERS[WRITE_ONLY_DRIVER]
+  }
 }

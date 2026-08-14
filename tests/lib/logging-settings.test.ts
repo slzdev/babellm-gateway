@@ -13,11 +13,13 @@ test('defaults to the postgres store with 3 month retention', async () => {
 })
 
 test('persists a patch and leaves the rest alone', async () => {
-  await setLoggingSettings({ store: 'stdout' })
-  expect(await getLoggingSettings()).toMatchObject({ store: 'stdout', retentionMonths: 3 })
+  // Any name round-trips: this layer stores the operator's choice, and it is
+  // the registry that decides whether a driver by that name exists.
+  await setLoggingSettings({ store: 'clickhouse' })
+  expect(await getLoggingSettings()).toMatchObject({ store: 'clickhouse', retentionMonths: 3 })
 
   await setLoggingSettings({ retentionMonths: 7 })
-  expect(await getLoggingSettings()).toMatchObject({ store: 'stdout', retentionMonths: 7 })
+  expect(await getLoggingSettings()).toMatchObject({ store: 'clickhouse', retentionMonths: 7 })
 })
 
 test('retention is stored in months and rejects fractions and negatives', async () => {

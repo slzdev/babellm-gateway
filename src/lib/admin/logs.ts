@@ -97,8 +97,8 @@ export interface LogsView {
   fallback: 'unknown_driver' | 'settings_error' | null
   page: LogPage | null
   /** True when resolving the store or querying it threw. Distinct from
-   * `readable: false` — that is an expected state (a write-only driver like
-   * stdout), this is the store failing to answer at all. The page renders it
+   * `readable: false` — that is an expected state (a write-only driver),
+   * this is the store failing to answer at all. The page renders it
    * as its own banner rather than the generic Next.js error screen (spec
    * §9: "query() fails → error state on the page, not a crash"). */
   error: boolean

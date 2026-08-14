@@ -141,10 +141,10 @@ export async function handleChatCompletions(
   request: Request,
   deps: ChatHandlerDeps = defaultDeps,
 ): Promise<Response> {
-  // The request's one identifier: returned as x-request-id, printed on the
-  // stdout line, stored as the log's primary key, and — because it is a v7
-  // uuid — the partition that log row lands in. Minted here rather than at
-  // insert, because the header goes out long before the row is written.
+  // The request's one identifier: returned as x-request-id, stored as the
+  // log's primary key, and — because it is a v7 uuid — the partition that log
+  // row lands in. Minted here rather than at insert, because the header goes
+  // out long before the row is written.
   const requestId = uuidv7()
   const startedAt = Date.now()
 

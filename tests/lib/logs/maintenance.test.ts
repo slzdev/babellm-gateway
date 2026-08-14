@@ -5,7 +5,10 @@ import { clearRequestLogStoreCache } from '@/lib/logs/registry'
 import { PARTITION_LOCK_KEY, runLogMaintenance } from '@/lib/logs/maintenance'
 import * as settingsModule from '@/lib/settings'
 import { setLoggingSettings } from '@/lib/settings'
+import { WRITE_ONLY_DRIVER, registerWriteOnlyDriver } from '../../helpers/logs'
 import { resetDb } from '../../helpers/db'
+
+let unregister: (() => void) | null = null
 
 beforeEach(async () => {
   await resetDb()
@@ -14,6 +17,8 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  unregister?.()
+  unregister = null
 })
 
 async function partitions(): Promise<string[]> {
@@ -81,9 +86,10 @@ test('a failed settings read provisions but does not drop, rather than dropping 
 
 test('maintains a non-active store rather than only the configured one', async () => {
   // request_logs holds captured prompt and completion content. Switching the
-  // active store to stdout must not leave that data unpruned forever just
-  // because reads no longer go through postgres.
-  await setLoggingSettings({ store: 'stdout', retentionMonths: 2 })
+  // active store to another driver must not leave that data unpruned forever
+  // just because reads no longer go through postgres.
+  unregister = registerWriteOnlyDriver()
+  await setLoggingSettings({ store: WRITE_ONLY_DRIVER, retentionMonths: 2 })
   clearRequestLogStoreCache()
   await runLogMaintenance(new Date('2030-01-15T00:00:00Z'))
 

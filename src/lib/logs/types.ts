@@ -64,6 +64,10 @@ interface BaseSink {
   flush?(): Promise<void>
 }
 
+/** A sink that swallows entries and cannot hand them back — a log shipper, a
+ * message queue, an append-only file. The gateway ships no such driver today;
+ * this is the contract one would implement, and the reason `/logs` still has
+ * a "cannot be read back" state to fall into. */
 export interface WriteOnlySink extends BaseSink {
   readonly readable: false
 }
