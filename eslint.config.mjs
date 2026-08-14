@@ -12,6 +12,13 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Build output of `pnpm dev:test-db`. Not covered by the `.next/**`
+    // default, so without this every browser check leaves thousands of lint
+    // errors in generated code behind.
+    ".next-test/**",
+    // Checkouts of this same repo. Their sources would be linted a second
+    // time, against whatever rules this branch happens to have.
+    ".claude/worktrees/**",
   ]),
 ]);
 
