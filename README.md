@@ -237,9 +237,13 @@ run checks this and logs an error if it is missing.
 
 #### How it differs from the Postgres store
 
-- **A filtered page may be short.** Filters are applied after DynamoDB's own
-  page limit, so a narrow filter over a wide range can exhaust the read budget
-  before filling a page. Paging still works; the page is just smaller.
+- **A filtered page may be short — or empty with a working cursor.** Filters
+  are applied after DynamoDB's own page limit, so a narrow filter over a wide
+  range can exhaust the read budget before filling a page. When that happens
+  with rows already found, the page is just smaller. When it happens before
+  any row is found, the page comes back empty but is still resumable: paging
+  further keeps scanning from where the budget ran out, rather than looking
+  like "no matching logs".
 - **Deletion is best-effort.** DynamoDB may take up to ~48 hours to remove an
   expired item, and it stays queryable until it does.
 - **Retention changes are not retroactive.** `expiresAt` is stamped when the

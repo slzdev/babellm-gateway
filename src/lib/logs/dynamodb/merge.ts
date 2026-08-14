@@ -185,8 +185,13 @@ export async function collectPage<T extends ShardItem>(
     // that empties out mid-drain simply stops being a candidate, even if it
     // isn't exhausted; whatever it still holds beyond floor, if anything,
     // waits for the next call.
+    // Fails closed on a null floor rather than admitting everything: today
+    // floor is never null here (budgetSpent requires a non-exhausted shard,
+    // which always contributes one), but a floor with nothing to compare
+    // against means nothing is provably safe, so the conservative answer is
+    // to drain nothing rather than drain unguarded.
     const beyondFloor = (sk: string) => (
-      floor === null || (opts.descending ? sk >= floor : sk <= floor)
+      floor !== null && (opts.descending ? sk >= floor : sk <= floor)
     )
     while (matched.length < want) {
       const candidates = state.filter((s) => s.buffer.length > 0 && beyondFloor(s.buffer[0].sk))

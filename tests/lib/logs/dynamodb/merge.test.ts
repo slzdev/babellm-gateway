@@ -199,6 +199,10 @@ test('resumeFrom is the max stopping point across shards when descending', async
 })
 
 test('resumeFrom is the min stopping point across shards when ascending', async () => {
+  // Both shards are filtered empty the whole way through, so neither buffer
+  // ever holds anything and the drain has no candidates — rows and hasMore
+  // should look exactly like the descending mirror above, just with the
+  // opposite extremum for resumeFrom.
   const empty: string[][] = Array.from({ length: 500 }, () => [])
   const { fetch } = fakeFetch({ 'log#0': empty, 'log#1': empty })
 
@@ -206,21 +210,44 @@ test('resumeFrom is the min stopping point across shards when ascending', async 
     fetch, shards: SHARDS, limit: 10, descending: false, exclude: [],
   })
 
+  expect(out.rows).toEqual([])
+  expect(out.hasMore).toBe(true)
   expect(out.resumeFrom).toBe(`log#0-stop-${MAX_ROUND_TRIPS - 1}`)
 })
 
-test('resumeFrom is null when every shard is exhausted', async () => {
+test('an exhausted shard is excluded from floor but its buffered match still drains', async () => {
+  // Regression fixture for the old, too-weak version of this test: that one
+  // had every shard exhausted after a single page, which means budgetSpent
+  // is false (the loop finishes normally) and resumeFrom is null via the
+  // outer `if (budgetSpent)` guard alone — the exhausted-shard rule inside
+  // floor's computation was never actually exercised, and removing it left
+  // the test green.
+  //
+  // Here the budget genuinely is spent, and the shards are a genuine mix:
+  // log#0 is exhausted after one page but still has a real match ('z')
+  // sitting in its buffer; log#1 spends the whole item budget in a single
+  // heavy-scanned fetch and is left not exhausted, at continuation 'm';
+  // log#2 is exhausted immediately (nothing there at all). floor must come
+  // only from log#1 — the sole non-exhausted shard — and log#0's own
+  // exhausted status must not block its buffered 'z' from draining: 'z' is
+  // beyond floor regardless of whether log#0 itself ever contributes to it.
+  const shards = ['log#0', 'log#1', 'log#2']
   const { fetch } = fakeFetch({
-    'log#0': [['d', 'c']],
-    'log#1': [['b', 'a']],
+    'log#0': [['z']],
+    // A single heavy-scanned page crosses MAX_ITEMS_EXAMINED immediately, so
+    // log#1 is fetched exactly once and its continuation ('m') is still what
+    // it was on that one fetch — no second round to complicate the trace.
+    'log#1': [{ items: [], scanned: 10_000, stop: 'm' }, []],
+    'log#2': [[]],
   })
 
   const out = await collectPage({
-    fetch, shards: SHARDS, limit: 10, descending: true, exclude: [],
+    fetch, shards, limit: 10, descending: true, exclude: [],
   })
 
-  expect(out.hasMore).toBe(false)
-  expect(out.resumeFrom).toBeNull()
+  expect(out.rows.map((r) => r.sk)).toEqual(['z'])
+  expect(out.hasMore).toBe(true)
+  expect(out.resumeFrom).toBe('m')
 })
 
 test('an empty but unexhausted page contributes its own stopping point', async () => {
@@ -276,6 +303,46 @@ test('a buffered match is drained and returned instead of being lost to a budget
   expect(out.resumeFrom).toBe('x')
 })
 
+test('the drain picks the global-best candidate across shards, not the first one', async () => {
+  // Every other budget-spent fixture in this file has at most one drain
+  // candidate at a time, so pickBest is never actually asked to choose
+  // between two — swapping it for `candidates[0]` would survive unnoticed.
+  // This fixture forces a real choice, more than once, and also checks that
+  // a shard below floor stays behind even while two other shards are
+  // competing above it.
+  //
+  // log#0 buffers ['n', 'g'] with its own continuation at 'g' (the last
+  // item, boundary case again). log#1 buffers ['t'] with its continuation
+  // decoupled to 'b' (below both of log#0's items) via the object page
+  // form — realistic: DynamoDB's FilterExpression can drop the last
+  // examined item even though an earlier one in the same page matched.
+  // log#2 alone spends the whole item budget in one heavy-scanned fetch,
+  // ending at continuation 'a' — the smallest of the three, so it never
+  // wins floor, just forces the budget to trip. log#3 is exhausted with a
+  // single buffered item 'c', which sits below floor and must be left
+  // behind.
+  //
+  // floor = max('g', 'b', 'a') = 'g'. Both log#0's 'n' and log#1's 't' are
+  // >= 'g', so the drain must choose between them twice (t first, since
+  // it's larger; then n; then log#0's own boundary item 'g'), while log#3's
+  // 'c' never qualifies.
+  const shards = ['log#0', 'log#1', 'log#2', 'log#3']
+  const { fetch } = fakeFetch({
+    'log#0': [['n', 'g'], []],
+    'log#1': [{ items: ['t'], stop: 'b' }, []],
+    'log#2': [{ items: [], scanned: 10_000, stop: 'a' }, []],
+    'log#3': [['c']],
+  })
+
+  const out = await collectPage({
+    fetch, shards, limit: 10, descending: true, exclude: [],
+  })
+
+  expect(out.rows.map((r) => r.sk)).toEqual(['t', 'n', 'g'])
+  expect(out.hasMore).toBe(true)
+  expect(out.resumeFrom).toBe('g')
+})
+
 test('a buffered row below floor is not drained, since something unseen could still outrank it', async () => {
   // log#0 is exhausted after one page, leaving 'g' buffered and unconsumed.
   // log#1 alone spends the whole item budget across two heavy-scanned empty
@@ -296,6 +363,52 @@ test('a buffered row below floor is not drained, since something unseen could st
 
   const out = await collectPage({
     fetch, shards: SHARDS, limit: 10, descending: true, exclude: [],
+  })
+
+  expect(out.rows).toEqual([])
+  expect(out.hasMore).toBe(true)
+  expect(out.resumeFrom).toBe('j')
+})
+
+test('ascending: a buffered match at floor is drained and returned', async () => {
+  // The ascending mirror of the descending boundary-drain test above. log#0
+  // buffers ['c'] with its own continuation at 'c' (the boundary case: the
+  // last examined item passed the filter and is also the continuation key).
+  // log#1 alone spends the whole item budget in one heavy-scanned fetch,
+  // ending at continuation 'z' — well above 'c', so it never wins the
+  // ascending extremum (the minimum). floor = min('c', 'z') = 'c', and
+  // log#0's buffered 'c' sits exactly at floor: it must be drained under
+  // `<=`, the ascending mirror of the descending `>=` guard.
+  const { fetch } = fakeFetch({
+    'log#0': [['c'], []],
+    'log#1': [{ items: [], scanned: 10_000, stop: 'z' }, []],
+  })
+
+  const out = await collectPage({
+    fetch, shards: SHARDS, limit: 10, descending: false, exclude: [],
+  })
+
+  expect(out.rows.map((r) => r.sk)).toEqual(['c'])
+  expect(out.hasMore).toBe(true)
+  expect(out.resumeFrom).toBe('c')
+})
+
+test('ascending: a buffered row above floor is not drained', async () => {
+  // The ascending mirror of the descending below-floor test. log#0 is
+  // exhausted after one page, leaving 'p' buffered and unconsumed — 'p' is
+  // above where log#1 (the only non-exhausted shard, and the only
+  // contributor to floor) has scanned to. log#1 alone spends the whole item
+  // budget in one heavy-scanned fetch, ending at continuation 'j'. floor =
+  // 'j', and log#0's buffered 'p' is above it ('p' > 'j'): log#1 might still
+  // hold something unseen between 'j' and 'p' that belongs first, so 'p'
+  // must not be drained.
+  const { fetch } = fakeFetch({
+    'log#0': [['p']],
+    'log#1': [{ items: [], scanned: 10_000, stop: 'j' }, []],
+  })
+
+  const out = await collectPage({
+    fetch, shards: SHARDS, limit: 10, descending: false, exclude: [],
   })
 
   expect(out.rows).toEqual([])
