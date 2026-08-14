@@ -48,34 +48,17 @@ export interface Collected<T> {
   rows: T[]
   hasMore: boolean
   /**
-   * Where scanning stopped, as a plain sk — meaningful when `rows` is empty
-   * and `hasMore` is true: the budget was spent before anything could be
-   * emitted, and without this the caller has no cursor to resume from at
-   * all (see query() in index.ts). Null when there is nothing to resume
-   * from, or when resuming safely can't be established (see below).
+   * Set only when the budget was spent (see the drain in collectPage below).
+   * Meaningful when `rows` came back empty: without it, a budget-truncated
+   * page that matched nothing yet is indistinguishable from a genuinely
+   * empty result (see query() in index.ts). Null otherwise — including when
+   * every shard is exhausted, since there is nothing left to resume from.
    *
-   * A shard's stopping point is not simply its own lastEvaluatedKey. A shard
-   * can read real matches into its buffer and then go untouched for many
-   * rounds — the loop above only re-fetches shards whose buffer is empty —
-   * while other shards alone burn through the rest of the budget. If that
-   * happens, this call ends with zero rows emitted (the frontier invariant
-   * forbids emitting from one shard's buffer while another is still
-   * unfetched) even though a real match is sitting in a buffer that is
-   * about to be discarded when this call returns. That buffered row's sk is
-   * *larger* (descending) than the stalled shard's own lastEvaluatedKey, so
-   * using the latter as resumeFrom would place the row outside every future
-   * query's range — a silent, permanent skip.
-   *
-   * There is no cheap way to recover a safe cutoff in that situation (it
-   * would require remembering where each buffered page started, not just
-   * where it ended), so resumeFrom is only ever computed when every shard's
-   * buffer is empty. That is also exactly the case that matters in
-   * practice: a filter that has matched nothing anywhere yet, which is why
-   * `rows` came back empty in the first place. When it holds, no shard has
-   * found anything that isn't already reflected in its own
-   * lastEvaluatedKey, so the extremum below is safe. When it doesn't — some
-   * shard found something but got stalled — resumeFrom degrades to null,
-   * matching today's behavior, rather than risk a skip.
+   * This is `floor`: the extremum, across shards that are not exhausted, of
+   * their own lastEvaluatedKey.sk (max when descending, min when
+   * ascending). It is *not* simply "wherever scanning stopped" — see the
+   * drain's doc comment for why a naive version of that claim can skip a
+   * row, and why floor itself is the safe cutoff once the drain has run.
    */
   resumeFrom: string | null
 }
@@ -83,6 +66,21 @@ export interface Collected<T> {
 function stopKeyOf(key: Record<string, unknown> | undefined): string | undefined {
   const sk = key?.sk
   return typeof sk === 'string' ? sk : undefined
+}
+
+/** The shard whose buffered head is furthest along in the paging direction —
+ * shared by the main loop and the drain below so the two pick winners by the
+ * exact same rule. */
+function pickBest<T extends ShardItem>(
+  candidates: readonly { buffer: T[] }[],
+  descending: boolean,
+): { buffer: T[] } {
+  let best = candidates[0]
+  for (const s of candidates) {
+    const better = descending ? s.buffer[0].sk > best.buffer[0].sk : s.buffer[0].sk < best.buffer[0].sk
+    if (better) best = s
+  }
+  return best
 }
 
 /**
@@ -142,28 +140,61 @@ export async function collectPage<T extends ShardItem>(
     const ready = state.filter((s) => s.buffer.length > 0)
     if (ready.length === 0) break
 
-    let best = ready[0]
-    for (const s of ready) {
-      const better = opts.descending
-        ? s.buffer[0].sk > best.buffer[0].sk
-        : s.buffer[0].sk < best.buffer[0].sk
-      if (better) best = s
-    }
-    matched.push(best.buffer.shift() as T)
+    matched.push(pickBest(ready, opts.descending).buffer.shift() as T)
   }
 
-  // Safe only when nothing is stuck in a buffer — see the doc comment on
-  // Collected.resumeFrom for why.
   let resumeFrom: string | null = null
-  if (state.every((s) => s.buffer.length === 0)) {
+
+  if (budgetSpent) {
+    // floor: the extremum, across shards that are not exhausted, of their
+    // own lastEvaluatedKey.sk. DynamoDB's ExclusiveStartKey semantics mean
+    // a non-exhausted shard S has examined everything down to its own
+    // continuation key c_S, and every row of S it has *not* yet seen has an
+    // sk strictly beyond c_S in the paging direction (descending: strictly
+    // less). Since floor is the extremum of every c_S, that holds for every
+    // non-exhausted shard at once: nothing anywhere still unexamined can
+    // reach floor, let alone cross it. (Every shard was fetched at least
+    // once in round one regardless of budget, so no non-exhausted shard is
+    // missing a real continuation key here.)
+    let floor: string | null = null
     for (const s of state) {
       if (s.exhausted) continue
       const sk = stopKeyOf(s.startKey)
       if (sk === undefined) continue
-      if (resumeFrom === null || (opts.descending ? sk > resumeFrom : sk < resumeFrom)) {
-        resumeFrom = sk
-      }
+      if (floor === null || (opts.descending ? sk > floor : sk < floor)) floor = sk
     }
+
+    // Drain: some shards may already be holding real, already-fetched
+    // matches in their buffer — the main loop above only re-fetches a shard
+    // once its buffer is empty, so a shard that found something early can
+    // sit untouched while a different shard alone burns the rest of the
+    // budget on filtered-empty pages. Those buffered rows were paid for and
+    // must not be thrown away with the rest of this call's state.
+    //
+    // A buffered row is safe to emit once its sk is at or beyond floor: floor
+    // is the point past which *nothing* unexamined can reach (see above), so
+    // nothing still out there can outrank or tie it. That's `>=`, not `>` —
+    // DynamoDB's lastEvaluatedKey is the key of the last item *examined*,
+    // inclusive, so when that item passed the filter it is also the last
+    // element of its own shard's buffer: a shard's own boundary row can sit
+    // exactly at floor, and excluding it with a strict `>` would orphan it
+    // the same way an unguarded resumeFrom would (the next query's `hi`
+    // becomes floor, and boundsFor excludes the cursor value itself).
+    //
+    // No further fetches happen here — the budget is spent — so a shard
+    // that empties out mid-drain simply stops being a candidate, even if it
+    // isn't exhausted; whatever it still holds beyond floor, if anything,
+    // waits for the next call.
+    const beyondFloor = (sk: string) => (
+      floor === null || (opts.descending ? sk >= floor : sk <= floor)
+    )
+    while (matched.length < want) {
+      const candidates = state.filter((s) => s.buffer.length > 0 && beyondFloor(s.buffer[0].sk))
+      if (candidates.length === 0) break
+      matched.push(pickBest(candidates, opts.descending).buffer.shift() as T)
+    }
+
+    resumeFrom = floor
   }
 
   return {

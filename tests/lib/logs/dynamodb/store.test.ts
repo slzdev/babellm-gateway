@@ -169,37 +169,43 @@ when('a shard needing more than one round trip still returns every row in order'
   expect(page.rows.map((r) => r.id)).toEqual(sorted.slice(-10).reverse())
 })
 
-when('nextCursor is the last row, not resumeFrom, when a shard drains without going hungry again', async () => {
-  // Regression guard for a specific way query() could get the resumeFrom
-  // wiring backwards: prefer it even when there's a real last row to use.
-  //
-  // Shard 'a' gets one item newer than everything in shard 'b'. Shard 'b'
-  // gets 9 items, only 5 of which fit the per-shard page size at limit:5
-  // (SHARDS=16, so perShard = ceil(6/16)+4 = 5) — so shard 'b' still has a
-  // continuation key (is not exhausted) after round one. The merge picks
-  // shard 'a's single item first (it's newest), which immediately empties
-  // and exhausts shard 'a'. Filling the rest of the page (and the one extra
-  // row that signals hasMore) then drains shard 'b's buffer down to exactly
-  // empty — at which point the loop has already gathered enough rows and
-  // exits, *without* re-fetching shard 'b'. So at the end: rows are
-  // present, hasMore is true, and every shard's buffer is empty with shard
-  // 'b' still holding a continuation key — exactly the state that makes
-  // collectPage's resumeFrom non-null. If query() ever preferred resumeFrom
-  // over the last real row here, nextCursor would silently jump to shard
-  // 'b's internal continuation key instead of the row actually shown last.
-  const newest = uuidv7(new Date('2026-08-14T00:00:00Z')).slice(0, -1) + 'a'
-  const older = Array.from(
-    { length: 9 },
-    (_, i) => uuidv7(new Date(`2026-01-0${9 - i}T00:00:00Z`)).slice(0, -1) + 'b',
-  )
-  await store.write(entry({ id: newest }), settings)
-  for (const id of older) await store.write(entry({ id }), settings)
+when('a budget-truncated query still surfaces a match it already fetched', async () => {
+  // End-to-end regression for the drain in collectPage: shard 'b' gets 210
+  // items that never match the filter, forcing MAX_ROUND_TRIPS (40) rounds
+  // of filtered-empty-but-not-exhausted pages (perShard is 5 at limit:1, and
+  // 40 rounds x 5 = 200 < 210, so shard 'b' is still not exhausted when the
+  // round-trip budget trips). Shard 'a' gets exactly one item that *does*
+  // match, generated after all of shard 'b's ids so it sorts newest and
+  // wins the merge outright in round one — then sits untouched in its
+  // buffer while shard 'b' alone burns through the rest of the budget.
+  // Without the drain, that already-fetched match would be silently
+  // dropped; with it, it comes back as a normal row.
+  const noMatchIds = Array.from({ length: 210 }, () => `${uuidv7().slice(0, -1)}b`)
+  const matchId = `${uuidv7().slice(0, -1)}a`
+  await Promise.all(noMatchIds.map((id) => store.write(entry({ id, model: 'no-match' }), settings)))
+  await store.write(entry({ id: matchId, model: 'match-me' }), settings)
 
-  const page = await store.query({ limit: 5 })
+  const page = await store.query({ limit: 1, model: 'match-me' })
 
-  const expectedIds = [newest, ...older.slice(0, 4)]
-  expect(page.rows.map((r) => r.id)).toEqual(expectedIds)
-  expect(page.nextCursor).toBe(older[3])
+  expect(page.rows.map((r) => r.id)).toEqual([matchId])
+  expect(page.nextCursor).toBe(matchId)
+})
+
+when('a query matching nothing anywhere still gets a resumable cursor after truncation', async () => {
+  // The original bug, end-to-end: a narrow filter over a wide range reads a
+  // great deal and matches nothing until it goes deep. Shard 'b' alone
+  // supplies 210 non-matching items — same round-trip-budget arithmetic as
+  // above — so this trips the budget with every shard's buffer empty (no
+  // match exists anywhere for the drain to recover). The page must not
+  // render as an indistinguishable "no matching logs": nextCursor has to be
+  // non-null so the viewer can keep paging into the unscanned tail.
+  const noMatchIds = Array.from({ length: 210 }, () => `${uuidv7().slice(0, -1)}b`)
+  await Promise.all(noMatchIds.map((id) => store.write(entry({ id, model: 'no-match' }), settings)))
+
+  const page = await store.query({ limit: 1, model: 'match-me' })
+
+  expect(page.rows).toEqual([])
+  expect(page.nextCursor).not.toBeNull()
 })
 
 when('an inverted before/after range returns empty instead of throwing', async () => {

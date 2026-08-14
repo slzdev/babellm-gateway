@@ -245,17 +245,22 @@ test('an empty but unexhausted page contributes its own stopping point', async (
   expect(out.resumeFrom).toBe('far-along')
 })
 
-test('resumeFrom is null when a shard has an unconsumed match stuck in its buffer', async () => {
-  // The counterexample that rules out the naive "extremum of continuation
-  // keys alone" formula: log#0 finds a real match on its very first fetch
-  // and is then never re-fetched (the loop only re-fetches shards with an
-  // empty buffer), while log#1 alone burns through the whole round-trip
-  // budget returning nothing. Emission never runs (log#1 is still hungry
-  // every round), so rows comes back empty — but log#0's buffered 'x' is a
-  // real match, sitting above (newer than) log#0's own lastEvaluatedKey. If
-  // resumeFrom used that lastEvaluatedKey, the next query's upper bound
-  // would exclude 'x' forever. Losing the cursor here (falling back to
-  // null) is the safe outcome; skipping 'x' would not be.
+test('a buffered match is drained and returned instead of being lost to a budget-truncated page', async () => {
+  // The counterexample that ruled out "resumeFrom = extremum of continuation
+  // keys alone": log#0 finds a real match on its very first fetch and is
+  // then never re-fetched (the loop only re-fetches shards with an empty
+  // buffer), while log#1 alone burns through the whole round-trip budget
+  // returning nothing. Naively resuming past log#0's own lastEvaluatedKey
+  // would exclude the buffered 'x' forever. The drain fixes this by emitting
+  // 'x' now, since it's already fetched and provably the global next row.
+  //
+  // This also exercises the floor boundary precisely: log#0's page is
+  // `['x']`, so the fake's synthesized lastEvaluatedKey.sk for that page is
+  // 'x' itself — the same value as the buffered item, exactly the case where
+  // DynamoDB's last *examined* item is also the last one that passed the
+  // filter. floor ends up 'x' too (log#0's continuation key beats log#1's),
+  // so the drain must admit a candidate with sk *equal* to floor, not only
+  // strictly beyond it — proving the guard is `>=`, not `>`.
   const empty: string[][] = Array.from({ length: 500 }, () => [])
   const { fetch } = fakeFetch({
     'log#0': [['x'], []],
@@ -266,20 +271,47 @@ test('resumeFrom is null when a shard has an unconsumed match stuck in its buffe
     fetch, shards: SHARDS, limit: 10, descending: true, exclude: [],
   })
 
-  expect(out.rows).toEqual([])
+  expect(out.rows.map((r) => r.sk)).toEqual(['x'])
   expect(out.hasMore).toBe(true)
-  expect(out.resumeFrom).toBeNull()
+  expect(out.resumeFrom).toBe('x')
 })
 
-test('resumeFrom and non-empty rows can coexist', async () => {
+test('a buffered row below floor is not drained, since something unseen could still outrank it', async () => {
+  // log#0 is exhausted after one page, leaving 'g' buffered and unconsumed.
+  // log#1 alone spends the whole item budget across two heavy-scanned empty
+  // pages, ending not exhausted with continuation 'j'. floor is therefore
+  // 'j' — but log#0's buffered 'g' is *below* floor ('g' < 'j'), meaning
+  // log#1 might still hold something unseen between 'j' and 'g' that
+  // outranks it. Draining 'g' anyway would be exactly the class of bug this
+  // whole design exists to prevent, just moved from "lost" to "returned out
+  // of order". Nothing should be emitted; only the cursor should resume.
+  const { fetch } = fakeFetch({
+    'log#0': [['g']],
+    'log#1': [
+      { items: [], scanned: 6_000, stop: 'k' },
+      { items: [], scanned: 6_000, stop: 'j' },
+      [],
+    ],
+  })
+
+  const out = await collectPage({
+    fetch, shards: SHARDS, limit: 10, descending: true, exclude: [],
+  })
+
+  expect(out.rows).toEqual([])
+  expect(out.hasMore).toBe(true)
+  expect(out.resumeFrom).toBe('j')
+})
+
+test('resumeFrom stays null when the page completes without spending the budget', async () => {
   // want = limit+1 = 2. log#0 is exhausted right after its one item; log#1
   // also has exactly one buffered item, not exhausted (it carries a
-  // continuation key). Shifting both is enough to reach `want`, so the loop
-  // exits before log#1 is ever refetched — its buffer just happens to have
-  // drained to empty at the same moment. So the page has a real row *and*
-  // a non-null resumeFrom. This is the state a caller (query() in
-  // index.ts) must not get backwards: it must still use the real row's id
-  // as the cursor, not resumeFrom, whenever rows are non-empty.
+  // continuation key). Shifting both is enough to reach `want` through the
+  // ordinary loop, so it exits before log#1 is ever refetched and before the
+  // budget is ever spent — its buffer just happens to drain to empty at the
+  // same moment. resumeFrom must not leak a value here: it is only ever set
+  // when collectPage actually gave up on the budget, and a caller must keep
+  // using the real last row's id as the cursor in every other case.
   const { fetch } = fakeFetch({
     'log#0': [['z']],
     'log#1': [{ items: ['b'], stop: 'a' }, []],
@@ -291,7 +323,7 @@ test('resumeFrom and non-empty rows can coexist', async () => {
 
   expect(out.rows.map((r) => r.sk)).toEqual(['z'])
   expect(out.hasMore).toBe(true)
-  expect(out.resumeFrom).toBe('a')
+  expect(out.resumeFrom).toBeNull()
 })
 
 test('a large scanned count trips the budget even when nothing is returned', async () => {
