@@ -192,6 +192,64 @@ wherever that driver writes, by the `x-request-id` header the gateway
 returns — a v7 uuid, e.g. `018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e50`, the same
 value as the log row's primary key and the `/logs/<id>` detail page's URL.
 
+### DynamoDB request log store
+
+An alternative to the Postgres store for high write volume. Set these and
+restart; the driver appears in Settings → Governance once `DYNAMODB_LOGS_TABLE`
+is present.
+
+```bash
+DYNAMODB_LOGS_TABLE=babellm_request_logs
+AWS_REGION=eu-west-1
+```
+
+Credentials come from the default AWS provider chain (environment, SSO, or an
+instance/task role). They are never read from the settings table.
+
+**You provision the table**, not the gateway:
+
+| Property | Value |
+|---|---|
+| Partition key | `pk` (String) |
+| Sort key | `sk` (String) |
+| TTL attribute | `expiresAt` |
+| Billing mode | `PAY_PER_REQUEST` |
+| Secondary indexes | none |
+
+The runtime IAM policy needs only:
+
+```
+dynamodb:PutItem
+dynamodb:GetItem
+dynamodb:Query
+dynamodb:DescribeTimeToLive
+```
+
+Notably not `CreateTable` or `UpdateTimeToLive` — the gateway never creates the
+table, so its role never carries permissions it would use once.
+
+**Enable TTL on `expiresAt`.** Without it nothing ever expires, and captured
+prompt content outlives the configured retention window. The daily maintenance
+run checks this and logs an error if it is missing.
+
+#### How it differs from the Postgres store
+
+- **A filtered page may be short.** Filters are applied after DynamoDB's own
+  page limit, so a narrow filter over a wide range can exhaust the read budget
+  before filling a page. Paging still works; the page is just smaller.
+- **Deletion is best-effort.** DynamoDB may take up to ~48 hours to remove an
+  expired item, and it stays queryable until it does.
+- **Retention changes are not retroactive.** `expiresAt` is stamped when the
+  entry is written, so lowering the retention window does not shorten the life
+  of entries already stored. Postgres applies retention retroactively by
+  dropping partitions.
+- **Payloads are capped at 150 KiB per side**, below the configured payload
+  size cap, because a DynamoDB item cannot exceed 400 KB.
+- **Pathological entries are shortened rather than dropped.** An entry whose
+  metadata alone would exceed the item limit keeps at most 100 retry attempts
+  and a 4096-character error message. Postgres stores both in full. The
+  alternative is losing the log line entirely.
+
 ### Upgrading from an earlier version
 
 `postgres` is the default store, so a gateway upgraded from a version that

@@ -67,6 +67,11 @@ export function GovernanceForm({
           back brings the old rows back into view. Other running instances pick up a
           change within {ttlSeconds} seconds.
         </p>
+        <p className="text-xs text-muted-foreground">
+          DynamoDB appears in this list only on instances where{' '}
+          <span className="font-mono">DYNAMODB_LOGS_TABLE</span> is set. A driver the
+          gateway cannot reach is not offered.
+        </p>
         {activeStore !== store ? (
           <p className="text-xs text-destructive">
             Currently logging to <span className="font-mono">{activeStore}</span>, because

@@ -3,13 +3,23 @@ import * as settings from '@/lib/settings'
 import {
   DEFAULT_PAYLOAD_MAX_BYTES, DEFAULT_RETENTION_MONTHS, type LoggingSettings,
 } from '@/lib/settings'
+import { dynamodbStore } from './dynamodb'
 import { postgresStore } from './postgres'
 import type { RequestLogStore } from './types'
 
 /** Every driver the gateway ships. Adding one is a fork's single entry here
- * plus a module implementing RequestLogStore. */
+ * plus a module implementing RequestLogStore.
+ *
+ * DynamoDB appears only when DYNAMODB_LOGS_TABLE is set. That keeps an
+ * unconfigured driver genuinely inert: the Settings picker maps over this
+ * object, and runLogMaintenance maintains every driver in it — so a
+ * registered-but-unusable store would both be offered and be called. A stale
+ * `logs.store = "dynamodb"` on an unconfigured instance then falls through
+ * the existing unknown_driver path to Postgres, which is the right outcome
+ * and needs no extra machinery. */
 export const DRIVERS: Record<string, RequestLogStore> = {
   postgres: postgresStore,
+  ...(dynamodbStore ? { dynamodb: dynamodbStore } : {}),
 }
 
 /**
