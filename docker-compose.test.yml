@@ -35,16 +35,22 @@ services:
     # In RAM, so the data cannot outlive the container and cannot accumulate
     # across runs. Also the reason the suite is faster here than on 5432.
     #
-    # 2g, not 1g: TRUNCATE does not reclaim the space partition churn and WAL
-    # leave behind, so each full suite run grows this by roughly 40 MB even
-    # though every table ends each run empty. At 1g that ceiling was around
-    # two dozen runs before a healthy suite started failing everywhere with a
-    # confusing "no space left on device" from Postgres rather than a clear
-    # signal to recycle the container — this only moves that ceiling further
-    # out, it does not make the growth stop. Recycle with `pnpm test:db:down`
-    # / `pnpm test:db:up` if it is ever hit again.
+    # size=1g, deliberately not raised: TRUNCATE does not reclaim the space
+    # partition churn and WAL leave behind, so each full suite run grows this
+    # by roughly 40 MB even though every table ends each run empty — a
+    # healthy suite eventually fails everywhere with a confusing "no space
+    # left on device" from Postgres, via resetDb, that reads like a code
+    # defect and is not one. Recycle with `pnpm test:db:down` / `pnpm
+    # test:db:up` when that happens; there is roughly two dozen runs between
+    # recycles at this size. Do not raise this to buy more runs: tmpfs is
+    # RAM-backed, and a cap the Docker VM cannot actually honor does not fail
+    # cleanly like this — it swaps and the kernel starts killing containers
+    # under memory pressure instead, which is strictly worse to debug. 1g
+    # already exceeds what small/constrained hosts have to spare alongside
+    # DynamoDB Local's JVM, Redis, and the suite's own Node process; the run
+    # ceiling this creates is real and is not a bug to fix here.
     tmpfs:
-      - /var/lib/postgresql/data:size=2g
+      - /var/lib/postgresql/data:size=1g
     # Durability buys nothing on a database that dies with the container, and
     # turning it off is the cheapest speedup available to the test suite.
     command: postgres -c fsync=off -c full_page_writes=off -c synchronous_commit=off
