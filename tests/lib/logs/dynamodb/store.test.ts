@@ -169,6 +169,39 @@ when('a shard needing more than one round trip still returns every row in order'
   expect(page.rows.map((r) => r.id)).toEqual(sorted.slice(-10).reverse())
 })
 
+when('nextCursor is the last row, not resumeFrom, when a shard drains without going hungry again', async () => {
+  // Regression guard for a specific way query() could get the resumeFrom
+  // wiring backwards: prefer it even when there's a real last row to use.
+  //
+  // Shard 'a' gets one item newer than everything in shard 'b'. Shard 'b'
+  // gets 9 items, only 5 of which fit the per-shard page size at limit:5
+  // (SHARDS=16, so perShard = ceil(6/16)+4 = 5) — so shard 'b' still has a
+  // continuation key (is not exhausted) after round one. The merge picks
+  // shard 'a's single item first (it's newest), which immediately empties
+  // and exhausts shard 'a'. Filling the rest of the page (and the one extra
+  // row that signals hasMore) then drains shard 'b's buffer down to exactly
+  // empty — at which point the loop has already gathered enough rows and
+  // exits, *without* re-fetching shard 'b'. So at the end: rows are
+  // present, hasMore is true, and every shard's buffer is empty with shard
+  // 'b' still holding a continuation key — exactly the state that makes
+  // collectPage's resumeFrom non-null. If query() ever preferred resumeFrom
+  // over the last real row here, nextCursor would silently jump to shard
+  // 'b's internal continuation key instead of the row actually shown last.
+  const newest = uuidv7(new Date('2026-08-14T00:00:00Z')).slice(0, -1) + 'a'
+  const older = Array.from(
+    { length: 9 },
+    (_, i) => uuidv7(new Date(`2026-01-0${9 - i}T00:00:00Z`)).slice(0, -1) + 'b',
+  )
+  await store.write(entry({ id: newest }), settings)
+  for (const id of older) await store.write(entry({ id }), settings)
+
+  const page = await store.query({ limit: 5 })
+
+  const expectedIds = [newest, ...older.slice(0, 4)]
+  expect(page.rows.map((r) => r.id)).toEqual(expectedIds)
+  expect(page.nextCursor).toBe(older[3])
+})
+
 when('an inverted before/after range returns empty instead of throwing', async () => {
   // A hand-edited URL can carry both cursors with before > after — boundsFor
   // then produces lo > hi, which DynamoDB's BETWEEN rejects outright.

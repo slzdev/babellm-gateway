@@ -183,11 +183,26 @@ export function createDynamoStore(config: DynamoStoreConfig): ReadableRequestLog
       const rows = collected.rows.map(toRow)
       const ordered = filter.before ? rows.reverse() : rows
 
+      // A budget-truncated page can come back with zero rows and hasMore
+      // still true — a narrow filter over a wide range routinely reads a
+      // great deal and matches nothing until it goes deep. Without a cursor
+      // that page is indistinguishable from a genuinely empty result, so
+      // resumeFrom (where scanning actually stopped) stands in for the
+      // usual "last row's id" cursor.
+      //
+      // Scoped to descending (`!filter.before`, the default "older" view):
+      // that's where truncation bites, since a narrow filter is applied
+      // going backward through an unbounded amount of history. The
+      // ascending `before` direction walks toward newer rows, which is
+      // bounded by the present — truncation there is rarer and self-limiting
+      // — so it keeps today's behavior.
+      const nextCursor = ordered.length
+        ? ordered[ordered.length - 1].id
+        : (!filter.before && collected.hasMore ? collected.resumeFrom : null)
+
       return {
         rows: ordered,
-        nextCursor: ordered.length && (filter.before || collected.hasMore)
-          ? ordered[ordered.length - 1].id
-          : null,
+        nextCursor: filter.before || collected.hasMore ? nextCursor : null,
         // On an `after` page, newer rows are guaranteed by the cursor having
         // come from a row up there. On a `before` page only hasMore knows.
         prevCursor: ordered.length && (filter.after || (filter.before && collected.hasMore))
