@@ -35,6 +35,22 @@ const INITIAL_RETRY_DELAY_MS = 200
 const MAX_RETRY_DELAY_MS = 1_000
 
 /**
+ * True once a response — any response, success or service error — has come
+ * back over the wire. The AWS SDK attaches `$metadata.httpStatusCode` to
+ * every error the service itself raised (ValidationException and friends);
+ * a connection that was refused because the JVM has not started listening
+ * yet never gets that far, so it never has one. That is the line between
+ * "the container is not up" (worth retrying) and "the container is up and
+ * rejected this request" (a real bug — retrying it only delays the message).
+ */
+function receivedHttpResponse(err: unknown): boolean {
+  return (
+    typeof err === 'object' && err !== null && '$metadata' in err &&
+    typeof (err as { $metadata?: { httpStatusCode?: unknown } }).$metadata?.httpStatusCode === 'number'
+  )
+}
+
+/**
  * Creates the table the production driver expects, with TTL enabled.
  *
  * Idempotent, and it retries while the container finishes booting: the
@@ -43,7 +59,9 @@ const MAX_RETRY_DELAY_MS = 1_000
  * INITIAL_RETRY_DELAY_MS up to MAX_RETRY_DELAY_MS so a container that is
  * already warm (the common case, after the first call in a run) barely
  * pays for the retry loop at all, while one still booting gets the full
- * READY_TIMEOUT_MS budget.
+ * READY_TIMEOUT_MS budget. Only connection failures are retried — a real
+ * service error (e.g. a malformed schema) is thrown immediately, since
+ * retrying it for the whole readiness window would just delay the message.
  */
 export async function createLogsTable(): Promise<void> {
   const config = testDynamoConfig()
@@ -69,6 +87,7 @@ export async function createLogsTable(): Promise<void> {
       break
     } catch (err) {
       if (err instanceof ResourceInUseException) return
+      if (receivedHttpResponse(err)) throw err
       if (Date.now() >= deadline) {
         throw new Error(
           `DynamoDB Local at ${config.endpoint} did not accept a connection within ` +
