@@ -7,7 +7,9 @@ import { Input } from '@/components/ui/input'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { nextFilterParams } from '@/lib/admin/log-filter-params'
+import {
+  DEFAULT_LOG_PAGE_SIZE, LOG_PAGE_SIZES, nextFilterParams,
+} from '@/lib/admin/log-filter-params'
 
 const RANGES = [
   { value: '1h', label: 'Last hour' },
@@ -25,6 +27,37 @@ const STATUSES = [
   { value: 'stream_interrupted', label: 'Stream interrupted' },
   { value: 'client_closed', label: 'Client closed' },
 ]
+
+/**
+ * Rows per page. Sits with the pager rather than in the filter bar — it
+ * changes how much of the result set a page shows, not which requests are in
+ * it — but it goes through `nextFilterParams` like every filter, because the
+ * keyset cursor in the URL describes a page of the old size and means
+ * nothing once the size changes.
+ */
+export function PageSizeSelect() {
+  const router = useRouter()
+  const params = useSearchParams()
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-sm text-muted-foreground">Rows per page</span>
+      <Select
+        value={params.get('size') ?? String(DEFAULT_LOG_PAGE_SIZE)}
+        onValueChange={(v) => {
+          if (v) router.push(`/logs?${nextFilterParams(params, 'size', v).toString()}`)
+        }}
+      >
+        <SelectTrigger className="w-20" aria-label="Rows per page"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {LOG_PAGE_SIZES.map((size) => (
+            <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
 
 export function LogFilters({
   keys,

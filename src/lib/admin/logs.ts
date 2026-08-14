@@ -1,11 +1,9 @@
 import 'server-only'
 import { resolveRequestLogStore } from '@/lib/logs'
 import type { LogDetail, LogFilter, LogPage, StatusClass } from '@/lib/logs/types'
-import { DEFAULT_RANGE } from './log-filter-params'
+import { DEFAULT_LOG_PAGE_SIZE, DEFAULT_RANGE, LOG_PAGE_SIZES } from './log-filter-params'
 
-export { DEFAULT_RANGE }
-
-export const LOG_PAGE_SIZE = 50
+export { DEFAULT_LOG_PAGE_SIZE, DEFAULT_RANGE, LOG_PAGE_SIZES }
 
 const RANGES: Record<string, number | null> = {
   '1h': 60 * 60 * 1000,
@@ -41,8 +39,20 @@ export interface LogSearchParams {
   key?: string
   model?: string
   status?: string
+  size?: string
   after?: string
   before?: string
+}
+
+// Rows per page comes from the URL, so it is user input reaching a SQL
+// LIMIT: only the offered sizes are honoured, and anything else degrades to
+// the default rather than letting a hand-edited `?size=1000000` decide how
+// much of the store to read.
+function pageSize(value: string | undefined): number {
+  const size = Number(value)
+  return (LOG_PAGE_SIZES as readonly number[]).includes(size)
+    ? size
+    : DEFAULT_LOG_PAGE_SIZE
 }
 
 /**
@@ -76,7 +86,7 @@ export function parseLogFilter(
       : {}),
     ...(after ? { after } : {}),
     ...(before ? { before } : {}),
-    limit: LOG_PAGE_SIZE,
+    limit: pageSize(params.size),
   }
 }
 

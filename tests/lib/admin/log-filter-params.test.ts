@@ -26,6 +26,22 @@ test('selecting "Any status" removes the status param', () => {
   expect(next.has('status')).toBe(false)
 })
 
+test('choosing the default page size omits the param', () => {
+  const next = nextFilterParams(new URLSearchParams('size=5'), 'size', '50')
+  expect(next.has('size')).toBe(false)
+})
+
+test('choosing a non-default page size writes it', () => {
+  const next = nextFilterParams(new URLSearchParams(), 'size', '5')
+  expect(next.get('size')).toBe('5')
+})
+
+test('changing the page size clears the cursors, since they describe a page of the old size', () => {
+  const next = nextFilterParams(new URLSearchParams('after=a&range=1h'), 'size', '100')
+  expect(next.has('after')).toBe(false)
+  expect(next.get('range')).toBe('1h')
+})
+
 test('every change clears both cursors', () => {
   const next = nextFilterParams(new URLSearchParams('after=a&before=b&range=1h'), 'range', '7d')
   expect(next.has('after')).toBe(false)

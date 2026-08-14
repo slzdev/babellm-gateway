@@ -12,6 +12,12 @@
 
 export const DEFAULT_RANGE = '24h'
 
+/** Rows per page the user may choose between. Anything else in the URL
+ * degrades to the default, the same as an unrecognized range. */
+export const LOG_PAGE_SIZES = [5, 10, 25, 50, 100] as const
+
+export const DEFAULT_LOG_PAGE_SIZE = 50
+
 /**
  * Each filter's "neutral" value — the one whose selection means the same
  * thing as the param being absent from the URL, and so should delete the
@@ -29,6 +35,7 @@ const NEUTRAL_VALUES: Record<string, string> = {
   key: 'all',
   model: 'all',
   status: 'all',
+  size: String(DEFAULT_LOG_PAGE_SIZE),
 }
 
 /**

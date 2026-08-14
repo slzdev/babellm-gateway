@@ -1,5 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest'
-import { LOG_PAGE_SIZE, loadLogDetail, loadLogs, parseLogFilter } from '@/lib/admin/logs'
+import {
+  DEFAULT_LOG_PAGE_SIZE, LOG_PAGE_SIZES, loadLogDetail, loadLogs, parseLogFilter,
+} from '@/lib/admin/logs'
 import { clearRequestLogStoreCache } from '@/lib/logs/registry'
 import { postgresStore } from '@/lib/logs/postgres'
 import { setLoggingSettings } from '@/lib/settings'
@@ -15,9 +17,26 @@ beforeEach(async () => {
 
 test('defaults to the last 24 hours and one page', () => {
   const filter = parseLogFilter({}, NOW)
-  expect(filter.limit).toBe(LOG_PAGE_SIZE)
+  expect(filter.limit).toBe(DEFAULT_LOG_PAGE_SIZE)
   expect(filter.from).toEqual(new Date('2026-08-12T12:00:00.000Z'))
   expect(filter.to).toBeUndefined()
+})
+
+test('honours every offered page size', () => {
+  for (const size of LOG_PAGE_SIZES) {
+    expect(parseLogFilter({ size: String(size) }, NOW).limit).toBe(size)
+  }
+})
+
+test('an unoffered page size falls back to the default rather than reaching the store', () => {
+  // The limit comes from the URL and lands in a SQL LIMIT, so a hand-edited
+  // value must degrade like an unrecognized range instead of deciding how
+  // much of the log store to read.
+  expect(parseLogFilter({ size: '1000000' }, NOW).limit).toBe(DEFAULT_LOG_PAGE_SIZE)
+  expect(parseLogFilter({ size: '0' }, NOW).limit).toBe(DEFAULT_LOG_PAGE_SIZE)
+  expect(parseLogFilter({ size: '-10' }, NOW).limit).toBe(DEFAULT_LOG_PAGE_SIZE)
+  expect(parseLogFilter({ size: 'lots' }, NOW).limit).toBe(DEFAULT_LOG_PAGE_SIZE)
+  expect(parseLogFilter({ size: '' }, NOW).limit).toBe(DEFAULT_LOG_PAGE_SIZE)
 })
 
 test('understands every range option, including all', () => {

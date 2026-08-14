@@ -11,7 +11,8 @@ import { virtualModels } from '@/lib/db/schema'
 import { listApiKeys } from '@/lib/admin/keys'
 import { loadLogs, parseLogFilter, type LogSearchParams } from '@/lib/admin/logs'
 import { requireAdmin } from '@/lib/admin/session'
-import { LogFilters } from './log-filters'
+import { LogFilters, PageSizeSelect } from './log-filters'
+import { LogRow } from './log-row'
 
 export const dynamic = 'force-dynamic'
 
@@ -102,8 +103,11 @@ export default async function LogsPage({
             </TableHeader>
             <TableBody>
               {view.page?.rows.map((row) => (
-                <TableRow key={row.id} className="cursor-pointer">
+                <LogRow key={row.id} href={`/logs/${row.id}`}>
                   <TableCell className="whitespace-nowrap">
+                    {/* Still a real link, not just a clickable cell: the row
+                        widens the pointer target, the anchor is what keyboard
+                        users tab to and what opens in a new tab. */}
                     <Link href={`/logs/${row.id}`} className="hover:underline">
                       {row.createdAt.toISOString().slice(0, 19).replace('T', ' ')}
                     </Link>
@@ -127,7 +131,7 @@ export default async function LogsPage({
                       : `${row.promptTokens ?? '—'} / ${row.completionTokens ?? '—'}`}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{cost(row.costUsd)}</TableCell>
-                </TableRow>
+                </LogRow>
               ))}
               {view.page && view.page.rows.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
@@ -139,33 +143,37 @@ export default async function LogsPage({
             </TableBody>
           </Table>
 
-          <div className="flex justify-end gap-2">
-            {/* Rendered as a link only when a cursor exists — Base UI's disabled
-                prop only suppresses a native <button>, so an unusable page
-                still needs to fall back to a plain disabled button rather
-                than a Link that would silently navigate. */}
-            {view.page?.prevCursor ? (
-              <Button
-                variant="secondary"
-                nativeButton={false}
-                render={<Link href={`/logs?${cursorParams(params, 'before', view.page.prevCursor)}`} />}
-              >
-                Newer
-              </Button>
-            ) : (
-              <Button variant="secondary" disabled>Newer</Button>
-            )}
-            {view.page?.nextCursor ? (
-              <Button
-                variant="secondary"
-                nativeButton={false}
-                render={<Link href={`/logs?${cursorParams(params, 'after', view.page.nextCursor)}`} />}
-              >
-                Older
-              </Button>
-            ) : (
-              <Button variant="secondary" disabled>Older</Button>
-            )}
+          <div className="flex items-center justify-between gap-2">
+            <PageSizeSelect />
+
+            <div className="flex gap-2">
+              {/* Rendered as a link only when a cursor exists — Base UI's disabled
+                  prop only suppresses a native <button>, so an unusable page
+                  still needs to fall back to a plain disabled button rather
+                  than a Link that would silently navigate. */}
+              {view.page?.prevCursor ? (
+                <Button
+                  variant="secondary"
+                  nativeButton={false}
+                  render={<Link href={`/logs?${cursorParams(params, 'before', view.page.prevCursor)}`} />}
+                >
+                  Newer
+                </Button>
+              ) : (
+                <Button variant="secondary" disabled>Newer</Button>
+              )}
+              {view.page?.nextCursor ? (
+                <Button
+                  variant="secondary"
+                  nativeButton={false}
+                  render={<Link href={`/logs?${cursorParams(params, 'after', view.page.nextCursor)}`} />}
+                >
+                  Older
+                </Button>
+              ) : (
+                <Button variant="secondary" disabled>Older</Button>
+              )}
+            </div>
           </div>
         </>
       )}
