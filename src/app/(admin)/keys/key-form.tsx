@@ -1,17 +1,14 @@
 'use client'
 
 import { useActionState, useLayoutEffect, useState } from 'react'
-import { CheckIcon, CopyIcon } from 'lucide-react'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter,
   DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import { createKeyAction, type CreateKeyState } from './actions'
+import { KeyFields } from './key-fields'
+import { KeyReveal } from './key-reveal'
 
 export function CreateKeyDialog({ users }: { users: Array<{ id: string; name: string }> }) {
   const [open, setOpen] = useState(false)
@@ -69,7 +66,14 @@ function CreateKeyBody({
   }, [pending, state?.plaintextKey, onBusyChange])
 
   if (state?.plaintextKey) {
-    return <KeyReveal plaintextKey={state.plaintextKey} onDone={onDone} />
+    return (
+      <KeyReveal
+        title="API key created"
+        description="Copy it now — it is never shown again."
+        plaintextKey={state.plaintextKey}
+        onDone={onDone}
+      />
+    )
   }
 
   return (
@@ -77,58 +81,11 @@ function CreateKeyBody({
       <DialogHeader>
         <DialogTitle>Create an API key</DialogTitle>
         <DialogDescription>
-          Rate limits and budgets are recorded but not enforced until Phase 4.
+          Rate limits and budgets are enforced on every request this key makes.
         </DialogDescription>
       </DialogHeader>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="name">Name</Label>
-          <Input id="name" name="name" required placeholder="production app" />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="userId">User</Label>
-          <select
-            id="userId"
-            name="userId"
-            className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
-          >
-            <option value="">Unassigned</option>
-            {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-          </select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="expiresAt">Expires</Label>
-          <Input id="expiresAt" name="expiresAt" type="date" />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="rpmLimit">Requests / min</Label>
-          <Input id="rpmLimit" name="rpmLimit" type="number" min={1} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="tpmLimit">Tokens / min</Label>
-          <Input id="tpmLimit" name="tpmLimit" type="number" min={1} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="budgetMonthlyUsd">Monthly budget (USD)</Label>
-          <Input id="budgetMonthlyUsd" name="budgetMonthlyUsd" type="number" step="0.01" min={0} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="budgetTotalUsd">Total budget (USD)</Label>
-          <Input id="budgetTotalUsd" name="budgetTotalUsd" type="number" step="0.01" min={0} />
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <Switch id="logPayloads" name="logPayloads" />
-          <Label htmlFor="logPayloads">Log request and response payloads</Label>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Stores the exact request and response bodies with this key&apos;s logs, up to
-          the payload cap in Settings › Governance. Off by default.
-        </p>
-      </div>
+      <KeyFields users={users} />
 
       {state?.error ? (
         <p role="alert" className="text-sm text-destructive">{state.error}</p>
@@ -141,42 +98,5 @@ function CreateKeyBody({
         <Button type="submit" disabled={pending}>{pending ? 'Creating…' : 'Create key'}</Button>
       </DialogFooter>
     </form>
-  )
-}
-
-function KeyReveal({ plaintextKey, onDone }: { plaintextKey: string; onDone: () => void }) {
-  const [copied, setCopied] = useState(false)
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(plaintextKey)
-      setCopied(true)
-      toast.success('Key copied to the clipboard.')
-    } catch {
-      // Clipboard access can be denied; the key is on screen either way.
-      toast.error('Could not copy — select the key and copy it by hand.')
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <DialogHeader>
-        <DialogTitle>API key created</DialogTitle>
-        <DialogDescription>
-          Copy it now — it is never shown again.
-        </DialogDescription>
-      </DialogHeader>
-
-      <div className="flex items-start gap-2 rounded-md border border-dashed p-3">
-        <code className="flex-1 break-all font-mono text-sm">{plaintextKey}</code>
-        <Button type="button" variant="outline" size="icon-sm" onClick={copy} aria-label="Copy key">
-          {copied ? <CheckIcon /> : <CopyIcon />}
-        </Button>
-      </div>
-
-      <DialogFooter>
-        <Button type="button" onClick={onDone}>Done</Button>
-      </DialogFooter>
-    </div>
   )
 }

@@ -160,6 +160,71 @@ export async function createApiKey(
   }
 }
 
+/**
+ * Saves an edit to a key's settings.
+ *
+ * Every field is authoritative: unlike a provider's credentials, none of
+ * these are hidden from the browser, so the edit form posts all of them and a
+ * blank one means "no limit" rather than "keep what was stored". The secret
+ * is not among them — only its hash is here to keep, and replacing it is
+ * `rotateApiKey`'s job.
+ */
+export async function updateApiKey(id: string, input: ApiKeyInput): Promise<void> {
+  const name = input.name.trim()
+  if (!name) throw new Error('A key name is required.')
+
+  const values = {
+    name,
+    userId: input.userId ?? null,
+    rpmLimit: validateLimit(input.rpmLimit, 'rpm limit'),
+    tpmLimit: validateLimit(input.tpmLimit, 'tpm limit'),
+    budgetTotalUsd: validateMoney(input.budgetTotalUsd, 'Total budget'),
+    budgetMonthlyUsd: validateMoney(input.budgetMonthlyUsd, 'Monthly budget'),
+    expiresAt: validateExpiry(input.expiresAt),
+    logPayloads: input.logPayloads ?? false,
+  }
+
+  const updated = await db.update(apiKeys).set(values).where(eq(apiKeys.id, id)).returning()
+  if (updated.length === 0) throw new Error('API key not found.')
+}
+
+/**
+ * Issues a new secret for an existing key.
+ *
+ * The row keeps its id, so its limits, budgets and logs all carry over, and
+ * its counters keep counting. `resolveApiKey` hashes the presented token on
+ * every request with nothing cached in between, so the old secret stops
+ * working the moment this commits.
+ */
+export async function rotateApiKey(id: string): Promise<{ plaintextKey: string }> {
+  const generated = generateApiKey()
+  const updated = await db
+    .update(apiKeys)
+    .set({ keyHash: generated.keyHash, keyPrefix: generated.keyPrefix })
+    .where(eq(apiKeys.id, id))
+    .returning({ id: apiKeys.id })
+
+  if (updated.length === 0) throw new Error('API key not found.')
+  return { plaintextKey: generated.key }
+}
+
+/**
+ * Zeroes a key's counters, letting a key that hit its total budget — the one
+ * counter with no expiry — work again without raising the budget.
+ *
+ * Returns false if the counter store could not be reached, so the admin is
+ * not told the reset happened when it did not.
+ */
+export async function resetApiKeyUsage(id: string): Promise<boolean> {
+  const [existing] = await db
+    .select({ id: apiKeys.id })
+    .from(apiKeys)
+    .where(eq(apiKeys.id, id))
+  if (!existing) throw new Error('API key not found.')
+
+  return clearUsage(id)
+}
+
 export async function setApiKeyEnabled(id: string, enabled: boolean): Promise<void> {
   await db.update(apiKeys).set({ enabled }).where(eq(apiKeys.id, id))
 }

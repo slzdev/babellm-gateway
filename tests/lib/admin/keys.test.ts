@@ -3,9 +3,10 @@ import { db } from '@/lib/db'
 import { apiKeys } from '@/lib/db/schema'
 import {
   createApiKey, createUser, deleteApiKey, deleteUser,
-  listApiKeys, listUsers, setApiKeyEnabled, setApiKeyLogPayloads,
+  listApiKeys, listUsers, rotateApiKey, setApiKeyEnabled, setApiKeyLogPayloads,
+  updateApiKey,
 } from '@/lib/admin/keys'
-import { hashApiKey } from '@/lib/gateway/auth'
+import { hashApiKey, resolveApiKey } from '@/lib/gateway/auth'
 import { resetDb } from '../../helpers/db'
 
 beforeEach(resetDb)
@@ -112,6 +113,112 @@ test('toggling payload logging on a key updates it without touching other fields
   await setApiKeyLogPayloads(item.id, false)
   const [reverted] = await listApiKeys()
   expect(reverted.logPayloads).toBe(false)
+})
+
+test('editing a key saves its name, user, limits, budgets, and expiry', async () => {
+  const { item } = await createApiKey({ name: 'app key' })
+  const user = await createUser({ name: 'Ada' })
+  const expiresAt = new Date(Date.now() + 86_400_000)
+
+  await updateApiKey(item.id, {
+    name: 'renamed key',
+    userId: user.id,
+    rpmLimit: 30,
+    tpmLimit: 50_000,
+    budgetMonthlyUsd: '12.5',
+    budgetTotalUsd: '400',
+    expiresAt,
+    logPayloads: true,
+  })
+
+  const [updated] = await listApiKeys()
+  expect(updated.name).toBe('renamed key')
+  expect(updated.userName).toBe('Ada')
+  expect(updated.rpmLimit).toBe(30)
+  expect(updated.tpmLimit).toBe(50_000)
+  expect(updated.budgetMonthlyUsd).toBe('12.500000')
+  expect(updated.budgetTotalUsd).toBe('400.000000')
+  expect(updated.expiresAt?.getTime()).toBe(expiresAt.getTime())
+  expect(updated.logPayloads).toBe(true)
+})
+
+test('editing a key clears the limits left blank', async () => {
+  // The edit form posts every field, so an omitted one means "no limit" —
+  // not "keep whatever was there".
+  const { item } = await createApiKey({
+    name: 'limited',
+    rpmLimit: 60,
+    budgetTotalUsd: '10',
+    expiresAt: new Date(Date.now() + 86_400_000),
+    logPayloads: true,
+  })
+
+  await updateApiKey(item.id, { name: 'limited' })
+
+  const [updated] = await listApiKeys()
+  expect(updated.rpmLimit).toBeNull()
+  expect(updated.budgetTotalUsd).toBeNull()
+  expect(updated.expiresAt).toBeNull()
+  expect(updated.logPayloads).toBe(false)
+})
+
+test('editing a key leaves its secret alone', async () => {
+  const { item, plaintextKey } = await createApiKey({ name: 'app key' })
+
+  await updateApiKey(item.id, { name: 'renamed' })
+
+  const [stored] = await db.select().from(apiKeys)
+  expect(stored.keyHash).toBe(hashApiKey(plaintextKey))
+  expect(stored.keyPrefix).toBe(item.keyPrefix)
+})
+
+test('editing a key rejects a non-positive rate limit', async () => {
+  const { item } = await createApiKey({ name: 'app key', rpmLimit: 60 })
+  await expect(updateApiKey(item.id, { name: 'app key', rpmLimit: 0 })).rejects.toThrow(/rpm/i)
+
+  const [unchanged] = await listApiKeys()
+  expect(unchanged.rpmLimit).toBe(60)
+})
+
+test('editing a key rejects a blank name', async () => {
+  const { item } = await createApiKey({ name: 'app key' })
+  await expect(updateApiKey(item.id, { name: '  ' })).rejects.toThrow(/name/i)
+})
+
+test('editing a key that no longer exists reports it', async () => {
+  await expect(
+    updateApiKey('00000000-0000-0000-0000-000000000000', { name: 'ghost' }),
+  ).rejects.toThrow(/not found/i)
+})
+
+test('rotating a key issues a new secret and retires the old one', async () => {
+  const { item, plaintextKey } = await createApiKey({ name: 'app key' })
+
+  const { plaintextKey: rotated } = await rotateApiKey(item.id)
+
+  expect(rotated).toMatch(/^sk-bab-[A-Za-z0-9_-]{43}$/)
+  expect(rotated).not.toBe(plaintextKey)
+  await expect(resolveApiKey(plaintextKey)).rejects.toThrow(/incorrect api key/i)
+  expect((await resolveApiKey(rotated)).id).toBe(item.id)
+})
+
+test('rotating a key keeps its settings and shows the new prefix', async () => {
+  const { item } = await createApiKey({ name: 'app key', rpmLimit: 60, budgetTotalUsd: '10' })
+
+  const { plaintextKey: rotated } = await rotateApiKey(item.id)
+
+  const [updated] = await listApiKeys()
+  expect(updated.id).toBe(item.id)
+  expect(updated.name).toBe('app key')
+  expect(updated.rpmLimit).toBe(60)
+  expect(updated.budgetTotalUsd).toBe('10.000000')
+  expect(updated.keyPrefix).toBe(rotated.slice(0, 12))
+})
+
+test('rotating a key that no longer exists reports it', async () => {
+  await expect(
+    rotateApiKey('00000000-0000-0000-0000-000000000000'),
+  ).rejects.toThrow(/not found/i)
 })
 
 test('deleting a key removes it', async () => {

@@ -9,23 +9,36 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ConfirmAction } from '@/components/admin/confirm-action'
-import { deleteKeyAction, revokeKeyAction, setKeyPayloadLoggingAction } from './actions'
+import type { ApiKeyListItem } from '@/lib/admin/keys'
+import {
+  deleteKeyAction, resetKeyUsageAction, revokeKeyAction, rotateKeyAction,
+  setKeyPayloadLoggingAction,
+} from './actions'
+import { EditKeyDialog } from './edit-key-form'
+import { KeyRevealDialog } from './key-reveal'
 
 export function KeyRowActions({
-  id, name, enabled, logPayloads,
+  apiKey, users,
 }: {
-  id: string
-  name: string
-  enabled: boolean
-  logPayloads: boolean
+  apiKey: ApiKeyListItem
+  users: Array<{ id: string; name: string }>
 }) {
-  const [confirming, setConfirming] = useState(false)
+  const { id, name, enabled, logPayloads } = apiKey
+  const [editing, setEditing] = useState(false)
+  const [confirming, setConfirming] = useState<'delete' | 'rotate' | 'reset' | null>(null)
+  // Set only by a rotation that succeeded — the new secret, on screen once.
+  const [rotatedKey, setRotatedKey] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
+
+  function withId(): FormData {
+    const formData = new FormData()
+    formData.set('id', id)
+    return formData
+  }
 
   function toggle() {
     startTransition(async () => {
-      const formData = new FormData()
-      formData.set('id', id)
+      const formData = withId()
       formData.set('enabled', String(!enabled))
       try {
         await revokeKeyAction(formData)
@@ -38,8 +51,7 @@ export function KeyRowActions({
 
   function togglePayloadLogging() {
     startTransition(async () => {
-      const formData = new FormData()
-      formData.set('id', id)
+      const formData = withId()
       formData.set('logPayloads', String(!logPayloads))
       try {
         await setKeyPayloadLoggingAction(formData)
@@ -63,6 +75,7 @@ export function KeyRowActions({
           <MoreHorizontalIcon />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-auto min-w-40">
+          <DropdownMenuItem onClick={() => setEditing(true)}>Edit</DropdownMenuItem>
           <DropdownMenuItem disabled={pending} onClick={toggle}>
             {enabled ? 'Revoke' : 'Restore'}
           </DropdownMenuItem>
@@ -70,24 +83,51 @@ export function KeyRowActions({
             {logPayloads ? 'Turn off payload logging' : 'Turn on payload logging'}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onClick={() => setConfirming(true)}>
+          <DropdownMenuItem onClick={() => setConfirming('reset')}>Reset usage</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setConfirming('rotate')}>Rotate key</DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onClick={() => setConfirming('delete')}>
             Delete
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
+      <EditKeyDialog apiKey={apiKey} users={users} open={editing} onOpenChange={setEditing} />
+
       <ConfirmAction
-        open={confirming}
-        onOpenChange={setConfirming}
+        open={confirming === 'reset'}
+        onOpenChange={(open) => setConfirming(open ? 'reset' : null)}
+        title={`Reset usage for ${name}?`}
+        description="Zeroes this key's rate-limit windows and its monthly and total spend. The requests it already made stay in the logs."
+        confirmLabel="Reset usage"
+        successMessage="Usage counters reset."
+        onConfirm={() => resetKeyUsageAction(withId())}
+      />
+
+      <ConfirmAction
+        open={confirming === 'rotate'}
+        onOpenChange={(open) => setConfirming(open ? 'rotate' : null)}
+        title={`Rotate ${name}?`}
+        description="Issues a new secret and shows it once. Any client still using the current secret starts receiving 401s immediately. Limits, budgets, and usage stay with the key."
+        confirmLabel="Rotate key"
+        successMessage="Key rotated."
+        onConfirm={async () => {
+          const result = await rotateKeyAction(withId())
+          if (result.plaintextKey) setRotatedKey(result.plaintextKey)
+          return result
+        }}
+      />
+
+      <ConfirmAction
+        open={confirming === 'delete'}
+        onOpenChange={(open) => setConfirming(open ? 'delete' : null)}
         title={`Delete ${name}?`}
         description="Any client still using this key starts receiving 401s. This cannot be undone."
         successMessage="Key deleted."
-        onConfirm={async () => {
-          const formData = new FormData()
-          formData.set('id', id)
-          await deleteKeyAction(formData)
-        }}
+        onConfirm={() => deleteKeyAction(withId())}
       />
+
+      <KeyRevealDialog plaintextKey={rotatedKey} onDone={() => setRotatedKey(null)} />
     </>
   )
 }

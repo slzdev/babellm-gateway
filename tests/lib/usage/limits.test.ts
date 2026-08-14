@@ -261,13 +261,20 @@ test('chargeUsage never throws when the store fails', async () => {
   spy.mockRestore()
 })
 
-test('clearUsage never throws when the store fails', async () => {
+test('clearUsage reports a store failure instead of throwing', async () => {
   const spy = silenceErrors()
   const store = (await import('@/lib/usage/registry')).getUsageStore()
   store.del = async () => { throw new Error('redis is down') }
 
-  await expect(clearUsage('key-1')).resolves.toBeUndefined()
+  // False rather than a throw: a caller deleting a key must not fail over a
+  // counter store outage, but one that told an admin "counters reset" needs
+  // to know it did not happen.
+  await expect(clearUsage('key-1')).resolves.toBe(false)
   spy.mockRestore()
+})
+
+test('clearUsage reports success when the counters are gone', async () => {
+  await expect(clearUsage('key-1')).resolves.toBe(true)
 })
 
 test('clearUsage forgets a deleted key', async () => {

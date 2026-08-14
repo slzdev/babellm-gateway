@@ -89,9 +89,7 @@ export default async function KeysPage() {
                 </Badge>
               </TableCell>
               <TableCell className="text-right">
-                <KeyRowActions
-                  id={key.id} name={key.name} enabled={key.enabled} logPayloads={key.logPayloads}
-                />
+                <KeyRowActions apiKey={key} users={users} />
               </TableCell>
             </TableRow>
           ))}

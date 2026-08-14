@@ -361,12 +361,20 @@ export async function readUsage(
   return readings
 }
 
-/** Forgets a deleted key. The total spend counter has no expiry, so without
- * this it would outlive the key forever. */
-export async function clearUsage(keyId: string, now: number = Date.now()): Promise<void> {
+/**
+ * Forgets a key's counters. The total spend counter has no expiry, so without
+ * this a deleted key's spend would outlive it forever.
+ *
+ * Never throws — deleting a key must not fail because the counter store is
+ * down — but returns whether the counters actually went away, so a caller
+ * that is about to tell an admin "usage reset" can tell the truth instead.
+ */
+export async function clearUsage(keyId: string, now: number = Date.now()): Promise<boolean> {
   try {
     await getUsageStore().del(allKeysFor(keyId, now))
+    return true
   } catch (err) {
     reportFailure(err)
+    return false
   }
 }
