@@ -93,13 +93,21 @@ function routed(
  * streaming caller passes a `run` that pulls the first chunk, which is what
  * makes the failover boundary and the HTTP commit boundary the same line of
  * code rather than two that have to be kept in step.
+ *
+ * `run` is handed the candidate as well as the adapter because the request
+ * body is per-target, not per-request: a target that pins a service tier needs
+ * its own body, and the next target in the chain must not inherit it.
  */
 export async function execute<T>(
   chain: Candidate[],
   requestId: string,
   clientSignal: AbortSignal,
   deps: ExecuteDeps,
-  run: (adapter: ProviderAdapter, ctx: AttemptContext) => Promise<T>,
+  run: (
+    adapter: ProviderAdapter,
+    ctx: AttemptContext,
+    candidate: Candidate,
+  ) => Promise<T>,
 ): Promise<ExecuteResult<T>> {
   const attempts: AttemptRecord[] = []
   let last: RoutedError | undefined
@@ -128,7 +136,11 @@ export async function execute<T>(
     }
 
     try {
-      const value = await run(adapter, attemptContext(candidate, requestId, clientSignal))
+      const value = await run(
+        adapter,
+        attemptContext(candidate, requestId, clientSignal),
+        candidate,
+      )
       attempts.push(record(index, candidate, Date.now() - startedAt))
       return { value, candidate, attempts }
     } catch (err) {

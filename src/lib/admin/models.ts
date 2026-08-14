@@ -5,8 +5,11 @@ import {
   providers, routeTargets, virtualModels,
   type RouteTargetRow, type VirtualModelRow,
 } from '@/lib/db/schema'
+import { SERVICE_TIERS, type ServiceTier } from '@/lib/service-tiers'
 
 export type RoutingPolicy = 'failover' | 'weighted' | 'round_robin'
+
+export type { ServiceTier }
 
 export interface VirtualModelInput {
   name: string
@@ -22,6 +25,7 @@ export interface RouteTargetInput {
   upstreamModel: string
   priority?: number
   weight?: number
+  serviceTier?: ServiceTier | null
   enabled?: boolean
 }
 
@@ -39,6 +43,7 @@ export interface VirtualModelListItem {
     upstreamModel: string
     priority: number
     weight: number
+    serviceTier: ServiceTier | null
     enabled: boolean
   }>
 }
@@ -60,6 +65,7 @@ function toListItem(model: VirtualModelRow, rows: TargetRow[]): VirtualModelList
       upstreamModel: target.upstreamModel,
       priority: target.priority,
       weight: target.weight,
+      serviceTier: target.serviceTier,
       enabled: target.enabled,
     })),
   }
@@ -173,8 +179,14 @@ function validateTargetFields(input: {
   upstreamModel?: string
   priority?: number
   weight?: number
+  serviceTier?: ServiceTier | null
 }) {
-  const patch: { upstreamModel?: string; priority?: number; weight?: number } = {}
+  const patch: {
+    upstreamModel?: string
+    priority?: number
+    weight?: number
+    serviceTier?: ServiceTier | null
+  } = {}
 
   if (input.upstreamModel !== undefined) {
     const upstreamModel = input.upstreamModel.trim()
@@ -193,6 +205,14 @@ function validateTargetFields(input: {
     }
     patch.priority = input.priority
   }
+  // `null` is a value here, not an omission: it clears the tier back to
+  // "(none)". Only `undefined` means "leave this field alone".
+  if (input.serviceTier !== undefined) {
+    if (input.serviceTier !== null && !SERVICE_TIERS.includes(input.serviceTier)) {
+      throw new Error(`"${input.serviceTier}" is not a supported service tier.`)
+    }
+    patch.serviceTier = input.serviceTier
+  }
 
   return patch
 }
@@ -202,6 +222,7 @@ export async function addRouteTarget(input: RouteTargetInput): Promise<RouteTarg
     upstreamModel: input.upstreamModel,
     priority: input.priority ?? 0,
     weight: input.weight ?? 100,
+    serviceTier: input.serviceTier ?? null,
   })
 
   const [row] = await db.insert(routeTargets).values({
@@ -210,6 +231,7 @@ export async function addRouteTarget(input: RouteTargetInput): Promise<RouteTarg
     upstreamModel: validated.upstreamModel!,
     priority: validated.priority!,
     weight: validated.weight!,
+    serviceTier: validated.serviceTier ?? null,
     enabled: input.enabled ?? true,
   }).returning()
   return row
@@ -217,7 +239,13 @@ export async function addRouteTarget(input: RouteTargetInput): Promise<RouteTarg
 
 export async function updateRouteTarget(
   id: string,
-  input: { upstreamModel?: string; priority?: number; weight?: number; enabled?: boolean },
+  input: {
+    upstreamModel?: string
+    priority?: number
+    weight?: number
+    serviceTier?: ServiceTier | null
+    enabled?: boolean
+  },
 ): Promise<RouteTargetRow> {
   const patch: Record<string, unknown> = validateTargetFields(input)
   if (input.enabled !== undefined) patch.enabled = input.enabled

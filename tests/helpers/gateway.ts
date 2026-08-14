@@ -2,11 +2,13 @@ import { db } from '@/lib/db'
 import { apiKeys, providers, routeTargets, virtualModels } from '@/lib/db/schema'
 import { encryptJson } from '@/lib/crypto'
 import { generateApiKey } from '@/lib/gateway/auth'
+import type { ServiceTier } from '@/lib/admin/models'
 import type { ApiFlavor, ProviderAdapter } from '@/lib/adapters/types'
 
 export interface SeedOptions {
   virtualModel?: string
   upstreamModel?: string
+  serviceTier?: ServiceTier | null
   adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
   credentials?: Record<string, unknown>
   apiFlavor?: ApiFlavor
@@ -37,6 +39,7 @@ export async function seedGateway(options: SeedOptions = {}) {
     virtualModelId: model.id,
     providerId: provider.id,
     upstreamModel,
+    serviceTier: options.serviceTier ?? null,
   }).returning()
 
   const generated = generateApiKey()
@@ -81,6 +84,7 @@ export interface TargetSpec {
   priority?: number
   weight?: number
   enabled?: boolean
+  serviceTier?: ServiceTier | null
   adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
   apiFlavor?: ApiFlavor
 }
@@ -127,6 +131,7 @@ export async function seedTargets(options: SeedTargetsOptions) {
       upstreamModel: `${spec.name}-model`,
       priority: spec.priority ?? 0,
       weight: spec.weight ?? 100,
+      serviceTier: spec.serviceTier ?? null,
       enabled: spec.enabled ?? true,
     }).returning()
 

@@ -5,6 +5,7 @@ import {
   catalogModels, providers, routeTargets, virtualModels,
   type ProviderRow,
 } from '@/lib/db/schema'
+import type { ServiceTier } from '@/lib/service-tiers'
 import { GatewayError } from './errors'
 import type { SelectableModel } from './select'
 
@@ -17,6 +18,9 @@ export interface Candidate {
   // now means adding it later isn't a signature change.
   priority: number
   weight: number
+  /** The tier this target pins `service_tier` to, or null to forward the
+   * client's body untouched. */
+  serviceTier: ServiceTier | null
 }
 
 export interface ResolvedModel {
@@ -95,6 +99,7 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
       upstreamModel: target.upstreamModel,
       priority: target.priority,
       weight: target.weight,
+      serviceTier: target.serviceTier,
     })),
   }
 }
@@ -144,6 +149,9 @@ async function resolveDirect(
       upstreamModel: modelId,
       priority: 0,
       weight: 100,
+      // No route_targets row stands behind a direct address, so there is
+      // nothing that could have configured a tier for it.
+      serviceTier: null,
     }],
   }
 }

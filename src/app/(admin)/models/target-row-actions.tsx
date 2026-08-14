@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { ConfirmAction } from '@/components/admin/confirm-action'
 import type { PickerGroup } from '@/lib/admin/catalog'
+import type { ServiceTier } from '@/lib/service-tiers'
 import { removeTargetAction, toggleTargetAction } from './actions'
 import { EditTargetDialog } from './edit-target-form'
 
@@ -18,7 +19,14 @@ export function TargetRowActions({
   virtualModelId,
   groups,
 }: {
-  target: { id: string; upstreamModel: string; priority: number; weight: number; enabled: boolean }
+  target: {
+    id: string
+    upstreamModel: string
+    priority: number
+    weight: number
+    serviceTier: ServiceTier | null
+    enabled: boolean
+  }
   /** Only for revalidation — every mutation has to refresh this model's page. */
   virtualModelId: string
   groups: PickerGroup[]

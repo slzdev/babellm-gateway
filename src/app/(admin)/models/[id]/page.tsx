@@ -101,6 +101,7 @@ export default async function ModelDetailPage({
                 <TableHead>Upstream model</TableHead>
                 <TableHead className="text-right">Priority</TableHead>
                 <TableHead className="text-right">Weight</TableHead>
+                <TableHead>Service tier</TableHead>
                 <TableHead>Enabled</TableHead>
                 <TableHead className="w-0"><span className="sr-only">Actions</span></TableHead>
               </TableRow>
@@ -115,6 +116,11 @@ export default async function ModelDetailPage({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{target.priority}</TableCell>
                   <TableCell className="text-right tabular-nums">{target.weight}</TableCell>
+                  <TableCell>
+                    {target.serviceTier
+                      ? <Badge variant="outline">{target.serviceTier}</Badge>
+                      : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={target.enabled ? 'default' : 'secondary'}>
                       {target.enabled ? 'enabled' : 'disabled'}
@@ -131,7 +137,7 @@ export default async function ModelDetailPage({
               ))}
               {model.targets.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                     No targets — requests to this model will fail with 503.
                   </TableCell>
                 </TableRow>

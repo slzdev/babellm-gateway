@@ -14,6 +14,7 @@ function candidate(name: string, weight = 100, priority = 0): Candidate {
     upstreamModel: `${name}-model`,
     priority,
     weight,
+    serviceTier: null,
   }
 }
 

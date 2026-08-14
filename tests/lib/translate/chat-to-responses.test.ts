@@ -44,6 +44,19 @@ test('substitutes the upstream model and pins store to false', () => {
   expect(params.store).toBe(false)
 })
 
+test('forwards service_tier, which the Responses API accepts under the same name', () => {
+  const params = toResponsesRequest(
+    request({ service_tier: 'flex' } as Partial<ChatCompletionRequest>),
+    'gpt-5-mini',
+  )
+  expect(params.service_tier).toBe('flex')
+})
+
+test('omits service_tier when the request carries none', () => {
+  const params = toResponsesRequest(request(), 'gpt-5-mini')
+  expect('service_tier' in params).toBe(false)
+})
+
 test('system and developer messages keep their role and position', () => {
   const params = toResponsesRequest(
     request({

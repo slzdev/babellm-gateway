@@ -4,7 +4,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FormDialog } from '@/components/admin/form-dialog'
 import type { PickerGroup } from '@/lib/admin/catalog'
+import type { ServiceTier } from '@/lib/service-tiers'
 import { ModelCombobox } from './model-combobox'
+import { ServiceTierSelect } from './service-tier-select'
 import { updateTargetAction, type ActionState } from './actions'
 
 export function EditTargetDialog({
@@ -14,7 +16,13 @@ export function EditTargetDialog({
   open,
   onOpenChange,
 }: {
-  target: { id: string; upstreamModel: string; priority: number; weight: number }
+  target: {
+    id: string
+    upstreamModel: string
+    priority: number
+    weight: number
+    serviceTier: ServiceTier | null
+  }
   virtualModelId: string
   groups: PickerGroup[]
   open: boolean
@@ -55,6 +63,13 @@ export function EditTargetDialog({
             defaultValue={target.weight}
           />
         </div>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={`edit-tier-${target.id}`}>Service tier</Label>
+        <ServiceTierSelect id={`edit-tier-${target.id}`} defaultValue={target.serviceTier} />
+        <p className="text-xs text-muted-foreground">
+          Sent upstream as <code>service_tier</code>, replacing any value the client sent.
+        </p>
       </div>
     </FormDialog>
   )

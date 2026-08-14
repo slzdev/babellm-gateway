@@ -94,6 +94,10 @@ export const chatCompletionRequestSchema = z.looseObject({
   stop: z.union([z.string(), z.array(z.string())]).nullable().optional(),
   seed: z.number().int().nullable().optional(),
   response_format: z.looseObject({ type: z.string() }).optional(),
+  // Typed as a free string for the same reason as reasoning_effort: a route
+  // target can pin this to any tier its upstream understands, and the set of
+  // tier names differs per vendor.
+  service_tier: z.string().nullable().optional(),
   user: z.string().optional(),
 })
 

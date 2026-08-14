@@ -36,6 +36,13 @@
       "when": 1786703145628,
       "tag": "0004_tiresome_iron_lad",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786717531790,
+      "tag": "0005_orange_valeria_richards",
+      "breakpoints": true
     }
   ]
 }

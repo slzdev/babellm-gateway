@@ -1,0 +1,2 @@
+CREATE TYPE "public"."service_tier" AS ENUM('auto', 'default', 'flex', 'scale', 'priority', 'fast', 'ultrafast');--> statement-breakpoint
+ALTER TABLE "route_targets" ADD COLUMN "service_tier" "service_tier";

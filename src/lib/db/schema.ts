@@ -2,6 +2,7 @@ import {
   boolean, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
+import { SERVICE_TIERS } from '@/lib/service-tiers'
 
 export const adapterEnum = pgEnum('adapter', [
   'openai', 'openai_compatible', 'gemini', 'bedrock',
@@ -22,6 +23,8 @@ export const modelKindEnum = pgEnum('model_kind', [
 export const syncStatusEnum = pgEnum('sync_status', ['ok', 'failed', 'unsupported'])
 
 export const apiFlavorEnum = pgEnum('api_flavor', ['chat_completions', 'responses'])
+
+export const serviceTierEnum = pgEnum('service_tier', SERVICE_TIERS)
 
 export const providers = pgTable('providers', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -70,6 +73,9 @@ export const routeTargets = pgTable('route_targets', {
   upstreamModel: text('upstream_model').notNull(),
   priority: integer('priority').notNull().default(0),
   weight: integer('weight').notNull().default(100),
+  // Nullable with no default, because NULL is a distinct behaviour rather than
+  // a missing value: it means the gateway forwards the client's body untouched.
+  serviceTier: serviceTierEnum('service_tier'),
   enabled: boolean('enabled').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })

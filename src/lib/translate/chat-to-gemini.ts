@@ -333,6 +333,7 @@ const UNMAPPABLE = [
   'logprobs',
   'top_logprobs',
   'parallel_tool_calls',
+  'service_tier',
   'user',
 ] as const
 

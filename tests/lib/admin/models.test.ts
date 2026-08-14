@@ -245,3 +245,59 @@ test('editing a target that does not exist is refused', async () => {
     updateRouteTarget('00000000-0000-0000-0000-000000000000', { weight: 10 }),
   ).rejects.toThrow(/not found/i)
 })
+
+test('a target has no service tier until one is chosen', async () => {
+  const p = await provider()
+  const model = await createVirtualModel({ name: 'house-model' })
+  const target = await addRouteTarget({
+    virtualModelId: model.id, providerId: p.id, upstreamModel: 'gpt-4o',
+  })
+
+  // Null rather than a string default: "(none)" has to mean "leave the request
+  // alone", which no tier value can express.
+  expect(target.serviceTier).toBeNull()
+})
+
+test('stores the service tier chosen for a target and lists it', async () => {
+  const p = await provider('alpha')
+  const model = await createVirtualModel({ name: 'house-model' })
+  await addRouteTarget({
+    virtualModelId: model.id, providerId: p.id, upstreamModel: 'gpt-4o', serviceTier: 'flex',
+  })
+
+  const [listed] = await listVirtualModels()
+  expect(listed.targets[0].serviceTier).toBe('flex')
+})
+
+test('rejects a service tier outside the supported set', async () => {
+  const p = await provider()
+  const model = await createVirtualModel({ name: 'house-model' })
+  await expect(
+    addRouteTarget({
+      virtualModelId: model.id, providerId: p.id, upstreamModel: 'gpt-4o',
+      serviceTier: 'turbo' as never,
+    }),
+  ).rejects.toThrow(/service tier/i)
+})
+
+test('clears a service tier back to none', async () => {
+  const p = await provider()
+  const model = await createVirtualModel({ name: 'house-model' })
+  const target = await addRouteTarget({
+    virtualModelId: model.id, providerId: p.id, upstreamModel: 'gpt-4o', serviceTier: 'priority',
+  })
+
+  const updated = await updateRouteTarget(target.id, { serviceTier: null })
+  expect(updated.serviceTier).toBeNull()
+})
+
+test('editing another field leaves the service tier alone', async () => {
+  const p = await provider()
+  const model = await createVirtualModel({ name: 'house-model' })
+  const target = await addRouteTarget({
+    virtualModelId: model.id, providerId: p.id, upstreamModel: 'gpt-4o', serviceTier: 'scale',
+  })
+
+  const updated = await updateRouteTarget(target.id, { weight: 90 })
+  expect(updated.serviceTier).toBe('scale')
+})

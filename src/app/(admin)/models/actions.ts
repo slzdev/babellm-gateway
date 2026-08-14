@@ -4,7 +4,8 @@ import { revalidatePath } from 'next/cache'
 import { requireAdmin } from '@/lib/admin/session'
 import {
   addRouteTarget, createVirtualModel, deleteVirtualModel,
-  removeRouteTarget, setRouteTargetEnabled, updateRouteTarget, updateVirtualModel, type RoutingPolicy,
+  removeRouteTarget, setRouteTargetEnabled, updateRouteTarget, updateVirtualModel,
+  type RoutingPolicy, type ServiceTier,
 } from '@/lib/admin/models'
 
 export interface ActionState {
@@ -31,6 +32,17 @@ function revalidateModel(virtualModelId: string) {
  */
 function checkboxValue(value: FormDataEntryValue | null): boolean {
   return !['false', 'off', null, ''].includes(value as string | null)
+}
+
+/**
+ * The tier select submits an empty string for "(none)", which has to reach the
+ * column as NULL — that is what makes the gateway leave the request alone.
+ * Anything non-empty goes through unvalidated on purpose: the admin layer owns
+ * the enum check, so there is one place that can reject an unknown tier.
+ */
+function serviceTierValue(value: FormDataEntryValue | null): ServiceTier | null {
+  const tier = String(value ?? '')
+  return tier === '' ? null : (tier as ServiceTier)
 }
 
 export async function createModelAction(
@@ -85,6 +97,7 @@ export async function addTargetAction(
       upstreamModel: String(formData.get('upstreamModel') ?? ''),
       priority: Number(formData.get('priority') ?? 0),
       weight: Number(formData.get('weight') ?? 100),
+      serviceTier: serviceTierValue(formData.get('serviceTier')),
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not add the target.' }
@@ -103,6 +116,7 @@ export async function updateTargetAction(
       upstreamModel: String(formData.get('upstreamModel') ?? ''),
       priority: Number(formData.get('priority') ?? 0),
       weight: Number(formData.get('weight') ?? 100),
+      serviceTier: serviceTierValue(formData.get('serviceTier')),
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not update the target.' }

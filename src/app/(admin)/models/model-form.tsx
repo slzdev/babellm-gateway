@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { FormDialog } from '@/components/admin/form-dialog'
 import type { PickerGroup } from '@/lib/admin/catalog'
 import { ModelCombobox } from './model-combobox'
+import { ServiceTierSelect } from './service-tier-select'
 import { addTargetAction, createModelAction, type ActionState } from './actions'
 
 const POLICIES = ['failover', 'weighted', 'round_robin'] as const
@@ -89,6 +90,13 @@ export function AddTargetDialog({
           <Label htmlFor={`weight-${virtualModelId}`}>Weight</Label>
           <Input id={`weight-${virtualModelId}`} name="weight" type="number" defaultValue={100} />
         </div>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={`tier-${virtualModelId}`}>Service tier</Label>
+        <ServiceTierSelect id={`tier-${virtualModelId}`} />
+        <p className="text-xs text-muted-foreground">
+          Sent upstream as <code>service_tier</code>, replacing any value the client sent.
+        </p>
       </div>
     </FormDialog>
   )

@@ -258,6 +258,9 @@ export function toResponsesRequest(
     ...(req.tool_choice === undefined ? {} : { tool_choice: toToolChoice(req.tool_choice) }),
     ...(req.response_format ? { text: toText(req.response_format) } : {}),
     ...(req.user ? { safety_identifier: req.user } : {}),
+    // One of the few Chat Completions parameters the Responses API takes under
+    // exactly the same name, so it needs no mapping — only forwarding.
+    ...(req.service_tier ? { service_tier: req.service_tier } : {}),
     // Sending `reasoning` to a model that does not reason is an error upstream,
     // and the gateway cannot tell which kind it is addressing. So summaries are
     // requested only when the client's own request proves it expects one, or

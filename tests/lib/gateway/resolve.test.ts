@@ -188,3 +188,29 @@ test('throws 503 when the addressed provider is disabled', async () => {
     status: 503, code: 'no_targets_available',
   })
 })
+
+test('carries each target\'s service tier onto its candidate', async () => {
+  const { fast, slow, model } = await seed()
+  await db.insert(routeTargets).values([
+    {
+      virtualModelId: model.id, providerId: fast.id, upstreamModel: 'fast-1',
+      priority: 1, serviceTier: 'priority',
+    },
+    { virtualModelId: model.id, providerId: slow.id, upstreamModel: 'slow-1', priority: 2 },
+  ])
+
+  const { candidates } = await resolveModel('house-model')
+  // The second target sets no tier, and must stay null rather than inherit the
+  // first one's — every candidate carries its own routing instruction.
+  expect(candidates.map((c) => c.serviceTier)).toEqual(['priority', null])
+})
+
+test('a direct address has no service tier to apply', async () => {
+  const { fast } = await seed()
+  await db.insert(catalogModels).values({ providerId: fast.id, modelId: 'grok-4.5' })
+
+  const { candidates } = await resolveModel('fast-provider/grok-4.5')
+  // There is no route_targets row behind a direct address, so there is nothing
+  // that could have configured a tier.
+  expect(candidates[0].serviceTier).toBeNull()
+})

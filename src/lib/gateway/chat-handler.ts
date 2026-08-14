@@ -58,6 +58,24 @@ async function parseBody(request: Request) {
 }
 
 /**
+ * The body to send to one particular target.
+ *
+ * A target with no tier gets the client's own object back, unchanged and
+ * un-copied: "(none)" has to mean the request is not touched, which includes
+ * not adding a `service_tier: null` the caller never sent. A configured tier
+ * overwrites whatever the client asked for — it is an operator's routing
+ * decision, not a default.
+ *
+ * Applied here rather than in the adapters for the same reason droppedFor is:
+ * the alternative puts per-target knowledge into the interface every future
+ * adapter has to implement.
+ */
+function bodyFor(candidate: Candidate, body: ChatCompletionRequest): ChatCompletionRequest {
+  if (!candidate.serviceTier) return body
+  return { ...body, service_tier: candidate.serviceTier }
+}
+
+/**
  * Which request parameters the winning target could not express. Computed here
  * rather than returned by the adapter: the alternative is a channel through
  * ProviderAdapter, which would put translation-specific knowledge into the
@@ -288,13 +306,18 @@ export async function handleChatCompletions(
       // startChatStream pulls the first chunk, so a failure inside `run` is
       // still a failure before the response is committed — which is what
       // makes failover safe for streams.
-      const result = await execute(chain, requestId, request.signal, deps, (adapter, ctx) =>
-        startChatStream(adapter.chatStream(body, ctx)),
+      const result = await execute(
+        chain, requestId, request.signal, deps,
+        (adapter, ctx, candidate) =>
+          startChatStream(adapter.chatStream(bodyFor(candidate, body), ctx)),
       )
       // execute resolves only once the first chunk is in hand, so this is
       // time-to-first-token without any plumbing into the stream itself.
       const ttftMs = Date.now() - startedAt
-      dropped = droppedFor(result.candidate, body)
+      // Against the body the winning target was actually sent, not the client's
+      // — otherwise a tier this gateway added would be dropped by a Gemini
+      // target without ever being reported.
+      dropped = droppedFor(result.candidate, bodyFor(result.candidate, body))
       // Resolved only when its value is actually used: for the default case
       // (capture off) this settings lookup would otherwise sit unconditionally
       // between execute() and the response, adding to time-to-first-token for
@@ -331,10 +354,11 @@ export async function handleChatCompletions(
       )
     }
 
-    const result = await execute(chain, requestId, request.signal, deps, (adapter, ctx) =>
-      adapter.chat(body, ctx),
+    const result = await execute(
+      chain, requestId, request.signal, deps,
+      (adapter, ctx, candidate) => adapter.chat(bodyFor(candidate, body), ctx),
     )
-    dropped = droppedFor(result.candidate, body)
+    dropped = droppedFor(result.candidate, bodyFor(result.candidate, body))
 
     // Built before logging: logging after the response has been constructed
     // means a throw building the response can no longer race a second,
