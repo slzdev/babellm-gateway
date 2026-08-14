@@ -117,6 +117,12 @@ when('a written row comes back with every projected field intact', async () => {
     },
     usage: { promptTokens: 11, completionTokens: 22, cachedTokens: null, reasoningTokens: null },
     cost: { inputUsd: '0.01', cachedUsd: null, outputUsd: '0.02', totalUsd: '0.03', pricing: null },
+    // A boolean asserted at its own default (false) can't distinguish "wired
+    // correctly and false" from "attribute dropped and read as false" —
+    // toRow derives payloadCaptured as `item.payloadCaptured === true`, which
+    // is false either way. Only asserting the true case, as here, makes a
+    // dropped LIST_ATTRIBUTES entry for it observable.
+    payload: { request: { a: 1 }, response: { b: 2 }, truncated: false },
   }), settings)
 
   const page = await store.query({ limit: 10 })
@@ -137,7 +143,7 @@ when('a written row comes back with every projected field intact', async () => {
     promptTokens: 11,
     completionTokens: 22,
     costUsd: '0.03',
-    payloadCaptured: false,
+    payloadCaptured: true,
   })
 })
 
