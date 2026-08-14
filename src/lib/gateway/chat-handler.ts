@@ -4,16 +4,21 @@ import { createAdapter as defaultCreateAdapter, resolveApiFlavor } from '@/lib/a
 import type { ProviderAdapter } from '@/lib/adapters/types'
 import type { ProviderRow } from '@/lib/db/schema'
 import { chatCompletionRequestSchema, type ChatCompletionRequest } from '@/lib/schemas/chat'
-import { droppedParams } from '@/lib/translate/chat-to-responses'
+import { logRequest, resolveRequestLogStore } from '@/lib/logs'
+import { capPayload } from '@/lib/logs/payload'
+import type { LogPayload, LogUsage, RequestOutcome } from '@/lib/logs/types'
+import { computeCost, priceFor } from '@/lib/pricing'
 import { droppedParams as geminiDroppedParams } from '@/lib/translate/chat-to-gemini'
+import { droppedParams } from '@/lib/translate/chat-to-responses'
+import { uuidv7 } from '@/lib/uuid'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
-import { GatewayError, RoutedError, errorResponse } from './errors'
+import { GatewayError, RoutedError, errorResponse, type ClassifiedError } from './errors'
 import { execute, type AttemptRecord } from './execute'
 import { newCompletionId, rewriteCompletion } from './identity'
-import { emitRequestLog, type RequestOutcome } from './request-log'
 import { resolveModel, type Candidate } from './resolve'
 import { selectOrder } from './select'
 import { sseResponse, startChatStream } from './sse'
+import { usageFrom } from './usage'
 
 export interface ChatHandlerDeps {
   createAdapter: (provider: ProviderRow) => ProviderAdapter
@@ -75,44 +80,170 @@ export function attemptHeaders(
   }
 }
 
+const ERROR_MESSAGE_MAX_LENGTH = 2000
+
+/**
+ * Bounds and packages a request/response pair for storage.
+ *
+ * Capping happens here, before the write, so the store's insert can be a
+ * single transaction whose only remaining failure mode is the database
+ * itself.
+ */
+function buildPayload(
+  request: unknown,
+  response: unknown,
+  maxBytes: number,
+  truncatedUpstream = false,
+): LogPayload {
+  const cappedRequest = capPayload(request, maxBytes)
+  const cappedResponse = capPayload(response, maxBytes)
+  return {
+    request: cappedRequest.value,
+    response: cappedResponse.value,
+    truncated: truncatedUpstream || cappedRequest.truncated || cappedResponse.truncated,
+  }
+}
+
+/** The log keeps the real message even for an unhandled error: the page that
+ * reads it is admin-only, and the sanitized envelope the client received is
+ * useless for diagnosis. Length is still bounded — a provider that fails
+ * with a multi-megabyte HTML body must not turn into a multi-megabyte row. */
+function errorMessage(message: string): string {
+  return message.length > ERROR_MESSAGE_MAX_LENGTH
+    ? message.slice(0, ERROR_MESSAGE_MAX_LENGTH)
+    : message
+}
+
+// A ClassifiedError (from sse.ts's stream_interrupted path) is a plain
+// object, not an Error instance, so it needs its own check rather than
+// falling through to the generic branch below and being mislabeled
+// "internal_error".
+function isClassifiedError(err: unknown): err is ClassifiedError {
+  return typeof err === 'object' && err !== null && 'retryable' in err && 'message' in err
+}
+
+function errorFields(err: unknown) {
+  if (err === undefined) return {}
+  if (err instanceof GatewayError) {
+    return { errorType: err.type, errorCode: err.code, errorMessage: errorMessage(err.message) }
+  }
+  if (isClassifiedError(err)) {
+    return { errorType: err.type, errorCode: err.code, errorMessage: errorMessage(err.message) }
+  }
+  return {
+    errorType: 'internal_error',
+    errorCode: null,
+    errorMessage: errorMessage(err instanceof Error ? err.message : String(err)),
+  }
+}
+
 export async function handleChatCompletions(
   request: Request,
   deps: ChatHandlerDeps = defaultDeps,
 ): Promise<Response> {
-  const requestId = newCompletionId().replace('chatcmpl-', 'req_')
+  // The request's one identifier: returned as x-request-id, printed on the
+  // stdout line, stored as the log's primary key, and — because it is a v7
+  // uuid — the partition that log row lands in. Minted here rather than at
+  // insert, because the header goes out long before the row is written.
+  const requestId = uuidv7()
   const startedAt = Date.now()
 
   // Tracked outside the try so the log line can still say who was calling
   // and for what when the request never got as far as an attempt.
+  let keyId: string | null = null
   let keyName: string | null = null
   let modelName: string | null = null
   let stream = false
   let dropped: string[] = []
+  // Payload capture is per key and off by default, so the cost of assembling
+  // and storing bodies falls only on the keys that asked for it.
+  let capturePayloads = false
+  let requestBody: ChatCompletionRequest | null = null
+
+  interface LogExtra {
+    ttftMs?: number
+    /** The target that actually served, which is what gets priced. */
+    candidate?: Candidate
+    usage?: LogUsage | null
+    /** What the client received, for payload capture. */
+    response?: unknown
+    responseTruncated?: boolean
+    error?: unknown
+  }
 
   function log(
     status: number,
     outcome: RequestOutcome,
     attempts: AttemptRecord[],
-    ttftMs?: number,
+    extra: LogExtra = {},
   ) {
-    emitRequestLog({
-      requestId,
-      key: keyName,
+    // Fire-and-forget. A request that succeeded must not be failed — or even
+    // slowed — by its own bookkeeping.
+    void writeLog(status, outcome, attempts, extra).catch((err) =>
+      console.error(`[gateway] failed to write request log request_id=${requestId}`, err),
+    )
+  }
+
+  async function writeLog(
+    status: number,
+    outcome: RequestOutcome,
+    attempts: AttemptRecord[],
+    extra: LogExtra,
+  ) {
+    const usage = extra.usage ?? null
+    const cost =
+      extra.candidate && usage
+        ? computeCost(
+            await priceFor(extra.candidate.provider.id, extra.candidate.upstreamModel),
+            usage,
+          )
+        : null
+    const { settings } = await resolveRequestLogStore()
+
+    const payload =
+      capturePayloads && requestBody
+        ? buildPayload(
+            requestBody,
+            extra.response ?? null,
+            settings.payloadMaxBytes,
+            extra.responseTruncated ?? false,
+          )
+        : null
+
+    await logRequest({
+      id: requestId,
+      keyId,
+      keyName,
       model: modelName,
       stream,
       status,
       outcome,
+      ...errorFields(extra.error),
       latencyMs: Date.now() - startedAt,
-      ...(ttftMs === undefined ? {} : { ttftMs }),
+      ...(extra.ttftMs === undefined ? {} : { ttftMs: extra.ttftMs }),
       attempts,
+      final: extra.candidate
+        ? {
+            targetId: extra.candidate.targetId,
+            providerId: extra.candidate.provider.id,
+            provider: extra.candidate.provider.name,
+            upstreamModel: extra.candidate.upstreamModel,
+          }
+        : null,
+      usage,
+      cost,
       ...(dropped.length > 0 ? { droppedParams: dropped } : {}),
+      payload,
     })
   }
 
   try {
     const apiKey = await resolveApiKey(extractBearerToken(request))
+    keyId = apiKey.id
     keyName = apiKey.name
+    capturePayloads = apiKey.logPayloads
     const body = await parseBody(request)
+    requestBody = body
     modelName = body.model
     stream = body.stream === true
 
@@ -136,12 +267,39 @@ export async function handleChatCompletions(
       // time-to-first-token without any plumbing into the stream itself.
       const ttftMs = Date.now() - startedAt
       dropped = droppedFor(result.candidate, body)
+      // Resolved only when its value is actually used: for the default case
+      // (capture off) this settings lookup would otherwise sit unconditionally
+      // between execute() and the response, adding to time-to-first-token for
+      // a value the `capturePayloads ? … : undefined` below throws away.
+      const captureOptions = capturePayloads
+        ? { maxBytes: (await resolveRequestLogStore()).settings.payloadMaxBytes }
+        : undefined
 
       return sseResponse(
         result.value,
         identity,
         attemptHeaders(result.candidate, requestId, dropped),
-        (outcome) => log(200, outcome, result.attempts, ttftMs),
+        (outcome, capture) =>
+          log(200, outcome, result.attempts, {
+            ttftMs,
+            candidate: result.candidate,
+            usage: capture.usage,
+            error: capture.error ?? undefined,
+            response: capturePayloads
+              ? {
+                  id: identity.id,
+                  object: 'chat.completion',
+                  model: identity.model,
+                  choices: [{
+                    index: 0,
+                    message: { role: 'assistant', content: capture.text },
+                    finish_reason: outcome === 'ok' ? 'stop' : null,
+                  }],
+                }
+              : null,
+            responseTruncated: capture.truncated,
+          }),
+        captureOptions,
       )
     }
 
@@ -150,13 +308,27 @@ export async function handleChatCompletions(
     )
     dropped = droppedFor(result.candidate, body)
 
-    log(200, 'ok', result.attempts)
-    return Response.json(rewriteCompletion(result.value, identity), {
+    // Built before logging: logging after the response has been constructed
+    // means a throw building the response can no longer race a second,
+    // contradictory log line against this one for the same request_id.
+    const completion = rewriteCompletion(result.value, identity)
+    const response = Response.json(completion, {
       headers: attemptHeaders(result.candidate, requestId, dropped),
     })
+    log(200, 'ok', result.attempts, {
+      candidate: result.candidate,
+      usage: usageFrom(result.value.usage),
+      response: completion,
+    })
+    return response
   } catch (err) {
     const status = err instanceof GatewayError ? err.status : 500
-    log(status, 'error', err instanceof RoutedError ? err.attempts : [])
+    // A client that disconnected mid-request surfaces here as an aborted
+    // signal, which classifyProviderError reports as an upstream timeout —
+    // that's the right status for a stuck response, but the wrong outcome:
+    // the client left, no upstream is to blame.
+    const outcome: RequestOutcome = request.signal.aborted ? 'client_closed' : 'error'
+    log(status, outcome, err instanceof RoutedError ? err.attempts : [], { error: err })
 
     // Under failover the interesting provider is the last one tried, which
     // only the routed error knows.

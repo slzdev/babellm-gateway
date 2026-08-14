@@ -43,6 +43,7 @@ export default async function KeysPage() {
             <TableHead>Limits</TableHead>
             <TableHead>Last used</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>Payloads</TableHead>
             <TableHead className="w-0"><span className="sr-only">Actions</span></TableHead>
           </TableRow>
         </TableHeader>
@@ -63,14 +64,21 @@ export default async function KeysPage() {
                   {key.enabled ? 'active' : 'revoked'}
                 </Badge>
               </TableCell>
+              <TableCell>
+                <Badge variant={key.logPayloads ? 'default' : 'outline'}>
+                  {key.logPayloads ? 'captured' : 'off'}
+                </Badge>
+              </TableCell>
               <TableCell className="text-right">
-                <KeyRowActions id={key.id} name={key.name} enabled={key.enabled} />
+                <KeyRowActions
+                  id={key.id} name={key.name} enabled={key.enabled} logPayloads={key.logPayloads}
+                />
               </TableCell>
             </TableRow>
           ))}
           {keys.length === 0 ? (
             <TableRow className="hover:bg-transparent">
-              <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+              <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                 No API keys yet.
               </TableCell>
             </TableRow>

@@ -156,6 +156,100 @@ off the air.
 unlisted `openai_compatible` endpoint has no models.dev namespace, so those
 models stay unenriched unless you override them by hand.
 
+## Governance
+
+### Request logs
+
+Every request the gateway serves is recorded: the caller's key name, the
+model asked for, status and outcome, latency and time-to-first-token, the
+full attempt chain with each target's failure reason, token counts, and
+cost. Browse them at `/logs` — filter by time range, key, model, and status,
+or jump straight to one by its request id — and open any row for a detail
+page with the full attempt timeline and cost breakdown.
+
+### Choosing a store
+
+Settings › Governance picks where request logs go: `postgres` (default,
+readable — this is what powers `/logs`) or `stdout` (write-only, one JSON
+line per request). A change takes effect on the instance that made it
+immediately, and on every other instance within 15 seconds — the resolved
+store is cached for that long so it isn't re-read on every request.
+Switching does not migrate existing logs: the previous store keeps its rows,
+and switching back brings them into view again. On `stdout`, `/logs` shows
+an empty state and debugging a past request goes back to searching container
+logs by the `x-request-id` header the gateway returns — a v7 uuid, e.g.
+`018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e50`, the same value as the log row's
+primary key and the `/logs/<id>` detail page's URL:
+
+```bash
+docker compose logs gateway | grep 018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e50
+```
+
+The default store writes to the gateway's own database, which is right for
+development and low traffic; at high request rates the table and its three
+indexes compete with the queries that serve requests.
+
+### Upgrading from an earlier version
+
+`postgres` is the default store, so a gateway upgraded from a version that
+predates this feature starts writing request logs into its own database as
+soon as it boots on the new code. Selecting `stdout` on the Settings page
+restores exactly the previous behavior. The stdout line itself gained token
+and cost keys — additively, so existing parsers keep working.
+
+### Payload capture
+
+Off by default. Turn it on per key on the **API keys** page: the create-key
+dialog has a switch, and an existing key's row menu has a "Turn on/off
+payload logging" action, with a **Payloads** column showing which keys
+currently capture. When on, the gateway stores the exact request and
+response bodies with that key's logs (the assembled completion for a
+streamed response), bounded by the payload cap in Settings › Governance
+(256 KiB by default) — anything larger is stored as a truncated preview.
+This writes prompt and completion content to the database, so treat it the
+way you'd treat any other place that content ends up.
+
+### Retention
+
+Request logs live one partition per calendar month (UTC), keyed off the
+primary key rather than `created_at` — a v7 uuid's leading bytes are a
+millisecond timestamp, so id order is time order and a month boundary is
+expressible as a plain uuid bound. (This is also why the partition key is
+`id`: Postgres requires a partitioned table's partition key in every unique
+constraint, which is what keeps the primary key a bare `id` rather than a
+compound `(id, created_at)`.)
+
+Retention is set in whole months on the **Retention (months)** field in
+Settings › Governance (default `3`). A value of `N` keeps the current month
+and the `N − 1` before it, so the youngest logs are always retained in full,
+however young the current month is; `0` keeps everything. This is coarse by
+construction — there is no way to delete an individual day, or an individual
+row's captured prompt content, ahead of its whole month rolling off.
+
+Retention is enforced by dropping expired partitions outright, not deleting
+rows, once a day. The same maintenance job provisions the current month's
+partition plus the next three months ahead, running at boot and every 24
+hours after, under an advisory lock so only one instance does the work at a
+time. There is no default partition to catch a write for a month nobody has
+provisioned — so a database whose maintenance job has been failing across
+every boot and every daily tick for a full quarter starts refusing to write
+request logs, loudly, in stderr, rather than silently stranding rows outside
+every retention window.
+
+Maintenance runs for every store the gateway knows how to run, not only the
+one currently selected: switching Settings › Governance to `stdout` does not
+stop the postgres driver from provisioning and dropping partitions in the
+gateway's own database, and any captured prompt or completion content already
+sitting in `request_logs` keeps aging out on the same schedule as before the
+switch.
+
+Boot blocks on this first maintenance run — and if two instances start
+together, the loser blocks on the winner's advisory lock rather than serving
+with no partitions provisioned — so with Postgres unreachable, first-serve is
+delayed by up to two connection timeouts (5s each, ~10s total) before the
+failure is logged and the instance serves anyway. An operator debugging a slow
+container start should look here first.
+
 ## Routing
 
 A virtual model holds a list of route targets and the gateway uses all of
@@ -268,13 +362,6 @@ set `requestReasoningSummary: true` in the provider's config.
 A provider on the wrong flavor fails fast in either direction: a `404` from the
 upstream, whichever flavor is misconfigured, comes back with the error naming
 the setting to change.
-
-Each settled request writes one JSON line to stdout: request id, key name,
-virtual model, status, outcome, latency, time-to-first-token for streams, and
-every attempt with its provider, upstream model, status and error. **That line
-is the only record.** There is no request history in the database and no log
-viewer; once the line scrolls out of your container log the request is
-unrecoverable.
 
 Two limitations worth planning around:
 
@@ -449,9 +536,6 @@ policy-driven routing across every route target. Everything below is
 - **No circuit breaker.** Routing tries every policy's chain on every
   request, so a provider that is down costs one wasted attempt each time
   rather than being taken out of rotation. See [Routing](#routing).
-- **No stored request history and no log viewer.** Each request emits one
-  JSON line on stdout; nothing is written to the database. Debugging a past
-  request means searching your container logs by `x-request-id`.
 - **No Bedrock adapter, no `/v1/models`, no `/v1/embeddings`** (Phase 3).
   Configuring a `bedrock` provider is accepted by the dashboard but every
   request to it returns `501 unsupported_operation`.
@@ -463,8 +547,9 @@ policy-driven routing across every route target. Everything below is
   as an upstream error rather than a gateway one. Media on a Gemini target
   older than 2.5 fails upstream, because external URL input is not supported
   there.
-- **No cost computation, price table, opt-in payload logging, or retention
-  pruning** (Phase 4). `cost_usd` is always null.
+- **Retention is coarse: whole calendar months, never individual days.** See
+  [Retention](#retention). Prompt and completion content captured by a key
+  with payload logging enabled survives until its whole month rolls off.
 
 ## Learn more
 

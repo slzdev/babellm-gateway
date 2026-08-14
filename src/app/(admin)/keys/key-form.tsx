@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { createKeyAction, type CreateKeyState } from './actions'
 
 export function CreateKeyDialog({ users }: { users: Array<{ id: string; name: string }> }) {
@@ -116,6 +117,17 @@ function CreateKeyBody({
           <Label htmlFor="budgetTotalUsd">Total budget (USD)</Label>
           <Input id="budgetTotalUsd" name="budgetTotalUsd" type="number" step="0.01" min={0} />
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Switch id="logPayloads" name="logPayloads" />
+          <Label htmlFor="logPayloads">Log request and response payloads</Label>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Stores the exact request and response bodies with this key&apos;s logs, up to
+          the payload cap in Settings › Governance. Off by default.
+        </p>
       </div>
 
       {state?.error ? (
