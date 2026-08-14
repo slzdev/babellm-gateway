@@ -10,8 +10,15 @@ import type { ShardFetch, ShardItem } from '@/lib/logs/dynamodb/merge'
  * to control where page boundaries fall. Against a real store the boundaries
  * are whatever the engine chooses, and a merge bug that only shows up on an
  * uneven split would pass every run.
+ *
+ * A page is normally just the ids it returns, with `scanned` inferred as the
+ * same count. Passing `{ items, scanned }` instead decouples the two — which
+ * is what a real FilterExpression does, and what most of these tests don't
+ * need to model.
  */
-function fakeFetch(pages: Record<string, string[][]>): {
+type FakePage = string[] | { items: string[]; scanned: number }
+
+function fakeFetch(pages: Record<string, FakePage[]>): {
   fetch: ShardFetch<ShardItem>
   calls: () => number
 } {
@@ -23,10 +30,11 @@ function fakeFetch(pages: Record<string, string[][]>): {
     const all = pages[shard] ?? []
     const n = cursor[shard] ?? 0
     cursor[shard] = n + 1
-    const page = all[n] ?? []
+    const raw = all[n] ?? []
+    const page = Array.isArray(raw) ? { items: raw, scanned: raw.length } : raw
     return {
-      items: page.map((sk) => ({ sk })),
-      scanned: page.length,
+      items: page.items.map((sk) => ({ sk })),
+      scanned: page.scanned,
       lastEvaluatedKey: n + 1 < all.length ? { at: n } : undefined,
     }
   }
@@ -149,4 +157,28 @@ test('an empty store yields an empty page with no more', async () => {
 
   expect(out.rows).toEqual([])
   expect(out.hasMore).toBe(false)
+})
+
+test('a large scanned count trips the budget even when nothing is returned', async () => {
+  // A narrow filter over a wide range can scan thousands of items while
+  // returning almost none of them. The budget must react to what DynamoDB
+  // read (scanned), not to what came back — otherwise a filtered query would
+  // look "cheap" and this exact scenario would go unbounded.
+  const heavyFilter = { items: [], scanned: 5_000 }
+  const { fetch, calls } = fakeFetch({
+    'log#0': [heavyFilter, heavyFilter],
+    'log#1': [heavyFilter, heavyFilter],
+  })
+
+  const out = await collectPage({
+    fetch, shards: SHARDS, limit: 10, descending: true, exclude: [],
+  })
+
+  expect(out.rows).toEqual([])
+  expect(out.hasMore).toBe(true)
+  // Two shards scanning 5,000 apiece cross MAX_ITEMS_EXAMINED (10,000) after
+  // a single round trip — far short of MAX_ROUND_TRIPS (8). If the budget
+  // counted returned items instead, nothing would trip here until both
+  // shards ran out of pages on their own, two round trips later.
+  expect(calls()).toBe(2)
 })
