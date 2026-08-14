@@ -101,7 +101,7 @@ test('loadLogs reports a readable store and its page', async () => {
   await postgresStore.write({
     id: uuidv7(), keyId: null, keyName: null, model: 'm',
     stream: false, status: 200, outcome: 'ok', latencyMs: 1, attempts: [],
-  })
+  }, { store: 'postgres', retentionMonths: 3, payloadMaxBytes: 262_144 })
 
   const view = await loadLogs(parseLogFilter({ range: 'all' }))
   expect(view.readable).toBe(true)

@@ -56,7 +56,11 @@ export interface MaintenanceResult {
 
 interface BaseSink {
   readonly name: string
-  write(entry: RequestLogEntry): Promise<void>
+  /** `settings` comes from the same cached resolution that selected this
+   * store, so a driver that needs it — DynamoDB stamps its TTL from
+   * `retentionMonths` — pays no extra query for it. Drivers that do not
+   * need it ignore the argument. */
+  write(entry: RequestLogEntry, settings: LoggingSettings): Promise<void>
   /** Provision storage ahead of time and discard what has aged out. A driver
    * with no storage of its own returns empty arrays. */
   maintain(now: Date, settings: LoggingSettings): Promise<MaintenanceResult>

@@ -1,5 +1,5 @@
 import 'server-only'
-import { getRequestLogStore } from './registry'
+import { resolveRequestLogStore } from './registry'
 import type { RequestLogEntry } from './types'
 
 /**
@@ -10,8 +10,8 @@ import type { RequestLogEntry } from './types'
  * so the caller's .catch() can report the failure to stderr.
  */
 export async function logRequest(entry: RequestLogEntry): Promise<void> {
-  const store = await getRequestLogStore()
-  await store.write(entry)
+  const { store, settings } = await resolveRequestLogStore()
+  await store.write(entry, settings)
 }
 
 export {

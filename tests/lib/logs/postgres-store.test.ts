@@ -9,6 +9,10 @@ import { resetDb } from '../../helpers/db'
 
 beforeEach(resetDb)
 
+// postgresStore.write ignores settings — this stands in for whatever the
+// registry would have resolved.
+const settings = { store: 'postgres', retentionMonths: 3, payloadMaxBytes: 262_144 }
+
 function entry(overrides: Partial<RequestLogEntry> = {}): RequestLogEntry {
   return {
     id: uuidv7(),
@@ -20,7 +24,7 @@ function entry(overrides: Partial<RequestLogEntry> = {}): RequestLogEntry {
 
 test('a written entry comes back from query under the id it was given', async () => {
   const id = uuidv7()
-  await postgresStore.write(entry({ id, model: 'house-model' }))
+  await postgresStore.write(entry({ id, model: 'house-model' }), settings)
 
   const page = await postgresStore.query({ limit: 10 })
   expect(page.rows).toHaveLength(1)
@@ -36,7 +40,7 @@ test('get returns the attempt chain and the payload', async () => {
       { n: 2, targetId: 't2', provider: 'backup', model: 'm2', status: 200, latencyMs: 8 },
     ],
     payload: { request: { model: 'house-model' }, response: { ok: true }, truncated: false },
-  }))
+  }), settings)
 
   const detail = await postgresStore.get(id)
   expect(detail?.attempts).toHaveLength(2)
@@ -61,7 +65,7 @@ test('get returns null rather than throwing for a malformed id', async () => {
 
 test('an entry without a payload records payload_captured false', async () => {
   const id = uuidv7()
-  await postgresStore.write(entry({ id }))
+  await postgresStore.write(entry({ id }), settings)
   const detail = await postgresStore.get(id)
   expect(detail?.payloadCaptured).toBe(false)
   expect(detail?.payload).toBeNull()
@@ -88,15 +92,15 @@ test('a truncated payload keeps its flag', async () => {
   await postgresStore.write(entry({
     id,
     payload: { request: { truncated: true, bytes: 91234, preview: 'x' }, response: null, truncated: true },
-  }))
+  }), settings)
   expect((await postgresStore.get(id))?.payload?.truncated).toBe(true)
 })
 
 test('filters by key, model, status class and outcome', async () => {
   const ok1 = uuidv7(); const bad = uuidv7(); const oops = uuidv7()
-  await postgresStore.write(entry({ id: ok1, model: 'a', status: 200, outcome: 'ok' }))
-  await postgresStore.write(entry({ id: bad, model: 'b', status: 429, outcome: 'error' }))
-  await postgresStore.write(entry({ id: oops, model: 'a', status: 502, outcome: 'error' }))
+  await postgresStore.write(entry({ id: ok1, model: 'a', status: 200, outcome: 'ok' }), settings)
+  await postgresStore.write(entry({ id: bad, model: 'b', status: 429, outcome: 'error' }), settings)
+  await postgresStore.write(entry({ id: oops, model: 'a', status: 502, outcome: 'error' }), settings)
 
   expect((await postgresStore.query({ limit: 10, model: 'a' })).rows).toHaveLength(2)
   expect((await postgresStore.query({ limit: 10, statusClass: 'client_error' })).rows)
@@ -110,7 +114,7 @@ test('filters by key, model, status class and outcome', async () => {
 
 test('pages newest first and walks both directions', async () => {
   const ids = [uuidv7(), uuidv7(), uuidv7(), uuidv7(), uuidv7()]
-  for (const id of ids) await postgresStore.write(entry({ id }))
+  for (const id of ids) await postgresStore.write(entry({ id }), settings)
   const [r1, r2, r3, r4, r5] = ids
 
   const first = await postgresStore.query({ limit: 2 })
@@ -127,7 +131,7 @@ test('pages newest first and walks both directions', async () => {
 
 test('prevCursor is null once before-paging reaches the newest row', async () => {
   const ids = [uuidv7(), uuidv7(), uuidv7(), uuidv7(), uuidv7()]
-  for (const id of ids) await postgresStore.write(entry({ id }))
+  for (const id of ids) await postgresStore.write(entry({ id }), settings)
 
   const top = await postgresStore.query({ limit: 2, before: ids[3] })
   expect(top.rows.map((r) => r.id)).toEqual([ids[4]])
@@ -136,7 +140,7 @@ test('prevCursor is null once before-paging reaches the newest row', async () =>
 
 test('an over-long model name is truncated rather than failing the write', async () => {
   const id = uuidv7()
-  await postgresStore.write(entry({ id, model: 'm'.repeat(400) }))
+  await postgresStore.write(entry({ id, model: 'm'.repeat(400) }), settings)
   expect((await postgresStore.get(id))?.model).toHaveLength(128)
 })
 
@@ -147,8 +151,8 @@ test('a time range filter selects by id bound', async () => {
   await ensurePartitions(pool, new Date('2030-04-01T00:00:00Z'))
   const older = uuidv7(new Date('2030-04-10T00:00:00Z'))
   const newer = uuidv7(new Date('2030-05-10T00:00:00Z'))
-  await postgresStore.write(entry({ id: older }))
-  await postgresStore.write(entry({ id: newer }))
+  await postgresStore.write(entry({ id: older }), settings)
+  await postgresStore.write(entry({ id: newer }), settings)
 
   const rows = (await postgresStore.query({ limit: 10, from: new Date('2030-05-01T00:00:00Z') })).rows
   expect(rows).toMatchObject([{ id: newer }])
@@ -160,8 +164,8 @@ test('paging crosses a partition boundary', async () => {
   await ensurePartitions(pool, new Date('2030-04-01T00:00:00Z'))
   const april = uuidv7(new Date('2030-04-20T00:00:00Z'))
   const may = uuidv7(new Date('2030-05-20T00:00:00Z'))
-  await postgresStore.write(entry({ id: april }))
-  await postgresStore.write(entry({ id: may }))
+  await postgresStore.write(entry({ id: april }), settings)
+  await postgresStore.write(entry({ id: may }), settings)
 
   const first = await postgresStore.query({ limit: 1 })
   expect(first.rows.map((r) => r.id)).toEqual([may])
@@ -171,10 +175,10 @@ test('paging crosses a partition boundary', async () => {
 
 test('maintain provisions the current month and drops what fell out of the window', async () => {
   const now = new Date('2030-06-15T00:00:00Z')
-  const settings = { store: 'postgres', retentionMonths: 2, payloadMaxBytes: 1024 }
+  const maintainSettings = { store: 'postgres', retentionMonths: 2, payloadMaxBytes: 1024 }
 
-  await postgresStore.maintain(new Date('2030-01-15T00:00:00Z'), settings)
-  const result = await postgresStore.maintain(now, settings)
+  await postgresStore.maintain(new Date('2030-01-15T00:00:00Z'), maintainSettings)
+  const result = await postgresStore.maintain(now, maintainSettings)
 
   expect(result.created).toContain('request_logs_2030_06')
   expect(result.dropped).toContain('request_logs_2030_01')
