@@ -3,6 +3,7 @@ import {
   ResourceInUseException, ResourceNotFoundException,
   UpdateTimeToLiveCommand, waitUntilTableExists, waitUntilTableNotExists,
 } from '@aws-sdk/client-dynamodb'
+import { BatchWriteCommand, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb'
 
 /**
  * The disposable DynamoDB Local, or null when it is not configured.
@@ -128,4 +129,53 @@ export async function resetLogsTable(): Promise<void> {
   }
 
   await createLogsTable()
+}
+
+// BatchWriteItem's own ceiling — one request writes at most 25 items.
+const BATCH_SIZE = 25
+// Bounds retrying UnprocessedItems below. DynamoDB Local rarely throttles at
+// all, so this is a backstop against a genuinely stuck batch rather than
+// budget this is expected to spend in the ordinary case.
+const MAX_UNPROCESSED_RETRIES = 10
+
+/**
+ * Seeds many items directly via BatchWriteItem — a fraction of the round
+ * trips that writing the same count one PutItem at a time costs. Only for
+ * tests that need a specific item *count* to reach DynamoDB Local quickly
+ * (e.g. tripping a count-dependent budget); it bypasses the store entirely,
+ * so build `items` with the driver's own `toItem()` to keep them shaped the
+ * way a real write would produce.
+ *
+ * BatchWriteItem can process fewer than the 25 items in a request and
+ * returns the rest as `UnprocessedItems` — silently dropping those would
+ * seed fewer items than asked for, which for a count-dependent test would
+ * quietly stop testing what it claims to test rather than fail loudly. Every
+ * batch is retried until its own `UnprocessedItems` is empty or the retry
+ * budget above is spent, in which case this throws rather than returning a
+ * partial seed.
+ */
+export async function seedItems(
+  table: string,
+  items: readonly Record<string, unknown>[],
+): Promise<void> {
+  const doc = DynamoDBDocumentClient.from(client(), {
+    marshallOptions: { removeUndefinedValues: true },
+  })
+
+  const chunks: Record<string, unknown>[][] = []
+  for (let i = 0; i < items.length; i += BATCH_SIZE) chunks.push(items.slice(i, i + BATCH_SIZE))
+
+  await Promise.all(chunks.map(async (chunk) => {
+    let pending = chunk.map((Item) => ({ PutRequest: { Item } }))
+    for (let attempt = 0; pending.length > 0; attempt += 1) {
+      if (attempt >= MAX_UNPROCESSED_RETRIES) {
+        throw new Error(
+          `seedItems: ${pending.length} of ${chunk.length} items in this batch are still ` +
+          `unprocessed after ${MAX_UNPROCESSED_RETRIES} retries`,
+        )
+      }
+      const out = await doc.send(new BatchWriteCommand({ RequestItems: { [table]: pending } }))
+      pending = (out.UnprocessedItems?.[table] ?? []) as typeof pending
+    }
+  }))
 }

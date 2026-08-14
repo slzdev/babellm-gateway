@@ -3,10 +3,11 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { createDynamoStore } from '@/lib/logs/dynamodb'
 import { shardKey } from '@/lib/logs/dynamodb/keys'
+import { toItem } from '@/lib/logs/dynamodb/item'
 import { uuidv7 } from '@/lib/uuid'
 import type { LoggingSettings } from '@/lib/settings'
 import type { ReadableRequestLogStore, RequestLogEntry } from '@/lib/logs/types'
-import { resetLogsTable, testDynamoConfig } from '../../../helpers/dynamo'
+import { resetLogsTable, seedItems, testDynamoConfig } from '../../../helpers/dynamo'
 import { storeContract } from '../store-contract'
 
 const config = testDynamoConfig()
@@ -214,16 +215,24 @@ when('a budget-truncated query still surfaces a match it already fetched', async
   // its buffer while shard 'b' alone burns through the rest of the budget.
   // Without the drain, that already-fetched match would be silently
   // dropped; with it, it comes back as a normal row.
+  //
+  // Seeded via seedItems/BatchWriteItem, not store.write() — the item count
+  // is load-bearing (it has to exceed the budget for the trip to happen at
+  // all), but one PutItem per item made this test take ~6s on its own;
+  // batches of 25 cut that by roughly the same factor.
   const noMatchIds = Array.from({ length: NO_MATCH_COUNT }, () => `${uuidv7().slice(0, -1)}b`)
   const matchId = `${uuidv7().slice(0, -1)}a`
-  await Promise.all(noMatchIds.map((id) => store.write(entry({ id, model: 'no-match' }), settings)))
+  await seedItems(
+    config!.table,
+    noMatchIds.map((id) => toItem(entry({ id, model: 'no-match' }), settings)),
+  )
   await store.write(entry({ id: matchId, model: 'match-me' }), settings)
 
   const page = await store.query({ limit: 1, model: 'match-me' })
 
   expect(page.rows.map((r) => r.id)).toEqual([matchId])
   expect(page.nextCursor).toBe(matchId)
-}, 30_000)
+})
 
 when('a query matching nothing anywhere still gets a resumable cursor after truncation', async () => {
   // The original bug, end-to-end: a narrow filter over a wide range reads a
@@ -234,13 +243,16 @@ when('a query matching nothing anywhere still gets a resumable cursor after trun
   // render as an indistinguishable "no matching logs": nextCursor has to be
   // non-null so the viewer can keep paging into the unscanned tail.
   const noMatchIds = Array.from({ length: NO_MATCH_COUNT }, () => `${uuidv7().slice(0, -1)}b`)
-  await Promise.all(noMatchIds.map((id) => store.write(entry({ id, model: 'no-match' }), settings)))
+  await seedItems(
+    config!.table,
+    noMatchIds.map((id) => toItem(entry({ id, model: 'no-match' }), settings)),
+  )
 
   const page = await store.query({ limit: 1, model: 'match-me' })
 
   expect(page.rows).toEqual([])
   expect(page.nextCursor).not.toBeNull()
-}, 30_000)
+})
 
 when('get resolves an uppercase-hex form of a written id', async () => {
   // UUID_RE accepts uppercase hex, but shardKey() only lowercases the last

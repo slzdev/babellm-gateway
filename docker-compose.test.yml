@@ -34,8 +34,17 @@ services:
       - "5434:5432"
     # In RAM, so the data cannot outlive the container and cannot accumulate
     # across runs. Also the reason the suite is faster here than on 5432.
+    #
+    # 2g, not 1g: TRUNCATE does not reclaim the space partition churn and WAL
+    # leave behind, so each full suite run grows this by roughly 40 MB even
+    # though every table ends each run empty. At 1g that ceiling was around
+    # two dozen runs before a healthy suite started failing everywhere with a
+    # confusing "no space left on device" from Postgres rather than a clear
+    # signal to recycle the container — this only moves that ceiling further
+    # out, it does not make the growth stop. Recycle with `pnpm test:db:down`
+    # / `pnpm test:db:up` if it is ever hit again.
     tmpfs:
-      - /var/lib/postgresql/data:size=1g
+      - /var/lib/postgresql/data:size=2g
     # Durability buys nothing on a database that dies with the container, and
     # turning it off is the cheapest speedup available to the test suite.
     command: postgres -c fsync=off -c full_page_writes=off -c synchronous_commit=off
