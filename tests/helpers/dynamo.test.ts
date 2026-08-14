@@ -1,5 +1,8 @@
 import { expect, test } from 'vitest'
-import { DescribeTimeToLiveCommand, DynamoDBClient, PutItemCommand, ScanCommand } from '@aws-sdk/client-dynamodb'
+import {
+  DescribeTableCommand, DescribeTimeToLiveCommand, DynamoDBClient,
+  PutItemCommand, ScanCommand,
+} from '@aws-sdk/client-dynamodb'
 import { createLogsTable, resetLogsTable, testDynamoConfig } from './dynamo'
 
 const config = testDynamoConfig()
@@ -12,10 +15,26 @@ when('the helper provisions a table with TTL enabled on expiresAt', async () => 
     region: config!.region,
     endpoint: config!.endpoint,
   })
-  const out = await client.send(new DescribeTimeToLiveCommand({ TableName: config!.table }))
+  const ttl = await client.send(new DescribeTimeToLiveCommand({ TableName: config!.table }))
 
-  expect(out.TimeToLiveDescription?.TimeToLiveStatus).toBe('ENABLED')
-  expect(out.TimeToLiveDescription?.AttributeName).toBe('expiresAt')
+  expect(ttl.TimeToLiveDescription?.TimeToLiveStatus).toBe('ENABLED')
+  expect(ttl.TimeToLiveDescription?.AttributeName).toBe('expiresAt')
+
+  // pk/sk with the KeyType roles swapped, or sk dropped entirely, are both
+  // structurally valid DynamoDB schemas — CreateTableCommand would not
+  // complain, and nothing above reads in a way that would notice (Scan is
+  // unkeyed). Task 7's driver assumes pk is the partition key and sk the
+  // sort key; check that directly rather than let a mistake here surface
+  // there as an unexplained Query failure.
+  const desc = await client.send(new DescribeTableCommand({ TableName: config!.table }))
+  const keySchema = desc.Table?.KeySchema ?? []
+  expect(keySchema.find((k) => k.AttributeName === 'pk')?.KeyType).toBe('HASH')
+  expect(keySchema.find((k) => k.AttributeName === 'sk')?.KeyType).toBe('RANGE')
+  const attrTypes = new Map(
+    (desc.Table?.AttributeDefinitions ?? []).map((a) => [a.AttributeName, a.AttributeType]),
+  )
+  expect(attrTypes.get('pk')).toBe('S')
+  expect(attrTypes.get('sk')).toBe('S')
 })
 
 when('createLogsTable is idempotent', async () => {
