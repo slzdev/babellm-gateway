@@ -29,6 +29,12 @@ anything with real spend behind it.
 | `ADMIN_PASSWORD` | Single shared password for the dashboard. There is no per-user login. |
 | `SESSION_SECRET` | Signs the admin session cookie. At least 32 characters. Generate with `openssl rand -hex 32`. |
 
+### Optional
+
+| Variable | Purpose |
+|---|---|
+| `REDIS_URL` | Where per-key rate limit and spend counters live. Unset means an in-process map — counters reset on restart, and each instance enforces limits independently. |
+
 Copy `.env.example` to `.env` and fill these in for local development.
 
 ## Local development
@@ -65,7 +71,8 @@ Both run against a **disposable** Postgres on port 5434 — defined in
 `docker-compose.test.yml`, kept in a tmpfs, and thrown away with the
 container. Never the development database on 5432: the suite TRUNCATEs every
 table between tests, so pointing it at 5432 would delete whatever you had set
-up in the dashboard.
+up in the dashboard. `pnpm test:db:up` also starts a disposable Redis on 6380,
+persistence disabled, discarded the same way when the container stops.
 
 ```bash
 pnpm test:db:up                  # start it
@@ -472,6 +479,50 @@ added and a trailing one removed. A full URL is rejected rather than saved,
 because it would be appended rather than replacing the base URL; so is a query
 string, which the SDK sends separately from the path.
 
+## Rate limits and budgets
+
+Every API key can carry an `rpm` limit, a `tpm` limit, a monthly budget, and a
+total budget. A key that exceeds one is rejected with `429` before the request
+reaches a provider. A key with none of them configured is never counted at all
+and costs nothing.
+
+Served responses carry the usual headers, so a client can pace itself instead
+of discovering the limit by being refused:
+
+```
+x-ratelimit-limit-requests: 60
+x-ratelimit-remaining-requests: 41
+x-ratelimit-reset-requests: 23
+```
+
+Rate limits use a sliding window: the current minute in full, plus whatever of
+the previous minute has not yet rolled off. A `429` from a rate limit carries
+`Retry-After`; one from a total budget does not, because a total budget never
+recovers on its own.
+
+**Where the counters live.** In memory by default — per instance, and gone on
+restart. Set `REDIS_URL` and every instance shares one set of counters that
+survive a restart, provided that Redis persists. The Governance tab reports
+which driver is active and whether it is reachable. Redis Cluster and Sentinel
+are neither implemented nor tested; `REDIS_URL` names one server.
+
+**When the store is unreachable, the gateway serves the request.** Limits stop
+applying for as long as the outage lasts. This is deliberate: a counter store
+blip must not become a gateway outage.
+
+Three things this does not do:
+
+- **Reserve ahead.** Tokens and cost are only known after a request finishes,
+  so the check is "was this key already over" and the charge comes afterwards.
+  A key can exceed a limit by whatever was in flight when it crossed.
+- **Log rejections.** A limit rejection never reached a provider, and one row
+  per rejected request is the write pattern that would grow fastest exactly
+  when the gateway is under the most stress. Throttling shows up in the Keys
+  page usage column, not in the request log.
+- **Survive a crash mid-rejection.** A rejected request gives back the rpm it
+  counted. If the process dies between the two, that key's window reads one
+  too high until it expires, up to two minutes later.
+
 ## Production deployment
 
 The app runs as a Docker image with `next start` — no serverless
@@ -517,6 +568,12 @@ or, from a full checkout with devDependencies installed, the drizzle-kit
 equivalents used in development: `pnpm db:generate` (create a migration from
 schema changes) and `pnpm db:migrate` (apply pending migrations).
 
+**This release's migration is not backward-compatible with the previous
+build.** It drops `api_keys.spend_total_usd`, which the previous build's
+`resolveApiKey` still selects by name; an old instance still serving traffic
+once the migration lands 500s on every authenticated request. Deploy the
+migration and the new build together, not as a rolling overlap.
+
 ## Not yet implemented
 
 Phases 1 and 2 cover the schema, admin auth, provider/virtual-model/key CRUD,
@@ -528,11 +585,13 @@ policy-driven routing across every route target. Everything below is
 - **No `/v1/responses` endpoint.** Responses-flavored *providers* are
   supported; a Responses-shaped *client* is not. Everything enters through
   `/v1/chat/completions`.
-- **Rate limits and spend budgets are enforced nowhere.** A key's
-  `rpm_limit`, `tpm_limit`, `budget_monthly_usd`, and `budget_total_usd` can
-  be set in the dashboard and are stored, but no request is ever rejected
-  because of them. **A configured budget is not a spend cap** until Phase 4
-  ships budget enforcement — do not treat it as one.
+- **Spend counters are volatile.** They live in the counter store and nowhere
+  else — see [Rate limits and budgets](#rate-limits-and-budgets). Without
+  `REDIS_URL`, a restart sets every key's spend back to zero, so
+  `budget_total_usd` means "spend since this process started". Budgets survive
+  a restart only against a Redis configured to persist. Deleting a key while
+  the counter store is unreachable also orphans that key's total-spend
+  counter forever, since there is no retry and no sweep to clear it later.
 - **No circuit breaker.** Routing tries every policy's chain on every
   request, so a provider that is down costs one wasted attempt each time
   rather than being taken out of rotation. See [Routing](#routing).

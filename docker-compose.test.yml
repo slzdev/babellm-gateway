@@ -49,3 +49,21 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  redis-test:
+    image: redis:7-alpine
+    # Nothing here is worth resurrecting; it dies with the container.
+    restart: "no"
+    # 6380, not 6379: a developer's own Redis keeps the default port, the way
+    # the test Postgres leaves 5432 to theirs.
+    ports:
+      - "6380:6379"
+    # No persistence at all. The usage counters are volatile by design, and a
+    # test container that wrote an RDB would be the one place in this repo
+    # where they were not.
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

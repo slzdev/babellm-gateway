@@ -6,7 +6,9 @@ import { db } from '@/lib/db'
 import { settings as settingsTable } from '@/lib/db/schema'
 import { DRIVERS, LOG_SETTINGS_TTL_MS, resolveRequestLogStore } from '@/lib/logs'
 import { getLoggingSettings } from '@/lib/settings'
+import { usageStoreStatus } from '@/lib/usage'
 import { GovernanceForm } from './governance-form'
+import { UsageStatus } from './usage-status'
 
 export const dynamic = 'force-dynamic'
 
@@ -55,6 +57,7 @@ export default async function SettingsPage() {
             activeStore={resolved.store.name}
             ttlSeconds={LOG_SETTINGS_TTL_MS / 1000}
           />
+          <UsageStatus {...usageStoreStatus()} />
           <p className="pt-6 text-xs text-muted-foreground">
             Maintenance last ran: {maintenance(
               lastRun?.value as { at: string; created: string[]; dropped: string[] } | undefined ?? null,

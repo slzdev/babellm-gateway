@@ -10,6 +10,14 @@ export interface SeedOptions {
   adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
   credentials?: Record<string, unknown>
   apiFlavor?: ApiFlavor
+  /** Limits on the seeded API key. Absent means an unlimited key, which is
+   * what every pre-existing test expects. */
+  limits?: {
+    rpmLimit?: number | null
+    tpmLimit?: number | null
+    budgetMonthlyUsd?: string | null
+    budgetTotalUsd?: string | null
+  }
 }
 
 export async function seedGateway(options: SeedOptions = {}) {
@@ -36,6 +44,7 @@ export async function seedGateway(options: SeedOptions = {}) {
     name: 'test key',
     keyHash: generated.keyHash,
     keyPrefix: generated.keyPrefix,
+    ...options.limits,
   }).returning()
 
   return { provider, model, target, key, apiKey: generated.key, virtualModel, upstreamModel }
@@ -81,6 +90,14 @@ export interface SeedTargetsOptions {
   policy?: 'failover' | 'weighted' | 'round_robin'
   maxAttempts?: number
   targets: TargetSpec[]
+  /** Limits on the seeded API key. Absent means an unlimited key, which is
+   * what every pre-existing test expects. */
+  limits?: {
+    rpmLimit?: number | null
+    tpmLimit?: number | null
+    budgetMonthlyUsd?: string | null
+    budgetTotalUsd?: string | null
+  }
 }
 
 /**
@@ -121,6 +138,7 @@ export async function seedTargets(options: SeedTargetsOptions) {
     name: 'test key',
     keyHash: generated.keyHash,
     keyPrefix: generated.keyPrefix,
+    ...options.limits,
   }).returning()
 
   return { model, targets, key, apiKey: generated.key }

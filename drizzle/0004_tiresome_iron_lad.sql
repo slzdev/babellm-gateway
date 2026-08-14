@@ -1,0 +1,1 @@
+ALTER TABLE "api_keys" DROP COLUMN "spend_total_usd";

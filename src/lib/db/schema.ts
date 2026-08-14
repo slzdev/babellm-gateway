@@ -97,9 +97,6 @@ export const apiKeys = pgTable(
     tpmLimit: integer('tpm_limit'),
     budgetTotalUsd: numeric('budget_total_usd', { precision: 12, scale: 6 }),
     budgetMonthlyUsd: numeric('budget_monthly_usd', { precision: 12, scale: 6 }),
-    spendTotalUsd: numeric('spend_total_usd', { precision: 12, scale: 6 })
-      .notNull()
-      .default('0'),
     logPayloads: boolean('log_payloads').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

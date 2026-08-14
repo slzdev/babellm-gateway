@@ -3,6 +3,7 @@ import { asc, eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { apiKeys, users, type UserRow } from '@/lib/db/schema'
 import { generateApiKey } from '@/lib/gateway/auth'
+import { clearUsage } from '@/lib/usage'
 
 export interface UserInput {
   name: string
@@ -169,4 +170,7 @@ export async function setApiKeyLogPayloads(id: string, logPayloads: boolean): Pr
 
 export async function deleteApiKey(id: string): Promise<void> {
   await db.delete(apiKeys).where(eq(apiKeys.id, id))
+  // After the row is gone, and awaited only far enough to start: a counter
+  // store that is down must not be able to fail a deletion.
+  void clearUsage(id)
 }

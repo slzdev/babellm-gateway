@@ -11,6 +11,10 @@ import { computeCost, priceFor } from '@/lib/pricing'
 import { droppedParams as geminiDroppedParams } from '@/lib/translate/chat-to-gemini'
 import { droppedParams } from '@/lib/translate/chat-to-responses'
 import { uuidv7 } from '@/lib/uuid'
+import {
+  LimitExceededError, chargeUsage, checkLimits, rateLimitHeaders, type KeyLimits,
+  type LimitSnapshot,
+} from '@/lib/usage'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
 import { GatewayError, RoutedError, errorResponse, type ClassifiedError } from './errors'
 import { execute, type AttemptRecord } from './execute'
@@ -71,12 +75,14 @@ export function attemptHeaders(
   candidate: Candidate,
   requestId: string,
   dropped: string[] = [],
+  limits: LimitSnapshot | null = null,
 ): HeadersInit {
   return {
     'x-request-id': requestId,
     'x-babellm-provider': candidate.provider.name,
     'x-babellm-upstream-model': candidate.upstreamModel,
     ...(dropped.length > 0 ? { 'x-babellm-dropped-params': dropped.join(',') } : {}),
+    ...rateLimitHeaders(limits),
   }
 }
 
@@ -159,6 +165,10 @@ export async function handleChatCompletions(
   // and storing bodies falls only on the keys that asked for it.
   let capturePayloads = false
   let requestBody: ChatCompletionRequest | null = null
+  // Held for the charge that happens after the response, and for the headers
+  // every response carries.
+  let limitedKey: KeyLimits | null = null
+  let limits: LimitSnapshot | null = null
 
   interface LogExtra {
     ttftMs?: number
@@ -198,6 +208,17 @@ export async function handleChatCompletions(
             usage,
           )
         : null
+
+    // Charge the key's counters here because this is the one place that has
+    // both the measured usage and the priced cost. Never awaited by the
+    // response path — writeLog is already fire-and-forget.
+    if (limitedKey && usage) {
+      void chargeUsage(
+        limitedKey,
+        (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0),
+        cost?.totalUsd ?? null,
+      )
+    }
     const { settings } = await resolveRequestLogStore()
 
     const payload =
@@ -247,6 +268,13 @@ export async function handleChatCompletions(
     modelName = body.model
     stream = body.stream === true
 
+    // After parsing so a malformed body cannot consume rpm, and before
+    // resolving the model so a throttled key does not cost a database lookup
+    // — and so a key that is over its limit is told so, rather than being
+    // told its model does not exist.
+    limitedKey = apiKey
+    limits = await checkLimits(apiKey)
+
     const { model, candidates } = await resolveModel(body.model)
     const chain = selectOrder(candidates, model)
 
@@ -278,7 +306,7 @@ export async function handleChatCompletions(
       return sseResponse(
         result.value,
         identity,
-        attemptHeaders(result.candidate, requestId, dropped),
+        attemptHeaders(result.candidate, requestId, dropped, limits),
         (outcome, capture) =>
           log(200, outcome, result.attempts, {
             ttftMs,
@@ -313,7 +341,7 @@ export async function handleChatCompletions(
     // contradictory log line against this one for the same request_id.
     const completion = rewriteCompletion(result.value, identity)
     const response = Response.json(completion, {
-      headers: attemptHeaders(result.candidate, requestId, dropped),
+      headers: attemptHeaders(result.candidate, requestId, dropped, limits),
     })
     log(200, 'ok', result.attempts, {
       candidate: result.candidate,
@@ -322,6 +350,13 @@ export async function handleChatCompletions(
     })
     return response
   } catch (err) {
+    // Deliberately not logged. A limit rejection never reached a provider,
+    // and one log row per rejected request is the traffic pattern that grows
+    // fastest exactly when the gateway is under the most stress.
+    if (err instanceof LimitExceededError) {
+      return errorResponse(err, { 'x-request-id': requestId, ...err.headers })
+    }
+
     const status = err instanceof GatewayError ? err.status : 500
     // A client that disconnected mid-request surfaces here as an aborted
     // signal, which classifyProviderError reports as an upstream timeout —
