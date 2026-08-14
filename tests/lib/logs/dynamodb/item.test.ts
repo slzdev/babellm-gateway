@@ -150,6 +150,18 @@ test('an unbounded upstream error message is truncated rather than fatal', () =>
   expect(toDetail(item).errorType).toBe('upstream_error')
 })
 
+test('an oversized error code is clamped, not shed', () => {
+  // errorCode comes off ProviderError, built straight from an upstream's
+  // JSON error body — an "OpenAI-compatible" third party can put an
+  // arbitrarily long string here. No shed stage touches errorCode, so unlike
+  // errorMessage this has to be bounded unconditionally at write, the same
+  // way model already is.
+  const item = toItem(entry({ errorCode: 'e'.repeat(1_000_000) }), settings)
+
+  expect(Buffer.byteLength(JSON.stringify(item), 'utf8')).toBeLessThanOrEqual(ITEM_MAX_BYTES)
+  expect(String(item.errorCode)).toHaveLength(128)
+})
+
 test('the TTL mirrors the partition retention policy', () => {
   // dropExpiredPartitions drops month M when M < addMonths(now, -(n - 1)),
   // which is the same as: when now >= addMonths(M, n).

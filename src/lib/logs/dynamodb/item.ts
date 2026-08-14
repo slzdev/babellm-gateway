@@ -76,15 +76,21 @@ export function toItem(
 
   put(item, 'expiresAt', expiresAtFor(writtenAt, settings.retentionMonths))
   put(item, 'apiKeyId', entry.keyId)
-  put(item, 'keyName', entry.keyName)
+  put(item, 'keyName', clamp(entry.keyName))
   put(item, 'model', clamp(entry.model))
-  put(item, 'errorType', entry.errorType)
-  put(item, 'errorCode', entry.errorCode)
+  // errorType/errorCode come off ProviderError, which an adapter builds
+  // straight from an upstream's JSON error body — an "OpenAI-compatible"
+  // third party can put an arbitrarily long string in either. Clamped
+  // unconditionally, like model, rather than left to the shed: they are
+  // short identifiers in practice, so nothing real is lost, and it keeps
+  // them out of the set of fields the shed has to know about.
+  put(item, 'errorType', clamp(entry.errorType))
+  put(item, 'errorCode', clamp(entry.errorCode))
   put(item, 'errorMessage', entry.errorMessage)
   put(item, 'ttftMs', entry.ttftMs)
   put(item, 'finalTargetId', entry.final?.targetId)
   put(item, 'finalProviderId', entry.final?.providerId)
-  put(item, 'finalProvider', entry.final?.provider)
+  put(item, 'finalProvider', clamp(entry.final?.provider))
   put(item, 'finalUpstreamModel', clamp(entry.final?.upstreamModel))
   put(item, 'promptTokens', entry.usage?.promptTokens)
   put(item, 'completionTokens', entry.usage?.completionTokens)
@@ -125,14 +131,18 @@ function fits(item: Record<string, unknown>): boolean {
  * A ValidationException here would lose the entire log line, and logRequest is
  * deliberately not awaited on the request path — the loss would surface only
  * as a stderr line. So the item has to fit by construction, which means every
- * unbounded field needs a stage: `attempts` grows with a misconfigured route,
- * `errorMessage` is whatever an upstream provider chose to return, and
- * `droppedParams` grows with the request. Capping payloads alone leaves all
- * three able to blow the limit on their own.
+ * unbounded field needs a stage or an unconditional clamp: `attempts` grows
+ * with a misconfigured route, `errorMessage` is whatever an upstream provider
+ * chose to return, and `droppedParams` grows with the request. Capping
+ * payloads alone leaves all three able to blow the limit on their own.
  *
- * After stage 3 nothing unbounded remains, so the shed terminates. Each stage
- * runs only if the item is still oversized, so an ordinary entry — which is a
- * few KB — passes through untouched.
+ * The shed terminates because nothing it can still touch is unbounded: every
+ * field it doesn't reach — errorType, errorCode, keyName, finalProvider,
+ * model, finalUpstreamModel — is clamped unconditionally in toItem before
+ * shed() ever runs, and everything else is a number, boolean, uuid, or
+ * fixed-shape object. Each stage below runs only if the item is still
+ * oversized, so an ordinary entry — which is a few KB — passes through
+ * untouched.
  */
 function shed(item: Record<string, unknown>): void {
   // 1. Payloads: the biggest, and the only part the UI already has a shape
