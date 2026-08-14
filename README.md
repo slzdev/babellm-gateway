@@ -176,11 +176,14 @@ page with the full attempt timeline and cost breakdown.
 
 ### Choosing a store
 
-Settings › Governance picks where request logs go. The gateway ships one
-driver, `postgres` — readable, and what powers `/logs`. The setting is a
-driver *name*, so a fork adds its own by implementing `RequestLogStore` and
-registering it in `src/lib/logs/registry.ts`; a name with no driver behind it
-falls back to `postgres` and says so on `/logs`.
+Settings › Governance picks where request logs go. The gateway ships two
+drivers: `postgres` — readable, and what powers `/logs` — and `dynamodb`,
+which appears in the list only on instances where `DYNAMODB_LOGS_TABLE` is
+set (see below). The setting is a driver *name*, so a fork adds its own by
+implementing `RequestLogStore` and registering it in
+`src/lib/logs/registry.ts`; a name with no driver behind it falls back to
+`postgres` and says so on `/logs` — the same fallback that catches a stale
+`dynamodb` setting left over on an instance where it is no longer configured.
 
 A change takes effect on the instance that made it immediately, and on every
 other instance within 15 seconds — the resolved store is cached for that long
