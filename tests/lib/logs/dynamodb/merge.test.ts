@@ -22,20 +22,28 @@ function fakeFetch(pages: Record<string, FakePage[]>): {
   fetch: ShardFetch<ShardItem>
   calls: () => number
 } {
-  const cursor: Record<string, number> = {}
   let calls = 0
 
-  const fetch: ShardFetch<ShardItem> = async (shard) => {
+  const fetch: ShardFetch<ShardItem> = async (shard, startKey) => {
     calls += 1
+    if (startKey !== undefined) {
+      // Both shards would otherwise hand back an identical { at: n } shape,
+      // so a merge that crossed one shard's continuation key into another
+      // shard's query would be indistinguishable from a correct one.
+      expect(startKey.shard).toBe(shard)
+    }
     const all = pages[shard] ?? []
-    const n = cursor[shard] ?? 0
-    cursor[shard] = n + 1
+    // The page index comes from the key the merge hands back, not from a
+    // private cursor — otherwise the fake supplies the pagination the module
+    // is supposed to supply, and a merge that never forwards the
+    // continuation key passes every test in this file.
+    const n = startKey === undefined ? 0 : (startKey.at as number) + 1
     const raw = all[n] ?? []
     const page = Array.isArray(raw) ? { items: raw, scanned: raw.length } : raw
     return {
       items: page.items.map((sk) => ({ sk })),
       scanned: page.scanned,
-      lastEvaluatedKey: n + 1 < all.length ? { at: n } : undefined,
+      lastEvaluatedKey: n + 1 < all.length ? { shard, at: n } : undefined,
     }
   }
 
@@ -145,7 +153,7 @@ test('a spent round-trip budget ends the page rather than looping', async () => 
 
   expect(out.rows).toEqual([])
   expect(out.hasMore).toBe(true)
-  expect(calls()).toBeLessThanOrEqual(MAX_ROUND_TRIPS * SHARDS.length)
+  expect(calls()).toBe(MAX_ROUND_TRIPS * SHARDS.length)
 })
 
 test('an empty store yields an empty page with no more', async () => {
@@ -177,7 +185,7 @@ test('a large scanned count trips the budget even when nothing is returned', asy
   expect(out.rows).toEqual([])
   expect(out.hasMore).toBe(true)
   // Two shards scanning 5,000 apiece cross MAX_ITEMS_EXAMINED (10,000) after
-  // a single round trip — far short of MAX_ROUND_TRIPS (8). If the budget
+  // a single round trip — far short of MAX_ROUND_TRIPS. If the budget
   // counted returned items instead, nothing would trip here until both
   // shards ran out of pages on their own, two round trips later.
   expect(calls()).toBe(2)

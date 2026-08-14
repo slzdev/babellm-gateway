@@ -1,9 +1,18 @@
 import 'server-only'
 
-/** Bounds what one page of the log viewer can cost. A FilterExpression is
+/**
+ * Bounds what one page of the log viewer can cost. A FilterExpression is
  * applied after Limit, so a narrow filter over a wide range can read a great
- * deal and match almost nothing. */
-export const MAX_ROUND_TRIPS = 8
+ * deal and match almost nothing.
+ *
+ * One round trip fetches every still-hungry shard in parallel — up to
+ * shards.length queries — and each carries only a small per-shard Limit (the
+ * driver computes roughly 4-11 items per shard per round). MAX_ITEMS_EXAMINED
+ * is meant to be the binding cost constraint; MAX_ROUND_TRIPS is a backstop
+ * against pathologically many round trips, not the primary budget, so it is
+ * set high enough that the item cap trips first in the ordinary case.
+ */
+export const MAX_ROUND_TRIPS = 40
 export const MAX_ITEMS_EXAMINED = 10_000
 
 export interface ShardItem {
@@ -27,6 +36,10 @@ export interface CollectOptions<T extends ShardItem> {
   fetch: ShardFetch<T>
   shards: readonly string[]
   limit: number
+  /** Sort direction for the merge. The caller's fetch must return each
+   * shard's items in this same direction (e.g. via ScanIndexForward) — the
+   * merge has no way to verify that and would silently produce a
+   * mis-ordered page if it didn't. */
   descending: boolean
   exclude: readonly string[]
 }
