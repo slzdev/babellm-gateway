@@ -92,8 +92,20 @@ services:
     ports:
       - "8001:8000"
     # -inMemory is this service's tmpfs: no file is written, so the data
-    # cannot outlive the container or accumulate across runs.
-    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-port", "8000"]
+    # cannot outlive the container or accumulate across runs. But "in
+    # memory" means the JVM heap tracks whatever the suite seeds, and the
+    # budget test deliberately seeds 10,050 items to exceed
+    # MAX_ITEMS_EXAMINED — without -Xmx, HotSpot defaults its max heap to a
+    # fraction of the *host's* memory, not the small amount actually held
+    # (tens of MB), so the JVM keeps whatever high-water mark it reaches and
+    # never gives it back between runs. On a small Docker VM that starves
+    # postgres-test's tmpfs a few runs later; the failure surfaces as
+    # PostgreSQL 53100 ("no space left on device") out of resetDb, while
+    # `df` on the Postgres container reports plenty of room, because the
+    # actual shortage is host RAM, not disk. -Xmx512m is generous headroom
+    # over what a run holds and stops the growth outright. The entrypoint is
+    # `java`, so JVM flags go in `command:` before `-jar`.
+    command: ["-Xmx512m", "-jar", "DynamoDBLocal.jar", "-inMemory", "-port", "8000"]
     # No healthcheck: the image ships no curl or wget, so `compose --wait`
     # cannot probe it and treats a service without one as ready once it is
     # running. The readiness gap this leaves is closed in
