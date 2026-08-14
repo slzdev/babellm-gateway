@@ -275,7 +275,9 @@ response bodies with that key's logs (the assembled completion for a
 streamed response), bounded by the payload cap in Settings › Governance
 (256 KiB by default) — anything larger is stored as a truncated preview.
 This writes prompt and completion content to the database, so treat it the
-way you'd treat any other place that content ends up.
+way you'd treat any other place that content ends up. That cap is a ceiling,
+not a guarantee: the DynamoDB store applies its own tighter per-side cap
+regardless of this setting (see above).
 
 ### Retention
 
@@ -309,7 +311,9 @@ one currently selected: switching Settings › Governance to another driver does
 not stop the postgres driver from provisioning and dropping partitions in the
 gateway's own database, and any captured prompt or completion content already
 sitting in `request_logs` keeps aging out on the same schedule as before the
-switch.
+switch. With DynamoDB configured, the same run also checks that table's TTL
+(see above) — bounded to a few seconds, so an unreachable table or wrong
+region cannot hold up boot the way an unbounded AWS call would.
 
 Boot blocks on this first maintenance run — and if two instances start
 together, the loser blocks on the winner's advisory lock rather than serving

@@ -1,4 +1,5 @@
-import { beforeEach, expect, test } from 'vitest'
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
+import { beforeEach, expect, test, vi } from 'vitest'
 import { createDynamoStore } from '@/lib/logs/dynamodb'
 import { uuidv7 } from '@/lib/uuid'
 import type { LoggingSettings } from '@/lib/settings'
@@ -212,6 +213,20 @@ when('get returns null rather than throwing for a malformed id', async () => {
 
 when('maintain reports no partitions and does not throw', async () => {
   expect(await store.maintain(new Date(), settings)).toEqual({ created: [], dropped: [] })
+})
+
+when('maintain bounds its TTL check with an abort signal', async () => {
+  // Regression guard for the boot-path hang: runLogMaintenance awaits this on
+  // startup, and the AWS SDK sets no default request timeout, so an
+  // unreachable endpoint would otherwise hold up serving indefinitely. This
+  // asserts the bound is actually wired to the SDK call rather than
+  // exercising a live timeout, which would make the suite's runtime depend
+  // on network conditions.
+  const sendSpy = vi.spyOn(DynamoDBClient.prototype, 'send')
+  await store.maintain(new Date(), settings)
+  const options = sendSpy.mock.calls.at(-1)?.[1] as { abortSignal?: unknown } | undefined
+  expect(options?.abortSignal).toBeInstanceOf(AbortSignal)
+  sendSpy.mockRestore()
 })
 
 when('a missing table produces an error naming it', async () => {

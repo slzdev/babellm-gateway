@@ -18,6 +18,14 @@ import { collectPage } from './merge'
  * "no such row" — the same contract the Postgres driver keeps. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/** Bounds the TTL health check in maintain(). runLogMaintenance awaits every
+ * registered driver's maintain() on the boot path, so an unbounded call here
+ * — the AWS SDK sets no default request timeout — would let an unreachable
+ * endpoint or wrong region hang serving indefinitely on a check whose only
+ * output is a stderr warning. Generous for a healthy DescribeTimeToLive call,
+ * short enough that boot is not visibly delayed. */
+const TTL_CHECK_TIMEOUT_MS = 5_000
+
 /** Everything the list view renders. Projecting these keeps the payload
  * attributes off the wire, which cuts latency — though not cost: DynamoDB
  * bills a Query on the item size read from storage, before projection. */
@@ -218,7 +226,10 @@ export function createDynamoStore(config: DynamoStoreConfig): ReadableRequestLog
      */
     async maintain(): Promise<MaintenanceResult> {
       try {
-        const out = await raw.send(new DescribeTimeToLiveCommand({ TableName: table }))
+        const out = await raw.send(
+          new DescribeTimeToLiveCommand({ TableName: table }),
+          { abortSignal: AbortSignal.timeout(TTL_CHECK_TIMEOUT_MS) },
+        )
         const ttl = out.TimeToLiveDescription
         if (ttl?.TimeToLiveStatus !== 'ENABLED' || ttl?.AttributeName !== 'expiresAt') {
           console.error(
