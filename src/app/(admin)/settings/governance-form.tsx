@@ -69,8 +69,8 @@ export function GovernanceForm({
         </p>
         <p className="text-xs text-muted-foreground">
           DynamoDB appears in this list only on instances where{' '}
-          <span className="font-mono">DYNAMODB_LOGS_TABLE</span> is set. A driver the
-          gateway cannot reach is not offered.
+          <span className="font-mono">DYNAMODB_LOGS_TABLE</span> is set. An unconfigured
+          driver is not offered.
         </p>
         {activeStore !== store ? (
           <p className="text-xs text-destructive">
