@@ -47,6 +47,42 @@ export interface CollectOptions<T extends ShardItem> {
 export interface Collected<T> {
   rows: T[]
   hasMore: boolean
+  /**
+   * Where scanning stopped, as a plain sk — meaningful when `rows` is empty
+   * and `hasMore` is true: the budget was spent before anything could be
+   * emitted, and without this the caller has no cursor to resume from at
+   * all (see query() in index.ts). Null when there is nothing to resume
+   * from, or when resuming safely can't be established (see below).
+   *
+   * A shard's stopping point is not simply its own lastEvaluatedKey. A shard
+   * can read real matches into its buffer and then go untouched for many
+   * rounds — the loop above only re-fetches shards whose buffer is empty —
+   * while other shards alone burn through the rest of the budget. If that
+   * happens, this call ends with zero rows emitted (the frontier invariant
+   * forbids emitting from one shard's buffer while another is still
+   * unfetched) even though a real match is sitting in a buffer that is
+   * about to be discarded when this call returns. That buffered row's sk is
+   * *larger* (descending) than the stalled shard's own lastEvaluatedKey, so
+   * using the latter as resumeFrom would place the row outside every future
+   * query's range — a silent, permanent skip.
+   *
+   * There is no cheap way to recover a safe cutoff in that situation (it
+   * would require remembering where each buffered page started, not just
+   * where it ended), so resumeFrom is only ever computed when every shard's
+   * buffer is empty. That is also exactly the case that matters in
+   * practice: a filter that has matched nothing anywhere yet, which is why
+   * `rows` came back empty in the first place. When it holds, no shard has
+   * found anything that isn't already reflected in its own
+   * lastEvaluatedKey, so the extremum below is safe. When it doesn't — some
+   * shard found something but got stalled — resumeFrom degrades to null,
+   * matching today's behavior, rather than risk a skip.
+   */
+  resumeFrom: string | null
+}
+
+function stopKeyOf(key: Record<string, unknown> | undefined): string | undefined {
+  const sk = key?.sk
+  return typeof sk === 'string' ? sk : undefined
 }
 
 /**
@@ -116,10 +152,25 @@ export async function collectPage<T extends ShardItem>(
     matched.push(best.buffer.shift() as T)
   }
 
+  // Safe only when nothing is stuck in a buffer — see the doc comment on
+  // Collected.resumeFrom for why.
+  let resumeFrom: string | null = null
+  if (state.every((s) => s.buffer.length === 0)) {
+    for (const s of state) {
+      if (s.exhausted) continue
+      const sk = stopKeyOf(s.startKey)
+      if (sk === undefined) continue
+      if (resumeFrom === null || (opts.descending ? sk > resumeFrom : sk < resumeFrom)) {
+        resumeFrom = sk
+      }
+    }
+  }
+
   return {
     rows: matched.slice(0, opts.limit),
     // A spent budget is reported as "more available" rather than as the end
     // of the data: the page is short, but its cursor still leads somewhere.
     hasMore: matched.length > opts.limit || budgetSpent,
+    resumeFrom,
   }
 }
