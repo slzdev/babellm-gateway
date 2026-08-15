@@ -1,520 +1,192 @@
+<div align="center">
+
 # BabeLLM Gateway
 
-A self-hosted LLM gateway. It exposes an OpenAI-compatible HTTP API and
-translates each request to the native SDK of whichever provider actually
-serves it. Admins manage providers, virtual models, and virtual API keys from
-a web dashboard.
+**One OpenAI-compatible endpoint in front of every model you use.**
 
-Any OpenAI client works by changing one line:
+Self-hosted. Postgres-backed. Routed by policy, logged by default, and managed
+from a dashboard instead of a YAML file.
+
+<sub>Next.js 16 · React 19 · Drizzle · Postgres · Docker</sub>
+
+</div>
+
+---
+
+Point any OpenAI client at BabeLLM and it keeps working — the gateway
+translates each request into the native SDK of whichever provider actually
+serves it, and hands you back a normal OpenAI response.
 
 ```ts
-new OpenAI({ baseURL: "https://gw.example.com/v1", apiKey: "sk-bab-…" })
+const client = new OpenAI({
+  baseURL: "https://gw.example.com/v1",
+  apiKey: "sk-bab-…",           // a virtual key you minted in the dashboard
+});
+
+await client.chat.completions.create({
+  model: "smart",                // a virtual model: 3 providers, failover, budgets
+  messages: [{ role: "user", content: "Hello" }],
+  stream: true,
+});
 ```
 
-## Status
+One line changed. Streaming, tool calls, and reasoning all come through.
 
-This is **Phase 2** of a four-phase build. It is a real gateway — the
-`openai` SDK talks to it end to end, including streaming and tool calls, and
-a virtual model's targets are routed by policy with failover — but only a
-slice of the design is implemented. See
-[Not yet implemented](#not-yet-implemented) before relying on it for
-anything with real spend behind it.
+## Why
 
-## Required environment variables
+- **Your keys stay yours.** Provider credentials are encrypted at rest with
+  AES-256-GCM and never leave your database. Your apps only ever see virtual
+  keys you can revoke, budget, and rate limit one at a time.
+- **Swap models without shipping code.** A virtual model is a name plus a list
+  of targets. Change the targets in the dashboard and every client follows on
+  the next request.
+- **Outages become someone else's problem.** Route targets fail over on 429s,
+  5xx, and timeouts — including mid-stream, right up to the first chunk.
+- **Know what you spent.** Every request is logged with cost, latency, TTFT,
+  and the full attempt chain, then rolled up into a dashboard that stays fast
+  no matter how big the log table gets.
+- **No vendor, no control plane, no telemetry.** It's a Docker image and a
+  Postgres URL.
 
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | Postgres connection string. |
-| `ENCRYPTION_KEY` | AES-256-GCM key for provider credentials at rest. 64 hex characters (32 bytes). Generate with `openssl rand -hex 32`. |
-| `ADMIN_PASSWORD` | Single shared password for the dashboard. There is no per-user login. |
-| `SESSION_SECRET` | Signs the admin session cookie. At least 32 characters. Generate with `openssl rand -hex 32`. |
-
-### Optional
-
-| Variable | Purpose |
-|---|---|
-| `REDIS_URL` | Where per-key rate limit and spend counters live. Unset means an in-process map — counters reset on restart, and each instance enforces limits independently. |
-
-Copy `.env.example` to `.env` and fill these in for local development.
-
-## Local development
-
-1. Start Postgres:
-
-   ```bash
-   docker compose up -d
-   ```
-
-   This starts Postgres only, leaving port 3000 to the dev server below. To
-   run the gateway in a container too, see
-   [Run the whole stack](#run-the-whole-stack).
-
-2. Install dependencies and apply migrations:
-
-   ```bash
-   pnpm install
-   pnpm db:migrate
-   ```
-
-3. Run the dev server:
-
-   ```bash
-   pnpm dev
-   ```
-
-   The dashboard is at `http://localhost:3000` (redirects to `/login`), and
-   the gateway is at `http://localhost:3000/v1/*`.
-
-## Tests and browser checks
-
-Both run against a **disposable** Postgres on port 5434 — defined in
-`docker-compose.test.yml`, kept in a tmpfs, and thrown away with the
-container. Never the development database on 5432: the suite TRUNCATEs every
-table between tests, so pointing it at 5432 would delete whatever you had set
-up in the dashboard. `pnpm test:db:up` also starts a disposable Redis on 6380,
-persistence disabled, discarded the same way when the container stops.
+## Quick start
 
 ```bash
-pnpm test:db:up                  # start it
-cp .env.test.example .env.test   # once per checkout — .env.test is gitignored
-pnpm test
-pnpm test:db:down                # when you are done
-```
-
-To click through the dashboard against a throwaway database — to try something
-out, or to verify a change without disturbing your own data:
-
-```bash
-pnpm dev:test-db
-```
-
-That migrates a separate `babellm_dev` database on 5434 and serves the
-dashboard on `http://localhost:3001`, so it runs *alongside* `pnpm dev` on 3000
-instead of replacing it. It still reads `.env` for everything but the database,
-so log in with your usual `ADMIN_PASSWORD`.
-
-## Run the whole stack
-
-To get a complete working server — Postgres *and* the gateway — without
-installing Node or pnpm, add the `docker-compose.gateway.yml` overlay:
-
-```bash
+git clone https://github.com/slzdev/babellm-gateway.git
+cd babellm-gateway
 docker compose -f docker-compose.yml -f docker-compose.gateway.yml up -d --build
 ```
 
-The dashboard is at `http://localhost:3000` and the gateway at
-`http://localhost:3000/v1/*`. The container migrates the database on boot, so
-there is no separate setup step. Set `GATEWAY_PORT` to publish somewhere else
-(`GATEWAY_PORT=3100 docker compose …`) — useful when `pnpm dev` already holds
-port 3000.
+That's the whole stack — Postgres and the gateway, migrated on boot, no Node
+or pnpm required. Open **http://localhost:3000**, log in with the demo password
+`babellm`, add a provider, and you have an endpoint.
 
-To drop the flags from every subsequent command:
+> [!WARNING]
+> The compose overlay ships a checked-in `ENCRYPTION_KEY` and admin password so
+> it boots with zero setup. Anyone with this repo can decrypt credentials stored
+> under it. Keep it on your machine, and use
+> [Deploy](#deploy) for anything real.
 
-```bash
-export COMPOSE_FILE=docker-compose.yml:docker-compose.gateway.yml
-docker compose up -d --build
-docker compose logs -f gateway
-docker compose down
+Set `GATEWAY_PORT` to publish elsewhere (`GATEWAY_PORT=3100 docker compose …`).
+
+## How it works
+
+```mermaid
+flowchart LR
+    A["Your app<br/><sub>OpenAI SDK</sub>"] -->|"sk-bab-…"| B["BabeLLM<br/><sub>/v1/chat/completions</sub>"]
+    B --> C{"Virtual model<br/><sub>policy + targets</sub>"}
+    C -->|1| D["OpenAI"]
+    C -->|2| E["Any OpenAI-compatible<br/><sub>Groq, OpenRouter, vLLM…</sub>"]
+    C -->|3| F["Gemini"]
+    B -.-> G[("Postgres<br/><sub>logs · usage · config</sub>")]
 ```
 
-**The credentials in that overlay are public.** It ships a checked-in
-`ENCRYPTION_KEY` and the admin password `babellm` so the stack boots with no
-setup — which means anyone with this repo can decrypt the provider credentials
-it stores, and anyone who can reach the port owns the dashboard. Keep it on
-your own machine. To use real values, put them in `.env` (start from
-`.env.example`); Compose loads that file automatically and it overrides the
-defaults. `DATABASE_URL` is the exception — the overlay always points it at the
-`postgres` service, since a host-local URL does not resolve inside the
-container.
+Clients always speak Chat Completions. Everything behind the gateway —
+Responses-flavored endpoints, Gemini's `generateContent` — is translated in
+both directions.
 
-For anything beyond a local trial, use the deployment path in
-[Production deployment](#production-deployment) instead.
+| Provider type | Status |
+| --- | --- |
+| `openai` | ✅ Chat Completions and Responses flavors |
+| `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped |
+| `gemini` | ✅ Native `@google/genai`, including thinking and media by URL |
+| `bedrock` | 🚧 Configurable, not yet served |
 
-## Model catalog
+## Features
 
-The **Catalog** page lists every model each provider actually serves. It is
-populated by asking providers directly — `GET /v1/models` for `openai` and
-`openai_compatible` — and enriched from three further layers, resolved field by
-field with the first non-null value winning:
+### Routing that earns its keep
 
-| Layer | Source |
-|---|---|
-| Override | Anything you edit in the dashboard. Always wins, and survives every re-sync. |
-| Discovered | What the provider reported. OpenAI-shaped endpoints report only a model id. |
-| Registry | [models.dev](https://models.dev), fetched at most daily and cached in the database. Toggleable, for deployments without egress. |
-| Seed | A models.dev snapshot vendored into the repo, so a first boot with no network still has context windows and prices. Refresh with `pnpm seed:refresh`. |
-
-Syncing is explicit: a **Sync models** action in each provider's row menu, a
-**Sync all** button on the catalog page, and an automatic sync whenever you
-edit a provider (any field, not just credentials — saving a provider always
-re-syncs it). Nothing runs on a timer.
-
-The catalog is advisory for virtual models: route targets remain free text — the
-picker suggests models and warns about names it does not recognise, but never
-blocks a save, and routing through a virtual model never reads the catalog. It
-is authoritative for [direct addressing](#direct-addressing), which can only
-reach a model the catalog lists. A model that stops being returned is marked
-*missing* rather than deleted, so a provider having a bad day cannot quietly
-erase your catalog or the overrides on it — nor take a directly addressed model
-off the air.
-
-`openai_compatible` providers can set a **registry namespace** (`groq`,
-`openrouter`, …) so their models match models.dev entries. A self-hosted or
-unlisted `openai_compatible` endpoint has no models.dev namespace, so those
-models stay unenriched unless you override them by hand.
-
-## Dashboard
-
-`/dashboard` — the page after login — shows usage, cost, and errors across
-the gateway: stat tiles with the period-over-period delta, time-series
-charts, and breakdowns by model, key, user, and provider. Filter by time
-range (including a custom from/to), key, user, or model; **View these
-requests** hands the same filter to `/logs` for the individual rows behind
-any number on the page.
-
-It reads an hourly rollup table (`usage_rollups`), never `request_logs`
-directly, so the page stays fast no matter how large the log table grows. A
-background job recomputes each hour for up to two hours after it ends, to
-catch requests that started in one hour but finished in the next — so
-figures for roughly the last two hours may still be settling. Older hours
-are sealed and never recomputed.
-
-The rollup is also backfilled from history in the background, newest-first —
-so recent periods, the ones you are most likely to be looking at, are
-complete within minutes of first boot while older ones fill in over the
-following hours — and independently of retention: **usage history outlives
-the request-log retention window**. A log's month can roll off under
-[Retention](#retention) while its hour's totals live on in `usage_rollups`,
-so `/dashboard` can still answer questions about a period `/logs` no longer
-holds the underlying rows for. While that backfill is still catching up to
-the oldest surviving log, the page says so and names how far back totals are
-complete.
-
-## Governance
-
-### Request logs
-
-Every request the gateway serves is recorded: the caller's key name, the
-model asked for, status and outcome, latency and time-to-first-token, the
-full attempt chain with each target's failure reason, token counts, and
-cost. Browse them at `/logs` — filter by time range, key, model, and status,
-or jump straight to one by its request id — and open any row for a detail
-page with the full attempt timeline and cost breakdown.
-
-### Choosing a store
-
-Settings › Governance picks where request logs go. The gateway ships one
-driver, `postgres` — readable, and what powers `/logs`. The setting is a
-driver *name*, so a fork adds its own by implementing `RequestLogStore` and
-registering it in `src/lib/logs/registry.ts`; a name with no driver behind it
-falls back to `postgres` and says so on `/logs`.
-
-A change takes effect on the instance that made it immediately, and on every
-other instance within 15 seconds — the resolved store is cached for that long
-so it isn't re-read on every request. Switching does not migrate existing
-logs: the previous store keeps its rows, and switching back brings them into
-view again. A write-only driver has no way to hand its rows back, so `/logs`
-shows an empty state under one and debugging a past request means searching
-wherever that driver writes, by the `x-request-id` header the gateway
-returns — a v7 uuid, e.g. `018f5e2a-9c3d-7a41-8b2e-6f4d9a1c7e50`, the same
-value as the log row's primary key and the `/logs/<id>` detail page's URL.
-
-### Upgrading from an earlier version
-
-`postgres` is the default store, so a gateway upgraded from a version that
-predates this feature starts writing request logs into its own database as
-soon as it boots on the new code.
-
-The `stdout` driver — one JSON line per request on the container's stdout —
-has been removed. An instance still configured for it logs to `postgres`
-instead, with a banner on `/logs` naming the driver it could not find, until
-the setting is changed. Anything that consumed those lines from container
-logs reads `/logs` (or the `request_logs` table) now.
-
-### Payload capture
-
-Off by default. Turn it on per key on the **API keys** page: the create-key
-dialog has a switch, and an existing key's row menu has a "Turn on/off
-payload logging" action, with a **Payloads** column showing which keys
-currently capture. When on, the gateway stores the exact request and
-response bodies with that key's logs (the assembled completion for a
-streamed response), bounded by the payload cap in Settings › Governance
-(256 KiB by default) — anything larger is stored as a truncated preview.
-This writes prompt and completion content to the database, so treat it the
-way you'd treat any other place that content ends up.
-
-### Retention
-
-Request logs live one partition per calendar month (UTC), keyed off the
-primary key rather than `created_at` — a v7 uuid's leading bytes are a
-millisecond timestamp, so id order is time order and a month boundary is
-expressible as a plain uuid bound. (This is also why the partition key is
-`id`: Postgres requires a partitioned table's partition key in every unique
-constraint, which is what keeps the primary key a bare `id` rather than a
-compound `(id, created_at)`.)
-
-Retention is set in whole months on the **Retention (months)** field in
-Settings › Governance (default `3`). A value of `N` keeps the current month
-and the `N − 1` before it, so the youngest logs are always retained in full,
-however young the current month is; `0` keeps everything. This is coarse by
-construction — there is no way to delete an individual day, or an individual
-row's captured prompt content, ahead of its whole month rolling off.
-
-Retention is enforced by dropping expired partitions outright, not deleting
-rows, once a day. The same maintenance job provisions the current month's
-partition plus the next three months ahead, running at boot and every 24
-hours after, under an advisory lock so only one instance does the work at a
-time. There is no default partition to catch a write for a month nobody has
-provisioned — so a database whose maintenance job has been failing across
-every boot and every daily tick for a full quarter starts refusing to write
-request logs, loudly, in stderr, rather than silently stranding rows outside
-every retention window.
-
-Maintenance runs for every store the gateway knows how to run, not only the
-one currently selected: switching Settings › Governance to another driver does
-not stop the postgres driver from provisioning and dropping partitions in the
-gateway's own database, and any captured prompt or completion content already
-sitting in `request_logs` keeps aging out on the same schedule as before the
-switch.
-
-Boot blocks on this first maintenance run — and if two instances start
-together, the loser blocks on the winner's advisory lock rather than serving
-with no partitions provisioned — so with Postgres unreachable, first-serve is
-delayed by up to two connection timeouts (5s each, ~10s total) before the
-failure is logged and the instance serves anyway. An operator debugging a slow
-container start should look here first.
-
-## Routing
-
-A virtual model holds a list of route targets and the gateway uses all of
-them. `policy` decides the order it tries them in:
+A virtual model holds a list of route targets, and a policy decides the order:
 
 | Policy | Order |
-|---|---|
-| `failover` | Priority order — lowest `priority` first, ties broken by creation time. |
-| `weighted` | A weighted draw without replacement, so the whole chain is weighted rather than just its head. A target with weight `0` or less sorts last; it is never dropped. |
+| --- | --- |
+| `failover` | Priority order, ties broken by creation time. |
+| `weighted` | A weighted draw without replacement — the whole chain is weighted, not just its head. |
 | `round_robin` | The same list, rotated one position per request. |
 
-`max_attempts` bounds the chain. The gateway tries at most
-`min(max_attempts, number of eligible targets)` of them and never tries the
-same target twice.
+Retryable failures (429, 5xx, timeout, connection error) move to the next
+target. Fatal ones (400, 401) stop immediately, because they'd fail the same
+way everywhere. When the chain is exhausted the client gets the last real
+error, not a blanket 502 — three rate-limited targets read as `429`. Streaming
+fails over on the same loop until its first chunk lands.
 
-A **retryable** failure moves to the next target: a 429, a 5xx, a timeout, a
-connection error. A **fatal** one stops immediately and the client sees it —
-a 400 or a 401 would fail the same way at every provider, so spending the
-rest of the chain on it only delays the answer. When the chain is exhausted
-the client gets the last provider's actual error rather than a blanket 502,
-so three rate-limited targets read as `429`. A target whose provider type has
-no adapter yet (`bedrock`) is skipped and the chain continues.
-
-Streaming requests fail over on the same loop, up to their first chunk: the
-response is not committed until that chunk is in hand. After it the response
-is locked to the target that produced it, and a later upstream failure ends
-the stream with an SSE `error` event rather than moving on.
-
-`x-babellm-provider` and `x-babellm-upstream-model` on the response name the
-target that actually served — which under failover is not the first one tried.
+`x-babellm-provider` and `x-babellm-upstream-model` on the response name who
+actually served. Targets can pin a service tier (`flex`, `priority`,
+`ultrafast`, …) where the provider supports one.
 
 ### Direct addressing
 
-A request does not have to go through a virtual model. `<provider>/<model>`
-reaches any model on the **Catalog** page directly:
+Skip the virtual model entirely — `<provider>/<model>` reaches anything in the
+catalog:
 
 ```ts
-client.chat.completions.create({ model: "xai/grok-4.5", messages })
+client.chat.completions.create({ model: "xai/grok-4.5", messages });
 ```
 
-The prefix is the provider's name as it appears on the Providers page, and
-everything after the **first** slash is the model id — so a namespaced model id
-keeps its own slashes (`together/meta-llama/Llama-3-70b`).
+Names resolve as virtual models first, so `xai/grok-4.5` can also be a virtual
+model that shadows the direct route — the supported way to put a policy in
+front of a name your clients already send.
 
-The name is looked up as a virtual model first, and only falls through to a
-direct address when nothing matches. Naming a virtual model `xai/grok-4.5`
-therefore shadows the direct route rather than being unreachable behind it,
-which is the supported way to put a policy in front of a name your clients
-already send.
+### A model catalog that knows the prices
 
-A direct address is one target and one attempt: there is no failover, because
-there is nothing to fail over to. Model ids are checked against the catalog, so
-a typo comes back as `404 model_not_found` without a round trip to the
-provider — sync a provider before addressing its models directly. A model whose
-catalog row is marked *missing* still routes; a disabled provider answers
-`503 no_targets_available`.
+The Catalog page lists every model each provider actually serves, discovered
+from the provider itself and enriched field-by-field:
 
-### API flavor
+| Layer | Source |
+| --- | --- |
+| Override | Anything you edit in the dashboard. Always wins, survives every re-sync. |
+| Discovered | What the provider reported. |
+| Registry | [models.dev](https://models.dev), fetched daily, cached, and toggleable for air-gapped deploys. |
+| Seed | A vendored models.dev snapshot, so a first boot with no network still has context windows and prices. |
 
-Some OpenAI-compatible providers serve `/v1/responses` but not
-`/v1/chat/completions`. Each `openai` or `openai_compatible` provider therefore
-carries an **API flavor** — `Chat Completions` (the default) or `Responses` —
-set on the Providers page. The gateway's own endpoint does not change: clients
-always call `/v1/chat/completions`, and a Responses-flavored provider is
-translated in both directions. A single virtual model can mix the two, and
-failover crosses between them freely.
+Syncing is explicit — per provider, or all at once — and a model that stops
+being returned is marked *missing* rather than deleted, so a provider having a
+bad day can't quietly erase your catalog.
 
-A few things to know before pointing production traffic at a Responses
-provider:
+### Usage, cost, and logs
 
-- **`n` and `stop` are silently ineffective.** The Responses API cannot
-  express them, and the gateway drops unmappable parameters rather than
-  rejecting requests that would otherwise work. Asking for `n: 3` returns one
-  choice, and `stop` sequences do not apply. A dropped parameter that changes
-  the answer is named in the `x-babellm-dropped-params` response header and in
-  the request log line — `logit_bias`, `logprobs`, `top_logprobs`,
-  `frequency_penalty`, `presence_penalty` and `seed` are dropped the same way,
-  as is an `input_audio` content part (reported as `audio_content`). Sending
-  `n: 1`, `frequency_penalty: 0`, `presence_penalty: 0`, `stop: []`,
-  `logprobs: false`, or `logit_bias: {}` is **not** reported — those values
-  already match what the Responses API does on its own, and reporting them
-  would put a line in the header on nearly every request and bury the cases
-  that actually change the answer. An absent header therefore means "nothing
-  that would change the answer was dropped," not "nothing was dropped."
-- **The deprecated functions API is not structurally supported.** A
-  `role: 'function'` message carries only a `name` and no call id, so it
-  cannot become a `function_call_output` the way a `role: 'tool'` message can.
-  The gateway instead carries the result through as a `user` message reading
-  `[function result: <name>] <content>` — `user`, not `developer`, because the
-  content is third-party data and `developer` is a high-authority instruction
-  channel — and reports `legacy_function_message` in the dropped-params
-  header. Use `tools` and `tool_call_id` instead.
-- **A `tool` message without a `tool_call_id` is carried the same way.**
-  `tool_call_id` is optional in the request schema, so a valid request can
-  omit it; emitting a `function_call_output` with a fabricated `call_id`
-  would send a dangling reference upstream, so the result is carried as a
-  `user` message reading `[tool result] <content>` instead, and reports
-  `tool_message_without_call_id` in the dropped-params header.
-- **Reasoning travels one way.** Reasoning summaries are surfaced as
-  `message.reasoning_content` (and `delta.reasoning_content` when streaming) —
-  a de-facto convention rather than part of the OpenAI API — but are never fed
-  back upstream. Requests are stateless: `store` is always `false` and
-  `previous_response_id` is never sent. On models that expect their own
-  reasoning item before a function call, long tool loops may degrade.
+`/dashboard` shows usage, cost, and errors across the gateway: stat tiles with
+period-over-period deltas, time series, and breakdowns by model, key, user, and
+provider — filterable by range, key, user, or model, with **View these
+requests** handing the same filter to `/logs`.
 
-Summaries are requested only when the client sends `reasoning_effort`, because
-asking a non-reasoning model for them is an error. To request them regardless,
-set `requestReasoningSummary: true` in the provider's config.
+It reads an hourly rollup table rather than the raw log, so it stays fast as
+the log grows, and usage history **outlives the log retention window**: a
+month's rows can roll off while its totals live on.
 
-A provider on the wrong flavor fails fast in either direction: a `404` from the
-upstream, whichever flavor is misconfigured, comes back with the error naming
-the setting to change.
+Every request is recorded with its key, model, status, latency, TTFT, token
+counts, cost, and the full attempt chain with each target's failure reason.
+Open any row for the timeline and cost breakdown, or look it up by the
+`x-request-id` the gateway returns.
 
-Two limitations worth planning around:
+<details>
+<summary><b>Payload capture and retention</b></summary>
 
-- **There is no circuit breaker.** A provider that is hard down is re-attempted
-  on every request, so each request pays one wasted upstream call and its
-  timeout before failing over. Failover works; it is just not free.
-- **Round-robin state is per process.** The cursor lives in memory, so running
-  more than one instance skews the distribution — each process starts at zero
-  and they all favour the same target — and a restart resets it.
+**Payload capture is off by default**, and enabled per key from the API keys
+page. When on, the exact request and response bodies are stored with that key's
+logs (the assembled completion for a streamed response), bounded by a
+configurable cap — 256 KiB by default — with anything larger stored as a
+truncated preview. This writes prompt and completion content to your database;
+treat it accordingly.
 
-### Gemini adapter
+**Retention is set in whole months** (default 3) and enforced by dropping
+monthly partitions outright rather than deleting rows. `0` keeps everything. A
+value of `N` keeps the current month and the `N − 1` before it, so the youngest
+logs are always retained in full. It is coarse by construction: there is no way
+to delete an individual day, or one row's captured content, ahead of its whole
+month rolling off.
 
-A `gemini` provider speaks Google's `generateContent` API through the
-`@google/genai` SDK. As with a Responses-flavored provider, the gateway's own
-endpoint does not change: `/v1/chat/completions` stays the only ingress, and
-translation happens in both directions around it.
+Partitions for the current month and three ahead are provisioned at boot and
+every 24 hours after, under an advisory lock so only one instance does the
+work.
 
-A few things to know before pointing production traffic at a Gemini provider:
+</details>
 
-- **System and developer messages are hoisted into `systemInstruction`.**
-  Gemini's `contents` accepts only `user` and `model` turns, so there is
-  nowhere else to put them. This only reorders the conversation when a system
-  message follows the first non-system turn — a client that sends its system
-  message first, as most do, sees no reordering at all — and only then is
-  `system_message_hoisted` named in `x-babellm-dropped-params`.
-- **`reasoning_effort` maps onto Gemini's thinking levels** — `minimal`,
-  `low`, `medium`, `high`, one to one — and thoughts come back the way a
-  Responses provider's reasoning summary does: as `message.reasoning_content`
-  (and `delta.reasoning_content` when streaming), a de-facto convention rather
-  than part of the OpenAI API, and never fed back upstream. Thinking is
-  requested only when the client sends a `reasoning_effort`, unless the
-  provider sets `requestReasoningSummary: true` — the same opt-in the
-  Responses flavor uses, honoured here so one provider setting means one thing
-  across adapters. A `reasoning_effort` value outside the four known levels is
-  dropped and reported as `reasoning_effort`.
-- **Thought signatures are not preserved.** A `functionCall` part's
-  `thoughtSignature` travels out with the response but is never sent back on
-  the next turn — thoughts leave the gateway one-way, the same as a Responses
-  provider's reasoning items. Some of Gemini's newer thinking models are known
-  to treat a returned function call that is missing its signature as a
-  request error, so multi-turn function calling against one of those models
-  may be rejected on the second turn. Prefer a non-thinking model for tool
-  loops until this is carried through.
-- **Model discovery fills in more of the catalog than an OpenAI-shaped
-  provider's model list does.** Syncing a Gemini provider's catalog records
-  each model's context window and maximum output tokens, plus whether it
-  streams and whether it is a chat or embedding model — fields an
-  OpenAI-shaped provider's `/models` response never reports.
+### Rate limits and budgets
 
-Parameters Gemini's `GenerateContentConfig` cannot express are dropped rather
-than rejected, and named in `x-babellm-dropped-params` and the request log
-line the same way a Responses provider's are: `logit_bias`, `logprobs`,
-`top_logprobs`, `parallel_tool_calls`, and `user`. As with Responses, a value
-that already matches what Gemini does by default — `logprobs: false`,
-`parallel_tool_calls: true` — is not reported; `parallel_tool_calls: false`
-is, because Gemini has no way to honour it. A `tool` message whose
-`tool_call_id` cannot be resolved to a function name is carried as a `user`
-message reading `[tool result] <content>` and reports
-`unmatched_tool_call_id`; an assistant tool call whose arguments are not valid
-JSON reports `malformed_tool_arguments`; a content part that is none of text,
-`image_url`, or `video_url` (audio, for instance) reports
-`unsupported_content_part`.
-
-### Images and video
-
-Gemini accepts a caller's media by reference, so an `image_url` or `video_url`
-part is passed straight through as its `fileData.fileUri` — the gateway never
-downloads it. Public HTTPS and pre-signed URLs (S3, GCS, Azure SAS) both work,
-and a `data:` URI is still inlined. Note that external URL input requires
-Gemini 2.5 or newer; an older model will reject it upstream.
-
-Gemini requires a MIME type alongside the URL, which a Chat Completions part
-does not carry, so it is derived from the URL's file extension. For a URL that
-has no usable extension, name it on the part:
-
-```json
-{ "type": "video_url",
-  "video_url": { "url": "https://cdn.example.com/v/9f2b", "mime_type": "video/mp4" } }
-```
-
-`mime_type` is an extension to the OpenAI schema and is accepted on `image_url`
-too. A media URL whose type cannot be determined, or whose type contradicts the
-part it appears in, fails the request with a `400` rather than being dropped —
-answering a question about a video the model never received is worse than
-refusing it.
-
-### Endpoint paths
-
-An `openai` or `openai_compatible` provider asks its upstream for three
-endpoints, and by default appends the paths the OpenAI SDK uses to the
-provider's base URL:
-
-| Endpoint | Default path | Used for |
-| --- | --- | --- |
-| Models | `/models` | catalog sync |
-| Chat completions | `/chat/completions` | requests, when the API flavor is Chat Completions |
-| Responses | `/responses` | requests, when the API flavor is Responses |
-
-A clone that hangs the OpenAI shape off somewhere else can override any of the
-three under **Advanced** on the Providers page. An override is **joined onto the
-base URL**, not substituted for it — the base URL keeps carrying whatever prefix
-it carries today, so a provider based at `https://api.example/v1` with a models
-path of `/api/v2/models` is asked for `https://api.example/v1/api/v2/models`. A
-blank field means the default, which is also how you go back to one.
-
-Paths are stored per provider and normalised on save: a missing leading slash is
-added and a trailing one removed. A full URL is rejected rather than saved,
-because it would be appended rather than replacing the base URL; so is a query
-string, which the SDK sends separately from the path.
-
-## Rate limits and budgets
-
-Every API key can carry an `rpm` limit, a `tpm` limit, a monthly budget, and a
-total budget. A key that exceeds one is rejected with `429` before the request
-reaches a provider. A key with none of them configured is never counted at all
-and costs nothing.
-
-Served responses carry the usual headers, so a client can pace itself instead
-of discovering the limit by being refused:
+Every key can carry an `rpm` limit, a `tpm` limit, a monthly budget, and a
+total budget. Over-limit requests are rejected with `429` before they reach a
+provider — a key with none configured is never counted and costs nothing.
+Served responses carry the usual headers so clients can pace themselves:
 
 ```
 x-ratelimit-limit-requests: 60
@@ -522,146 +194,119 @@ x-ratelimit-remaining-requests: 41
 x-ratelimit-reset-requests: 23
 ```
 
-Rate limits use a sliding window: the current minute in full, plus whatever of
-the previous minute has not yet rolled off. A `429` from a rate limit carries
-`Retry-After`; one from a total budget does not, because a total budget never
-recovers on its own.
+Limits use a sliding window, and a rate-limit `429` carries `Retry-After`.
+Counters live in memory by default; set `REDIS_URL` and every instance shares
+one set that survives a restart. **When the counter store is unreachable the
+gateway serves the request** — a counter blip must not become a gateway outage.
 
-**Where the counters live.** In memory by default — per instance, and gone on
-restart. Set `REDIS_URL` and every instance shares one set of counters that
-survive a restart, provided that Redis persists. The Governance tab reports
-which driver is active and whether it is reachable. Redis Cluster and Sentinel
-are neither implemented nor tested; `REDIS_URL` names one server.
-
-**When the store is unreachable, the gateway serves the request.** Limits stop
-applying for as long as the outage lasts. This is deliberate: a counter store
-blip must not become a gateway outage.
-
-Three things this does not do:
+<details>
+<summary><b>Three things limits deliberately don't do</b></summary>
 
 - **Reserve ahead.** Tokens and cost are only known after a request finishes,
-  so the check is "was this key already over" and the charge comes afterwards.
-  A key can exceed a limit by whatever was in flight when it crossed.
-- **Log rejections.** A limit rejection never reached a provider, and one row
-  per rejected request is the write pattern that would grow fastest exactly
-  when the gateway is under the most stress. Throttling shows up in the Keys
-  page usage column, not in the request log.
-- **Survive a crash mid-rejection.** A rejected request gives back the rpm it
-  counted. If the process dies between the two, that key's window reads one
-  too high until it expires, up to two minutes later.
+  so the check is "was this key already over" and the charge lands afterwards.
+  A key can overshoot by whatever was in flight when it crossed.
+- **Log rejections.** A rejected request never reached a provider, and one row
+  per rejection is the write pattern that grows fastest exactly when the
+  gateway is under most stress. Throttling shows up in the Keys page usage
+  column.
+- **Survive a crash mid-rejection.** A rejection gives back the rpm it counted;
+  if the process dies between the two, that key's window reads one too high
+  until it expires.
 
-## Production deployment
+</details>
 
-The app runs as a Docker image with `next start` — no serverless
-constraints, and it is not built with Next's `standalone` output (the
-migration entrypoint below lives outside Next's build graph, so a
-standalone bundle would not trace its dependencies).
+## Configure
 
-Build the image:
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Postgres connection string. **Required.** |
+| `ENCRYPTION_KEY` | AES-256-GCM key for provider credentials at rest. 64 hex chars — `openssl rand -hex 32`. **Required.** |
+| `ADMIN_PASSWORD` | Shared dashboard password. There is no per-user login. **Required.** |
+| `SESSION_SECRET` | Signs the admin session cookie, 32+ chars. **Required.** |
+| `REDIS_URL` | Shared rpm/tpm/spend counters. Unset means an in-process map. |
+
+Everything else — providers, virtual models, keys, retention, payload caps — is
+configured in the dashboard and stored in Postgres.
+
+> [!IMPORTANT]
+> Don't reuse a fresh `ENCRYPTION_KEY` across environments if you already have
+> encrypted credentials under another one: rotating it makes those rows
+> undecryptable.
+
+## Deploy
+
+The app runs as a plain Docker image with `next start` — no serverless
+constraints, no platform lock-in.
 
 ```bash
 docker build -t babellm-gateway .
-```
 
-Run it against a Postgres instance, with the four required env vars set:
-
-```bash
-docker run -d \
+docker run -d -p 3000:3000 \
   -e DATABASE_URL=postgres://user:pass@host:5432/babellm \
   -e ENCRYPTION_KEY=$(openssl rand -hex 32) \
-  -e ADMIN_PASSWORD=... \
   -e SESSION_SECRET=$(openssl rand -hex 32) \
-  -p 3000:3000 \
+  -e ADMIN_PASSWORD=... \
   babellm-gateway
 ```
 
-**Do not reuse a generated `ENCRYPTION_KEY` between environments if you
-already have encrypted provider credentials under a different key** —
-rotating it makes existing rows undecryptable.
-
-### Health checks
-
-`GET /health/check` answers `200` with a small JSON body for as long as the
-process is serving:
-
-```json
-{ "status": "ok", "uptime": 1423 }
-```
-
-`uptime` is whole seconds since the process started, which tells a container
-that is simply up apart from one that is restart-looping. `HEAD /health/check`
-answers the same status with no body, for balancers that probe with it. The
-endpoint takes no API key and no admin session, so a load balancer reaches it
-directly, and it is never cached.
-
-It is a **liveness** check, not a readiness one: it reports that this instance
-is running, not that Postgres or the counter store is reachable. That is
-deliberate — those are shared by every instance, so failing the probe when one
-of them blips would pull the whole fleet out of rotation at once and turn a
-degraded gateway into an unreachable one. Watch the dependencies through
-monitoring instead: an instance that answers `/health/check` can still be
-failing requests.
-
-### Migrations
-
-The container's entrypoint runs migrations before starting the server, so a
-fresh deploy migrates itself. To run migrations by hand (e.g. against a
-staging database, without starting the app) — `drizzle-kit` is a
-devDependency and is not present in the production image, so this uses a
-plain script instead:
+The entrypoint migrates the database before serving, so a fresh deploy sets
+itself up. To migrate by hand — `drizzle-kit` isn't in the production image:
 
 ```bash
 DATABASE_URL=... node scripts/migrate.mjs
 ```
 
-or, from a full checkout with devDependencies installed, the drizzle-kit
-equivalents used in development: `pnpm db:generate` (create a migration from
-schema changes) and `pnpm db:migrate` (apply pending migrations).
+**Health checks.** `GET /health/check` (and `HEAD`) answers `200` with
+`{ "status": "ok", "uptime": 1423 }` for as long as the process is serving. No
+API key, no session, never cached. It is a *liveness* check by design: failing
+it when a shared dependency blips would pull every instance out of rotation at
+once. Watch Postgres and Redis through monitoring instead.
 
-**This release's migration is not backward-compatible with the previous
-build.** It drops `api_keys.spend_total_usd`, which the previous build's
-`resolveApiKey` still selects by name; an old instance still serving traffic
-once the migration lands 500s on every authenticated request. Deploy the
-migration and the new build together, not as a rolling overlap.
+## Status
 
-## Not yet implemented
+This is a real gateway — the `openai` SDK talks to it end to end, with
+streaming, tool calls, and policy-driven routing across every target — built in
+phases. What's still missing:
 
-Phases 1 and 2 cover the schema, admin auth, provider/virtual-model/key CRUD,
-the model catalog, the `openai` and `openai_compatible` adapters in both API
-flavors, and `/v1/chat/completions` with streaming, tool calling, and
-policy-driven routing across every route target. Everything below is
-**recorded but not yet acted on**, or not built at all:
-
-- **No `/v1/responses` endpoint.** Responses-flavored *providers* are
-  supported; a Responses-shaped *client* is not. Everything enters through
+- **No `/v1/responses` endpoint.** Responses-flavored *providers* work; a
+  Responses-shaped *client* doesn't. Everything enters through
   `/v1/chat/completions`.
-- **Spend counters are volatile.** They live in the counter store and nowhere
-  else — see [Rate limits and budgets](#rate-limits-and-budgets). Without
-  `REDIS_URL`, a restart sets every key's spend back to zero, so
-  `budget_total_usd` means "spend since this process started". Budgets survive
-  a restart only against a Redis configured to persist. Deleting a key while
-  the counter store is unreachable also orphans that key's total-spend
-  counter forever, since there is no retry and no sweep to clear it later.
-- **No circuit breaker.** Routing tries every policy's chain on every
-  request, so a provider that is down costs one wasted attempt each time
-  rather than being taken out of rotation. See [Routing](#routing).
-- **No Bedrock adapter, no `/v1/models`, no `/v1/embeddings`** (Phase 3).
-  Configuring a `bedrock` provider is accepted by the dashboard but every
-  request to it returns `501 unsupported_operation`.
-- **A Gemini provider hands caller-supplied media URLs to Google.** An
-  `image_url` or `video_url` is forwarded by reference rather than downloaded,
-  so a pre-signed URL and whatever credential its query string carries are
-  passed to Google to dereference. Retrieval failures — unreachable, behind a
-  login, or refused by Google's content-moderation check on the URL — surface
-  as an upstream error rather than a gateway one. Media on a Gemini target
-  older than 2.5 fails upstream, because external URL input is not supported
-  there.
-- **Retention is coarse: whole calendar months, never individual days.** See
-  [Retention](#retention). Prompt and completion content captured by a key
-  with payload logging enabled survives until its whole month rolls off.
+- **No circuit breaker.** A provider that is hard down is re-attempted every
+  request, so each one pays a wasted call and its timeout before failing over.
+- **Spend counters are volatile** without `REDIS_URL` — a restart resets each
+  key's total spend to zero.
+- **Round-robin state is per process**, so multiple instances skew the
+  distribution.
+- **No Bedrock adapter, no `/v1/models`, no `/v1/embeddings`.** A `bedrock`
+  provider is accepted by the dashboard but returns `501`.
+- **Reasoning travels one way.** Reasoning summaries and Gemini thoughts are
+  surfaced as `reasoning_content` but never fed back upstream, so long tool
+  loops on models that expect their own reasoning items may degrade.
 
-## Learn more
+Parameters a provider's API can't express are dropped rather than rejected, and
+named in the `x-babellm-dropped-params` response header and the request log —
+so a dropped `n` or `stop` on a Responses provider is visible, not silent.
 
-The full design — data model, request lifecycle, provider translation
-details, and the phase breakdown — is in
-[`docs/superpowers/specs/2026-08-11-babellm-gateway-design.md`](docs/superpowers/specs/2026-08-11-babellm-gateway-design.md).
+## Contributing
+
+Requires Node, pnpm, and Docker.
+
+```bash
+pnpm install
+docker compose up -d      # Postgres on 5432
+pnpm db:migrate
+pnpm dev                  # dashboard + gateway on :3000
+```
+
+Tests run against a disposable Postgres on 5434 — never the dev database:
+
+```bash
+pnpm test:db:up
+cp .env.test.example .env.test
+pnpm test
+```
+
+See [AGENTS.md](AGENTS.md) for conventions, and
+[`docs/superpowers/specs/2026-08-11-babellm-gateway-design.md`](docs/superpowers/specs/2026-08-11-babellm-gateway-design.md)
+for the full design: data model, request lifecycle, and provider translation
+details.
