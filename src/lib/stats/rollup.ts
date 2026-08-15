@@ -162,7 +162,7 @@ async function inTransaction(
   }
 }
 
-export const ROLLUP_TICK_MS = 60_000
+export const ROLLUP_TICK_MS = 900_000 // 15 minutes
 
 let timer: NodeJS.Timeout | null = null
 
