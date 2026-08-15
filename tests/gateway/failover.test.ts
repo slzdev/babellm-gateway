@@ -169,9 +169,12 @@ test('an unimplemented adapter type is skipped rather than failing the model', a
 })
 
 test('round robin spreads successive requests across targets', async () => {
+  // Both at the same priority: they are alternatives to spread across, which
+  // is what round robin is for. Giving them distinct priorities would make
+  // them two tiers of one, and a tier of one has nothing to rotate.
   const { apiKey } = await seedTargets({
     policy: 'round_robin',
-    targets: [{ name: 'a', priority: 0 }, { name: 'b', priority: 1 }],
+    targets: [{ name: 'a', priority: 0 }, { name: 'b', priority: 0 }],
   })
   const deps = fakeAdapterByProvider({
     a: { chat: vi.fn().mockResolvedValue(completion('a')) },
@@ -235,6 +238,95 @@ test('a stream that fails before its first chunk fails over silently', async () 
   const text = await res.text()
   expect(parseSseChunks(text)).toHaveLength(1)
   expect(sseTerminated(text)).toBe(true)
+})
+
+// Priority tiers under a weighted policy: a cheap first tier, then a
+// redundant tier the weights spread across. The unit tests in
+// tests/lib/gateway/select.test.ts pin the ordering with an injected roll;
+// these two check the whole request path honours it.
+
+test('a weighted model always tries its lowest priority tier first', async () => {
+  // The tier-1 weights dwarf the flex target's, so without tiering the
+  // weighted draw would put flex first roughly one request in two thousand.
+  const { apiKey } = await seedTargets({
+    policy: 'weighted',
+    targets: [
+      { name: 'flex', priority: 0, weight: 1, serviceTier: 'flex' },
+      { name: 'groq', priority: 1, weight: 1000 },
+      { name: 'bedrock', priority: 1, weight: 1000 },
+    ],
+  })
+  const adapters = {
+    flex: { chat: vi.fn().mockResolvedValue(completion('flex')) },
+    groq: { chat: vi.fn().mockResolvedValue(completion('groq')) },
+    bedrock: { chat: vi.fn().mockResolvedValue(completion('bedrock')) },
+  }
+
+  const served: (string | null)[] = []
+  for (let i = 0; i < 5; i += 1) {
+    const res = await handleChatCompletions(
+      chatRequest(body, apiKey),
+      fakeAdapterByProvider(adapters),
+    )
+    served.push(res.headers.get('x-babellm-provider'))
+  }
+
+  expect(served).toEqual(['flex', 'flex', 'flex', 'flex', 'flex'])
+  expect(adapters.groq.chat).not.toHaveBeenCalled()
+  expect(adapters.bedrock.chat).not.toHaveBeenCalled()
+})
+
+test('round robin rotates within a tier and keeps the tiers in order', async () => {
+  const { apiKey } = await seedTargets({
+    policy: 'round_robin',
+    targets: [
+      { name: 'a', priority: 0 }, { name: 'b', priority: 0 },
+      { name: 'spare', priority: 1 },
+    ],
+  })
+  const deps = fakeAdapterByProvider({
+    a: { chat: vi.fn().mockResolvedValue(completion('a')) },
+    b: { chat: vi.fn().mockResolvedValue(completion('b')) },
+    spare: { chat: vi.fn().mockResolvedValue(completion('spare')) },
+  })
+
+  const served = []
+  for (let i = 0; i < 3; i += 1) {
+    const res = await handleChatCompletions(chatRequest(body, apiKey), deps)
+    served.push(res.headers.get('x-babellm-provider'))
+  }
+
+  // The rotation stays inside tier 0; the spare is a fallback, not a third
+  // slot in the cycle.
+  expect(served).toEqual(['a', 'b', 'a'])
+})
+
+test('a failing tier cascades into the weighted tier below it', async () => {
+  const { apiKey } = await seedTargets({
+    policy: 'weighted',
+    targets: [
+      { name: 'flex', priority: 0, weight: 1, serviceTier: 'flex' },
+      { name: 'groq', priority: 1, weight: 1000 },
+      { name: 'bedrock', priority: 1, weight: 1000 },
+    ],
+  })
+  const flex = vi.fn().mockRejectedValue(apiError(429))
+  const groq = vi.fn().mockResolvedValue(completion('groq'))
+  const bedrock = vi.fn().mockResolvedValue(completion('bedrock'))
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterByProvider({
+      flex: { chat: flex }, groq: { chat: groq }, bedrock: { chat: bedrock },
+    }),
+  )
+
+  expect(res.status).toBe(200)
+  expect(flex).toHaveBeenCalled()
+  // Which of the two serves it is the weighted draw's business; that one of
+  // them does, on the attempt after flex, is the tier's.
+  expect(res.headers.get('x-babellm-provider')).toMatch(/^(groq|bedrock)$/)
+  expect(groq.mock.calls.length + bedrock.mock.calls.length).toBe(1)
 })
 
 test('a stream that fails after its first chunk is not failed over', async () => {

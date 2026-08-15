@@ -12,10 +12,13 @@ import { Switch } from '@/components/ui/switch'
 import type { RoutingPolicy, VirtualModelListItem } from '@/lib/admin/models'
 import { updateModelAction, type ActionState } from '../actions'
 
+// Priority always groups the targets into tiers and the tiers are always tried
+// lowest-first; the policy only orders the targets inside one. The hints say
+// "within a priority" so the two columns don't read as rival orderings.
 const POLICIES: Array<{ value: RoutingPolicy; label: string; hint: string }> = [
   { value: 'failover', label: 'failover', hint: 'Try targets in priority order, falling through on failure.' },
-  { value: 'weighted', label: 'weighted', hint: 'Spread requests across targets in proportion to their weight.' },
-  { value: 'round_robin', label: 'round_robin', hint: 'Take each enabled target in turn.' },
+  { value: 'weighted', label: 'weighted', hint: 'Within a priority, spread requests in proportion to weight. Lower priorities are tried first.' },
+  { value: 'round_robin', label: 'round_robin', hint: 'Within a priority, take each enabled target in turn. Lower priorities are tried first.' },
 ]
 
 export function SettingsForm({ model }: { model: VirtualModelListItem }) {

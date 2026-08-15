@@ -81,7 +81,9 @@ export default async function ModelDetailPage({
         <CardHeader className="border-b">
           <CardTitle>Route targets</CardTitle>
           <CardDescription>
-            The upstream models this one routes to, in priority order.
+            The upstream models this one routes to. Targets sharing a priority
+            are tried together, in the order the policy sets; lower priorities
+            are tried first.
           </CardDescription>
           {providers.length > 0 ? (
             <CardAction>

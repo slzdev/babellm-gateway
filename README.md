@@ -95,13 +95,31 @@ both directions.
 
 ### Routing that earns its keep
 
-A virtual model holds a list of route targets, and a policy decides the order:
+A virtual model holds a list of route targets, and two independent columns
+decide the order they're tried in.
 
-| Policy | Order |
+`priority` groups targets into **tiers**, always walked lowest-number first:
+every target in a tier is tried before the next tier is touched. `policy`
+orders the targets *inside* a tier:
+
+| Policy | Order inside a tier |
 | --- | --- |
-| `failover` | Priority order, ties broken by creation time. |
-| `weighted` | A weighted draw without replacement — the whole chain is weighted, not just its head. |
-| `round_robin` | The same list, rotated one position per request. |
+| `failover` | Creation time, oldest first. |
+| `weighted` | A weighted draw without replacement — the whole tier is weighted, not just its head. |
+| `round_robin` | The tier, rotated one position per request. |
+
+So "try my cheap flex capacity first, then spread the fallback across two
+providers" is three rows and a `weighted` policy:
+
+| Target | Service tier | Priority | Weight |
+| --- | --- | --- | --- |
+| `groq/gpt-oss-120b` | `flex` | 0 | 100 |
+| `groq/gpt-oss-120b` | — | 1 | 50 |
+| `bedrock/openai.gpt-oss-120b` | — | 1 | 50 |
+
+Targets default to priority `0` — a single tier, and the plain policy
+behaviour. `max_attempts` caps the flattened chain, so a first tier bigger
+than it starves the tiers behind it.
 
 Retryable failures (429, 5xx, timeout, connection error) move to the next
 target. Fatal ones (400, 401) stop immediately, because they'd fail the same

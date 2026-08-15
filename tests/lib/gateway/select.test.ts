@@ -215,3 +215,117 @@ test('failover and weighted never touch the cursor', () => {
     }),
   ).not.toThrow()
 })
+
+// Priority splits the eligible targets into tiers. The policy orders targets
+// *within* a tier; tiers themselves always run lowest-priority-first, so a
+// cheap or experimental tier can be tried before falling back to a redundant
+// one. Every candidate defaulting to priority 0 leaves a single tier, which is
+// why all the tests above still describe the whole chain.
+
+test('weighted draws within a tier and never promotes across one', () => {
+  // One flex target at priority 0, two default-tier targets at priority 1.
+  // Whatever the roll, the flex target is attempted first.
+  const targets = [
+    candidate('flex', 100, 0),
+    candidate('groq', 50, 1),
+    candidate('bedrock', 50, 1),
+  ]
+  const weighted = model({ policy: 'weighted', maxAttempts: 3 })
+
+  // Tier 1 totals 100, so buckets are groq=[0,50) bedrock=[50,100).
+  expect(names(selectOrder(targets, weighted, { random: rolls(0.9) })))
+    .toEqual(['flex', 'bedrock', 'groq'])
+  expect(names(selectOrder(targets, weighted, { random: rolls(0.1) })))
+    .toEqual(['flex', 'groq', 'bedrock'])
+})
+
+test('a weighted tier is exhausted before the next tier is tried', () => {
+  const chain = selectOrder(
+    [candidate('a', 50, 0), candidate('b', 50, 0), candidate('c', 100, 1)],
+    model({ policy: 'weighted', maxAttempts: 3 }),
+    { random: rolls(0.9) },
+  )
+  expect(names(chain).slice(0, 2).sort()).toEqual(['a', 'b'])
+  expect(names(chain).at(-1)).toBe('c')
+})
+
+test('a zero-weight target sinks to the end of its own tier, not of the chain', () => {
+  // Sinking it past a higher-priority tier would invert the tier order that
+  // priority exists to express.
+  const chain = selectOrder(
+    [candidate('cheap', 0, 0), candidate('a', 50, 0), candidate('b', 100, 1)],
+    model({ policy: 'weighted', maxAttempts: 3 }),
+    { random: rolls(0.5) },
+  )
+  expect(names(chain)).toEqual(['a', 'cheap', 'b'])
+})
+
+test('round robin rotates inside each tier rather than across the whole list', () => {
+  const targets = [
+    candidate('a', 100, 0), candidate('b', 100, 0),
+    candidate('c', 100, 1), candidate('d', 100, 1),
+  ]
+  const rr = model({ policy: 'round_robin', maxAttempts: 4 })
+
+  expect(names(selectOrder(targets, rr, { nextCursor: cursorOf(0) })))
+    .toEqual(['a', 'b', 'c', 'd'])
+  expect(names(selectOrder(targets, rr, { nextCursor: cursorOf(1) })))
+    .toEqual(['b', 'a', 'd', 'c'])
+})
+
+test('round robin reads the cursor once per request however many tiers there are', () => {
+  // Reading it per tier would advance the rotation several steps per request,
+  // so a two-tier model would cycle at a different rate from a one-tier one.
+  let reads = 0
+  selectOrder(
+    [candidate('a', 100, 0), candidate('b', 100, 1), candidate('c', 100, 2)],
+    model({ policy: 'round_robin', maxAttempts: 3 }),
+    { nextCursor: () => { reads += 1; return 1 } },
+  )
+  expect(reads).toBe(1)
+})
+
+test('round robin rotates a tier by its own length', () => {
+  // A cursor of 1 has nothing to rotate in a single-target tier; the longer
+  // tier still advances.
+  const chain = selectOrder(
+    [candidate('solo', 100, 0), candidate('a', 100, 1), candidate('b', 100, 1)],
+    model({ policy: 'round_robin', maxAttempts: 3 }),
+    { nextCursor: cursorOf(1) },
+  )
+  expect(names(chain)).toEqual(['solo', 'b', 'a'])
+})
+
+test('failover with distinct priorities is the flat list it always was', () => {
+  // Grouping then concatenating must be a no-op here: failover leaves each
+  // tier in the (priority, createdAt, id) order resolveVirtualModel supplied.
+  const chain = selectOrder(
+    [candidate('a', 100, 0), candidate('b', 100, 1), candidate('c', 100, 2)],
+    model({ policy: 'failover', maxAttempts: 3 }),
+  )
+  expect(names(chain)).toEqual(['a', 'b', 'c'])
+})
+
+test('max_attempts can cut the chain before a later tier is ever reached', () => {
+  // Tier order does not buy a tier an attempt: the cap still applies to the
+  // flattened chain, so a fat first tier starves the fallback tier.
+  const chain = selectOrder(
+    [
+      candidate('a', 100, 0), candidate('b', 100, 0), candidate('c', 100, 0),
+      candidate('fallback', 100, 1),
+    ],
+    model({ policy: 'failover', maxAttempts: 3 }),
+  )
+  expect(names(chain)).toEqual(['a', 'b', 'c'])
+})
+
+test('negative priorities tier ahead of the default', () => {
+  // priority is a bare integer column and accepts negatives, which is the
+  // natural way to put a target in front of everything already configured.
+  const chain = selectOrder(
+    [candidate('urgent', 100, -1), candidate('normal', 100, 0)],
+    model({ policy: 'weighted', maxAttempts: 2 }),
+    { random: rolls(0.5) },
+  )
+  expect(names(chain)).toEqual(['urgent', 'normal'])
+})
