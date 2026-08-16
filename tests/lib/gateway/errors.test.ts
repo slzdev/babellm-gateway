@@ -45,7 +45,7 @@ test('errorResponse maps an unknown error to a 500 without leaking details', asy
   expect(consoleError).toHaveBeenCalled()
 })
 
-test.each([undefined, 408, 409, 429, 500, 502, 503, 504])(
+test.each([undefined, 408, 409, 429, 498, 500, 502, 503, 504])(
   'status %s is retryable',
   (status) => {
     const err = status === undefined ? new OpenAI.APIConnectionError({}) : apiError(status)

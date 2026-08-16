@@ -1,10 +1,12 @@
 import { ApiError } from '@google/genai'
 import { ProviderError } from '@/lib/gateway/errors'
 
-// The same three statuses the OpenAI classifier treats as worth another
-// provider: transport-ish rather than a rejection of the request, plus the one
-// status where retrying elsewhere is exactly right.
-const RETRYABLE_STATUSES = new Set([408, 409, 429])
+// The same four statuses the OpenAI classifier treats as worth another
+// provider: transport-ish rather than a rejection of the request, the one
+// status where retrying elsewhere is exactly right, and the non-standard 498
+// for an expired or invalid token, which is a per-target credential problem a
+// sibling holding its own key may not share.
+const RETRYABLE_STATUSES = new Set([408, 409, 429, 498])
 
 // A 404 from Gemini is a model id it does not recognise, which is the single
 // most likely mistake here: ids move fast, and a catalog synced weeks ago can

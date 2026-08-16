@@ -48,6 +48,23 @@ test('failover walks to the next target when the first is retryably down', async
   expect((await res.json()).choices[0].message.content).toBe('backup')
 })
 
+test('a 498 expired token on the first target falls through to the next', async () => {
+  const { apiKey } = await seedTargets({
+    targets: [{ name: 'primary', priority: 0 }, { name: 'backup', priority: 1 }],
+  })
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterByProvider({
+      primary: { chat: vi.fn().mockRejectedValue(apiError(498, 'token expired')) },
+      backup: { chat: vi.fn().mockResolvedValue(completion('backup')) },
+    }),
+  )
+
+  expect(res.status).toBe(200)
+  expect((await res.json()).choices[0].message.content).toBe('backup')
+})
+
 test('the response headers name the target that actually served', async () => {
   const { apiKey } = await seedTargets({
     targets: [{ name: 'primary', priority: 0 }, { name: 'backup', priority: 1 }],

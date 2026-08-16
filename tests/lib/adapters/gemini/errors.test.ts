@@ -3,7 +3,7 @@ import { ApiError } from '@google/genai'
 import { toProviderError } from '@/lib/adapters/gemini/errors'
 import { ProviderError } from '@/lib/gateway/errors'
 
-test.each([408, 409, 429, 500, 502, 503, 504])('status %s maps to retryable', (status) => {
+test.each([408, 409, 429, 498, 500, 502, 503, 504])('status %s maps to retryable', (status) => {
   expect(toProviderError(new ApiError({ message: 'boom', status })).retryable).toBe(true)
 })
 

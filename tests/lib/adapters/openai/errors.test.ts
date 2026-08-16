@@ -10,12 +10,20 @@ function apiError(status: number, message = 'boom') {
   return new OpenAI.APIError(status, { message, code: 'x' }, message, undefined)
 }
 
-test.each([408, 409, 429, 500, 502, 503, 504])('status %s maps to retryable', (status) => {
+test.each([408, 409, 429, 498, 500, 502, 503, 504])('status %s maps to retryable', (status) => {
   expect(toProviderError(apiError(status)).retryable).toBe(true)
 })
 
 test.each([400, 401, 403, 404, 413, 422, 499])('status %s maps to fatal', (status) => {
   expect(toProviderError(apiError(status)).retryable).toBe(false)
+})
+
+// 498 is an expired/invalid token on *this* target, so the next target in the
+// chain — a different key, possibly a different provider — deserves a turn.
+// 499 sits next to it numerically and is the opposite: the client hung up.
+test('a 498 fails over while its neighbour 499 does not', () => {
+  expect(toProviderError(apiError(498, 'token expired')).retryable).toBe(true)
+  expect(toProviderError(apiError(499, 'client closed request')).retryable).toBe(false)
 })
 
 test('a connection error with no status is retryable as a 502', () => {

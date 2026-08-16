@@ -3,10 +3,13 @@ import { ProviderError } from '@/lib/gateway/errors'
 
 // 408 and 409 are transport-ish rather than a rejection of the request, and
 // 429 is the one status where retrying against a *different* provider is
-// exactly the right move. Everything else below 500 is the provider telling
-// us the request itself is wrong, which another provider would only reject
+// exactly the right move. 498 is non-standard, and OpenAI-compatible stacks
+// that emit it mean an expired or invalid token — this target's credential
+// problem rather than the request's, so a sibling target holding its own key
+// is worth trying. Everything else below 500 is the provider telling us the
+// request itself is wrong, which another provider would only reject
 // differently.
-const RETRYABLE_STATUSES = new Set([408, 409, 429])
+const RETRYABLE_STATUSES = new Set([408, 409, 429, 498])
 
 /**
  * Interprets an OpenAI SDK failure so the routing loop does not have to.

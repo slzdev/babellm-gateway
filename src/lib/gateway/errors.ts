@@ -69,7 +69,9 @@ export interface ClassifiedError {
   message: string
 }
 
-const RETRYABLE_STATUSES = new Set([408, 409, 429])
+// Kept in step with the per-adapter sets in `adapters/*/errors.ts`; see the
+// comment there for why each status earns another target.
+const RETRYABLE_STATUSES = new Set([408, 409, 429, 498])
 
 export function classifyProviderError(err: unknown): ClassifiedError {
   // Already interpreted by its adapter. Everything below this line is the
