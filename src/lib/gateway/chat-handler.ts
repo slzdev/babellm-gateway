@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { createAdapter as defaultCreateAdapter, resolveApiFlavor } from '@/lib/adapters/registry'
+import { createAdapter as defaultCreateAdapter } from '@/lib/adapters/registry'
 import type { ProviderAdapter } from '@/lib/adapters/types'
 import type { ProviderRow } from '@/lib/db/schema'
 import { chatCompletionRequestSchema, type ChatCompletionRequest } from '@/lib/schemas/chat'
@@ -9,7 +9,6 @@ import { capPayload } from '@/lib/logs/payload'
 import type { LogPayload, LogUsage, RequestOutcome } from '@/lib/logs/types'
 import { computeCost, priceFor } from '@/lib/pricing'
 import { droppedParams as geminiDroppedParams } from '@/lib/translate/chat-to-gemini'
-import { droppedParams } from '@/lib/translate/chat-to-responses'
 import { uuidv7 } from '@/lib/uuid'
 import {
   LimitExceededError, chargeUsage, checkLimits, rateLimitHeaders, type KeyLimits,
@@ -82,11 +81,10 @@ function bodyFor(candidate: Candidate, body: ChatCompletionRequest): ChatComplet
  * interface every future adapter implements.
  */
 function droppedFor(candidate: Candidate, body: ChatCompletionRequest): string[] {
-  // Adapter first, then flavor: a gemini provider has an api_flavor column like
-  // every other row, but its adapter ignores it and the provider form hides the
-  // selector, so reading flavor here would report the wrong protocol's losses.
+  // Only Gemini translates today: the OpenAI-shaped adapters forward the
+  // request as sent, so there is nothing they can fail to express.
   if (candidate.provider.adapter === 'gemini') return geminiDroppedParams(body)
-  return resolveApiFlavor(candidate.provider) === 'responses' ? droppedParams(body) : []
+  return []
 }
 
 export function attemptHeaders(

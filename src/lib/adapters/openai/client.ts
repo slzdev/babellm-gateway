@@ -15,10 +15,6 @@ interface OpenAICredentials {
   project?: string
 }
 
-/**
- * Both flavors authenticate identically and differ only in which endpoint they
- * call, so client construction is shared rather than duplicated per adapter.
- */
 export function createOpenAIClient(
   runtime: ProviderRuntime,
   factory: OpenAIClientFactory = defaultFactory,
@@ -38,10 +34,6 @@ export function createOpenAIClient(
 }
 
 /**
- * `GET /v1/models` is a third endpoint, served by Chat Completions and
- * Responses providers alike, so model discovery is identical for both flavors
- * and the catalog never has to know which one it is talking to.
- *
  * `path` overrides the one the SDK hardcodes for this resource; the caller
  * resolves it because only the adapter holds the provider's config.
  */

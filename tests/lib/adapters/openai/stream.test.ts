@@ -5,7 +5,7 @@ import fixture from '../../../fixtures/openai-tool-call-stream.json'
 
 const runtime: ProviderRuntime = {
   id: 'p1', name: 'openai-prod', adapter: 'openai', baseUrl: null,
-  credentials: { apiKey: 'sk-test' }, config: {}, apiFlavor: 'chat_completions',
+  credentials: { apiKey: 'sk-test' }, config: {},
 }
 
 const ctx = {

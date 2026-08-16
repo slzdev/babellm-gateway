@@ -9,7 +9,6 @@ import type { ProviderConfig } from '../types'
 export const DEFAULT_PATHS = {
   models: '/models',
   chatCompletions: '/chat/completions',
-  responses: '/responses',
 } as const
 
 export type ProviderPaths = { -readonly [K in keyof typeof DEFAULT_PATHS]: string }
@@ -18,14 +17,13 @@ export type ProviderPaths = { -readonly [K in keyof typeof DEFAULT_PATHS]: strin
 const CONFIG_KEYS: Record<keyof ProviderPaths, string> = {
   models: 'modelsPath',
   chatCompletions: 'chatCompletionsPath',
-  responses: 'responsesPath',
 }
 
 /**
- * The one description of these three fields, read by the provider forms to
- * render them and by the server actions to collect them. Keeping the list here
- * rather than in the form is what stops a fourth endpoint from having to be
- * added in three places.
+ * The one description of these fields, read by the provider forms to render
+ * them and by the server actions to collect them. Keeping the list here rather
+ * than in the form is what stops a third endpoint from having to be added in
+ * three places.
  */
 export const PATH_FIELDS = [
   {
@@ -38,13 +36,7 @@ export const PATH_FIELDS = [
     name: 'chatCompletionsPath',
     label: 'Chat completions path',
     placeholder: DEFAULT_PATHS.chatCompletions,
-    help: 'Used when the API flavor is Chat Completions.',
-  },
-  {
-    name: 'responsesPath',
-    label: 'Responses path',
-    placeholder: DEFAULT_PATHS.responses,
-    help: 'Used when the API flavor is Responses.',
+    help: 'Where this provider serves chat completions.',
   },
 ] as const
 
@@ -136,6 +128,5 @@ export function resolveProviderPaths(config: ProviderConfig): ProviderPaths {
   return {
     models: resolve('models'),
     chatCompletions: resolve('chatCompletions'),
-    responses: resolve('responses'),
   }
 }

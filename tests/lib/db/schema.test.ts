@@ -100,19 +100,14 @@ test('deleting a user leaves its keys with a null user_id', async () => {
   expect(key.userId).toBeNull()
 })
 
-test('a provider defaults to the chat_completions flavor', async () => {
+// api_flavor is retired: nothing reads or writes it, and it survives only so a
+// deployment still running the previous release keeps a column it inserts
+// into. This asserts it is still there with its default — the guard against a
+// generated migration quietly dropping it before that release is gone.
+test('the retired api_flavor column still exists and defaults', async () => {
   const [row] = await db.insert(providers).values({
     name: 'legacy', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
   }).returning()
 
   expect(row.apiFlavor).toBe('chat_completions')
-})
-
-test('a provider can be stored with the responses flavor', async () => {
-  const [row] = await db.insert(providers).values({
-    name: 'resp', adapter: 'openai_compatible', baseUrl: 'https://api.example/v1',
-    credentials: encryptJson({ apiKey: 'a' }), apiFlavor: 'responses',
-  }).returning()
-
-  expect(row.apiFlavor).toBe('responses')
 })

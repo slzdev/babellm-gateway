@@ -9,7 +9,6 @@ const runtime: ProviderRuntime = {
   baseUrl: null,
   credentials: { apiKey: 'g-key' },
   config: {},
-  apiFlavor: 'chat_completions',
 }
 
 const ctx = { signal: new AbortController().signal }

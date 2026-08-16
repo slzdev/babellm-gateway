@@ -22,7 +22,7 @@ describe('parseProviderPath', () => {
   })
 
   test('drops surrounding whitespace and a trailing slash', () => {
-    expect(parseProviderPath('  /openai/v1/responses/  ')).toBe('/openai/v1/responses')
+    expect(parseProviderPath('  /openai/v1/chat/  ')).toBe('/openai/v1/chat')
   })
 
   test('collapses a repeated leading slash rather than building a protocol-relative URL', () => {
@@ -47,12 +47,10 @@ describe('resolveProviderPaths', () => {
     expect(resolveProviderPaths({})).toEqual({
       models: '/models',
       chatCompletions: '/chat/completions',
-      responses: '/responses',
     })
     expect(DEFAULT_PATHS).toEqual({
       models: '/models',
       chatCompletions: '/chat/completions',
-      responses: '/responses',
     })
   })
 
@@ -60,19 +58,16 @@ describe('resolveProviderPaths', () => {
     expect(resolveProviderPaths({ chatCompletionsPath: '/api/v2/chat' })).toEqual({
       models: '/models',
       chatCompletions: '/api/v2/chat',
-      responses: '/responses',
     })
   })
 
-  test('reads all three overrides together', () => {
+  test('reads both overrides together', () => {
     expect(resolveProviderPaths({
       modelsPath: '/api/models',
       chatCompletionsPath: '/api/chat',
-      responsesPath: '/api/responses',
     })).toEqual({
       models: '/api/models',
       chatCompletions: '/api/chat',
-      responses: '/api/responses',
     })
   })
 
@@ -82,22 +77,20 @@ describe('resolveProviderPaths', () => {
 
   test('ignores a non-string or unusable stored value instead of building a broken URL', () => {
     expect(resolveProviderPaths({ modelsPath: 42 as never }).models).toBe('/models')
-    expect(resolveProviderPaths({ responsesPath: '' }).responses).toBe('/responses')
-    expect(resolveProviderPaths({ responsesPath: 'https://x/y' }).responses).toBe('/responses')
+    expect(resolveProviderPaths({ chatCompletionsPath: '' }).chatCompletions)
+      .toBe('/chat/completions')
+    expect(resolveProviderPaths({ chatCompletionsPath: 'https://x/y' }).chatCompletions)
+      .toBe('/chat/completions')
   })
 })
 
 describe('PATH_FIELDS', () => {
   test('describes each endpoint once, keyed by the config key it writes', () => {
-    expect(PATH_FIELDS.map((f) => f.name)).toEqual([
-      'modelsPath', 'chatCompletionsPath', 'responsesPath',
-    ])
+    expect(PATH_FIELDS.map((f) => f.name)).toEqual(['modelsPath', 'chatCompletionsPath'])
   })
 
   test('carries the default as the placeholder, so a blank box reads as "default"', () => {
-    expect(PATH_FIELDS.map((f) => f.placeholder)).toEqual([
-      '/models', '/chat/completions', '/responses',
-    ])
+    expect(PATH_FIELDS.map((f) => f.placeholder)).toEqual(['/models', '/chat/completions'])
   })
 })
 
@@ -127,8 +120,8 @@ describe('mergeProviderPaths', () => {
   test('leaves config keys no form exposes untouched', () => {
     expect(mergeProviderPaths(
       { timeoutMs: 5000, registryNamespace: 'xai' },
-      { responsesPath: '/api/responses' },
-    )).toEqual({ timeoutMs: 5000, registryNamespace: 'xai', responsesPath: '/api/responses' })
+      { chatCompletionsPath: '/api/chat' },
+    )).toEqual({ timeoutMs: 5000, registryNamespace: 'xai', chatCompletionsPath: '/api/chat' })
   })
 
   test('does not mutate the config it was handed', () => {

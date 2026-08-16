@@ -9,7 +9,6 @@ const runtime: ProviderRuntime = {
   baseUrl: null,
   credentials: { apiKey: 'sk-test', organization: 'org-1' },
   config: {},
-  apiFlavor: 'chat_completions',
 }
 
 const ctx = {

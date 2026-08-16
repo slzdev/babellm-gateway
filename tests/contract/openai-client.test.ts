@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
-import { createResponsesAdapter } from '@/lib/adapters/openai/responses'
 import type { ProviderAdapter } from '@/lib/adapters/types'
 import { seedGateway } from '../helpers/gateway'
 import { resetDb } from '../helpers/db'
@@ -152,53 +151,4 @@ test('the SDK surfaces an upstream rate limit as RateLimitError', async () => {
       messages: [{ role: 'user', content: 'hi' }],
     }),
   ).rejects.toBeInstanceOf(OpenAI.RateLimitError)
-})
-
-test('the SDK completes a tool call served by a Responses provider', async () => {
-  const { apiKey } = await seedGateway({ apiFlavor: 'responses' })
-
-  const create = vi.fn().mockResolvedValue({
-    id: 'resp_1', object: 'response', created_at: 1, model: 'gpt-5-mini',
-    status: 'completed', incomplete_details: null,
-    output: [{
-      type: 'function_call', id: 'fc_1', call_id: 'call_1',
-      name: 'get_weather', arguments: '{"city":"Paris"}', status: 'completed',
-    }],
-    usage: {
-      input_tokens: 40, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-      output_tokens: 12, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 52,
-    },
-  })
-
-  const client = gatewayClient(apiKey, createResponsesAdapter(
-    {
-      id: 'p', name: 'resp', adapter: 'openai', baseUrl: null,
-      credentials: { apiKey: 'sk-test' }, config: {}, apiFlavor: 'responses',
-    },
-    vi.fn().mockReturnValue({ responses: { create } }) as never,
-  ))
-
-  const result = await client.chat.completions.create({
-    model: 'house-model',
-    messages: [{ role: 'user', content: 'weather in Paris?' }],
-    tools: [{
-      type: 'function',
-      function: {
-        name: 'get_weather',
-        parameters: { type: 'object', properties: { city: { type: 'string' } } },
-      },
-    }],
-  })
-
-  expect(result.model).toBe('house-model')
-  const call = result.choices[0].message.tool_calls?.[0]
-  if (call?.type !== 'function') throw new Error('expected a function tool call')
-  expect(call.id).toBe('call_1')
-  expect(JSON.parse(call.function.arguments)).toEqual({ city: 'Paris' })
-  expect(result.usage?.total_tokens).toBe(52)
-
-  // The tool definition reached the upstream in Responses shape.
-  expect(create.mock.calls[0][0].tools).toEqual([
-    expect.objectContaining({ type: 'function', name: 'get_weather' }),
-  ])
 })

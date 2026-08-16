@@ -83,12 +83,7 @@ export default async function ProvidersPage() {
             {providers.map((provider) => (
               <TableRow key={provider.id} className="align-top">
                 <TableCell className="font-medium">{provider.name}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  {provider.adapter}
-                  {provider.apiFlavor === 'responses' ? (
-                    <Badge variant="secondary" className="ml-2">responses</Badge>
-                  ) : null}
-                </TableCell>
+                <TableCell className="text-muted-foreground">{provider.adapter}</TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">
                   {Object.entries(provider.maskedCredentials)
                     .map(([key, value]) => `${key}=${value}`)

@@ -23,89 +23,6 @@ beforeEach(async () => {
   vi.spyOn(console, 'log').mockImplementation(() => {})
 })
 
-test('a responses provider reports the parameters it could not express', async () => {
-  const { apiKey } = await seedTargets({
-    targets: [{ name: 'resp', apiFlavor: 'responses' }],
-  })
-
-  const res = await handleChatCompletions(
-    chatRequest(
-      { model: 'house-model', messages: [{ role: 'user', content: 'hi' }], n: 3, stop: ['\n'] },
-      apiKey,
-    ),
-    fakeAdapterByProvider({ resp: { chat: vi.fn().mockResolvedValue(completion('resp')) } }),
-  )
-
-  expect(res.status).toBe(200)
-  expect(res.headers.get('x-babellm-dropped-params')?.split(',').sort())
-    .toEqual(['n', 'stop'])
-})
-
-test('a chat completions provider reports nothing, because it drops nothing', async () => {
-  const { apiKey } = await seedTargets({
-    targets: [{ name: 'cc', apiFlavor: 'chat_completions' }],
-  })
-
-  const res = await handleChatCompletions(
-    chatRequest(
-      { model: 'house-model', messages: [{ role: 'user', content: 'hi' }], n: 3 },
-      apiKey,
-    ),
-    fakeAdapterByProvider({ cc: { chat: vi.fn().mockResolvedValue(completion('cc')) } }),
-  )
-
-  expect(res.headers.get('x-babellm-dropped-params')).toBeNull()
-})
-
-test('the header names the flavor of the target that actually served', async () => {
-  // The first target is a Responses provider that fails; the request lands on a
-  // Chat Completions provider, which drops nothing.
-  const { apiKey } = await seedTargets({
-    targets: [
-      { name: 'resp', priority: 0, apiFlavor: 'responses' },
-      { name: 'cc', priority: 1, apiFlavor: 'chat_completions' },
-    ],
-  })
-
-  const res = await handleChatCompletions(
-    chatRequest(
-      { model: 'house-model', messages: [{ role: 'user', content: 'hi' }], n: 3 },
-      apiKey,
-    ),
-    fakeAdapterByProvider({
-      resp: { chat: vi.fn().mockRejectedValue(apiError(503, 'down')) },
-      cc: { chat: vi.fn().mockResolvedValue(completion('cc')) },
-    }),
-  )
-
-  expect(res.headers.get('x-babellm-provider')).toBe('cc')
-  expect(res.headers.get('x-babellm-dropped-params')).toBeNull()
-})
-
-test('a streaming response carries the header too', async () => {
-  const { apiKey } = await seedTargets({
-    targets: [{ name: 'resp', apiFlavor: 'responses' }],
-  })
-
-  const working = async function* () {
-    yield {
-      id: 'up', object: 'chat.completion.chunk', created: 1, model: 'resp-model',
-      choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }],
-    }
-  }
-
-  const res = await handleChatCompletions(
-    chatRequest(
-      { model: 'house-model', messages: [{ role: 'user', content: 'hi' }], stream: true, n: 3 },
-      apiKey,
-    ),
-    fakeAdapterByProvider({ resp: { chatStream: working as never } }),
-  )
-
-  expect(res.headers.get('x-babellm-dropped-params')).toBe('n')
-  await res.text()
-})
-
 test('a gemini target reports what Gemini cannot express', async () => {
   const { apiKey } = await seedTargets({ targets: [{ name: 'gem', adapter: 'gemini' }] })
 
@@ -127,8 +44,6 @@ test('a gemini target reports what Gemini cannot express', async () => {
 })
 
 test('a gemini target reports nothing for a request it can express fully', async () => {
-  // `n: 3` is the case that separates the two translators: the Responses
-  // flavor drops it, Gemini sends it as candidateCount.
   const { apiKey } = await seedTargets({ targets: [{ name: 'gem', adapter: 'gemini' }] })
 
   const res = await handleChatCompletions(
@@ -140,4 +55,74 @@ test('a gemini target reports nothing for a request it can express fully', async
   )
 
   expect(res.headers.get('x-babellm-dropped-params')).toBeNull()
+})
+
+test('an openai target reports nothing, because it forwards the request as sent', async () => {
+  const { apiKey } = await seedTargets({ targets: [{ name: 'cc' }] })
+
+  const res = await handleChatCompletions(
+    chatRequest(
+      {
+        model: 'house-model',
+        messages: [{ role: 'user', content: 'hi' }, { role: 'system', content: 'be terse' }],
+        logprobs: true,
+      },
+      apiKey,
+    ),
+    fakeAdapterByProvider({ cc: { chat: vi.fn().mockResolvedValue(completion('cc')) } }),
+  )
+
+  expect(res.headers.get('x-babellm-dropped-params')).toBeNull()
+})
+
+test('the header describes the target that actually served', async () => {
+  // The first target is a Gemini provider that fails; the request lands on an
+  // OpenAI-shaped provider, which drops nothing.
+  const { apiKey } = await seedTargets({
+    targets: [
+      { name: 'gem', priority: 0, adapter: 'gemini' },
+      { name: 'cc', priority: 1 },
+    ],
+  })
+
+  const res = await handleChatCompletions(
+    chatRequest(
+      { model: 'house-model', messages: [{ role: 'user', content: 'hi' }], logprobs: true },
+      apiKey,
+    ),
+    fakeAdapterByProvider({
+      gem: { chat: vi.fn().mockRejectedValue(apiError(503, 'down')) },
+      cc: { chat: vi.fn().mockResolvedValue(completion('cc')) },
+    }),
+  )
+
+  expect(res.headers.get('x-babellm-provider')).toBe('cc')
+  expect(res.headers.get('x-babellm-dropped-params')).toBeNull()
+})
+
+test('a streaming response carries the header too', async () => {
+  const { apiKey } = await seedTargets({ targets: [{ name: 'gem', adapter: 'gemini' }] })
+
+  const working = async function* () {
+    yield {
+      id: 'up', object: 'chat.completion.chunk', created: 1, model: 'gem-model',
+      choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }],
+    }
+  }
+
+  const res = await handleChatCompletions(
+    chatRequest(
+      {
+        model: 'house-model',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        logprobs: true,
+      },
+      apiKey,
+    ),
+    fakeAdapterByProvider({ gem: { chatStream: working as never } }),
+  )
+
+  expect(res.headers.get('x-babellm-dropped-params')).toBe('logprobs')
+  await res.text()
 })

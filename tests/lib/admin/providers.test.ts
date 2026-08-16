@@ -188,43 +188,16 @@ test('a provider with no catalog rows reports zero, not undefined', async () => 
   expect(item.registryNamespace).toBeNull()
 })
 
-test('a provider is created with the chat_completions flavor by default', async () => {
-  const row = await createProvider({
+// The api_flavor column is retained for deployments still running the previous
+// release, but nothing writes it any more: every provider is created and left
+// on the column default. Covered here rather than only in the schema test
+// because an update must not resurrect a value either.
+test('a provider is created and updated without touching the retired flavor column', async () => {
+  const created = await createProvider({
     name: 'plain', adapter: 'openai', credentials: { apiKey: 'sk-a' },
   })
-  expect(row.apiFlavor).toBe('chat_completions')
-})
+  expect(created.apiFlavor).toBe('chat_completions')
 
-test('a provider can be created with the responses flavor', async () => {
-  const row = await createProvider({
-    name: 'resp', adapter: 'openai', credentials: { apiKey: 'sk-a' },
-    apiFlavor: 'responses',
-  })
-  expect(row.apiFlavor).toBe('responses')
-})
-
-test('updating a provider can change its flavor', async () => {
-  const created = await createProvider({
-    name: 'switch', adapter: 'openai', credentials: { apiKey: 'sk-a' },
-  })
-  const updated = await updateProvider(created.id, { apiFlavor: 'responses' })
-  expect(updated.apiFlavor).toBe('responses')
-})
-
-test('an update that omits the flavor keeps the stored one', async () => {
-  const created = await createProvider({
-    name: 'keep', adapter: 'openai', credentials: { apiKey: 'sk-a' },
-    apiFlavor: 'responses',
-  })
-  const updated = await updateProvider(created.id, { name: 'keep-renamed' })
-  expect(updated.apiFlavor).toBe('responses')
-})
-
-test('listProviders reports each provider flavor', async () => {
-  await createProvider({
-    name: 'resp', adapter: 'openai', credentials: { apiKey: 'sk-a' },
-    apiFlavor: 'responses',
-  })
-  const [item] = await listProviders()
-  expect(item.apiFlavor).toBe('responses')
+  const updated = await updateProvider(created.id, { name: 'plain-renamed' })
+  expect(updated.apiFlavor).toBe('chat_completions')
 })

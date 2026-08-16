@@ -341,9 +341,9 @@ const UNMAPPABLE = [
  * Values that mean "the default", which is also what Gemini does. Reporting
  * them would put a line in the header on nearly every request.
  *
- * Note what is deliberately NOT copied from chat-to-responses: its rule that
- * any `false` is inert. `parallel_tool_calls: false` is a real instruction that
- * Gemini cannot honour, and it must be reported.
+ * Note that a blanket "any `false` is inert" rule would be wrong here:
+ * `parallel_tool_calls: false` is a real instruction that Gemini cannot
+ * honour, and it must be reported.
  */
 const INERT: Record<string, unknown> = {
   logprobs: false,

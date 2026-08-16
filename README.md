@@ -80,13 +80,13 @@ flowchart LR
     B -.-> G[("Postgres<br/><sub>logs · usage · config</sub>")]
 ```
 
-Clients always speak Chat Completions. Everything behind the gateway —
-Responses-flavored endpoints, Gemini's `generateContent` — is translated in
-both directions.
+Clients always speak Chat Completions, and so does every OpenAI-shaped
+provider. Anything behind the gateway that doesn't — Gemini's
+`generateContent` — is translated in both directions.
 
 | Provider type | Status |
 | --- | --- |
-| `openai` | ✅ Chat Completions and Responses flavors |
+| `openai` | ✅ Chat Completions |
 | `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped |
 | `gemini` | ✅ Native `@google/genai`, including thinking and media by URL |
 | `bedrock` | 🚧 Configurable, not yet served |
@@ -286,9 +286,9 @@ This is a real gateway — the `openai` SDK talks to it end to end, with
 streaming, tool calls, and policy-driven routing across every target — built in
 phases. What's still missing:
 
-- **No `/v1/responses` endpoint.** Responses-flavored *providers* work; a
-  Responses-shaped *client* doesn't. Everything enters through
-  `/v1/chat/completions`.
+- **No Responses API, either end.** Everything enters through
+  `/v1/chat/completions` and every OpenAI-shaped provider is called on
+  `/chat/completions`.
 - **No circuit breaker.** A provider that is hard down is re-attempted every
   request, so each one pays a wasted call and its timeout before failing over.
 - **Spend counters are volatile** without `REDIS_URL` — a restart resets each
@@ -303,7 +303,7 @@ phases. What's still missing:
 
 Parameters a provider's API can't express are dropped rather than rejected, and
 named in the `x-babellm-dropped-params` response header and the request log —
-so a dropped `n` or `stop` on a Responses provider is visible, not silent.
+so a dropped `logprobs` on a Gemini provider is visible, not silent.
 
 ## Contributing
 

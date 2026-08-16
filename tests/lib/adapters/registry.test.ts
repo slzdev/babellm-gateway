@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { createAdapter, resolveApiFlavor, resolveProviderRuntime } from '@/lib/adapters/registry'
+import { createAdapter, resolveProviderRuntime } from '@/lib/adapters/registry'
 import { UnsupportedOperationError } from '@/lib/gateway/errors'
 import { encryptJson } from '@/lib/crypto'
 import type { ProviderRow } from '@/lib/db/schema'
@@ -22,13 +22,9 @@ const chatBody = { model: 'fast', messages: [{ role: 'user' as const, content: '
 
 /**
  * createOpenAIClient never passes a `fetch` option, so the SDK falls back to
- * `globalThis.fetch` — captured once, at client construction. Stubbing it
- * lets these tests observe which upstream path an adapter actually calls
- * (`/chat/completions` vs `/responses`), which is the one thing that
- * distinguishes the two adapters from the outside: both satisfy the same
- * `ProviderAdapter` shape, so asserting only that `chat` is a function cannot
- * tell them apart, and would pass even if the flavor branch were wired
- * backwards.
+ * `globalThis.fetch` — captured once, at client construction. Stubbing it lets
+ * these tests observe which upstream path an adapter actually calls, which
+ * asserting that `chat` is a function cannot.
  */
 function stubFetch() {
   const fetchSpy = vi.fn().mockResolvedValue(
@@ -53,7 +49,6 @@ function provider(overrides: Partial<ProviderRow> = {}): ProviderRow {
     baseUrl: null,
     credentials: encryptJson({ apiKey: 'sk-test' }),
     config: '{}',
-    apiFlavor: 'chat_completions',
     enabled: true,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -104,53 +99,21 @@ test('gemini gets a real adapter', () => {
   expect(typeof adapter.listModels).toBe('function')
 })
 
-test('resolveApiFlavor defaults to chat_completions', () => {
-  expect(resolveApiFlavor(provider())).toBe('chat_completions')
-})
-
-test('resolveApiFlavor reads the stored flavor', () => {
-  expect(resolveApiFlavor(provider({ apiFlavor: 'responses' }))).toBe('responses')
-})
-
-test('resolveProviderRuntime carries the flavor onto the runtime', () => {
-  expect(resolveProviderRuntime(provider({ apiFlavor: 'responses' })).apiFlavor)
-    .toBe('responses')
-})
-
-test('a responses-flavored provider hits /responses, not /chat/completions', async () => {
+test('an openai provider is served over chat completions', async () => {
   const fetchSpy = stubFetch()
-  const adapter = createAdapter(provider({ apiFlavor: 'responses' }))
-  await adapter.chat(chatBody, chatCtx)
-
-  expect(fetchSpy).toHaveBeenCalledTimes(1)
-  expect(calledPath(fetchSpy)).toMatch(/\/responses$/)
-})
-
-test('a chat_completions-flavored provider hits /chat/completions, not /responses', async () => {
-  const fetchSpy = stubFetch()
-  const adapter = createAdapter(provider({ apiFlavor: 'chat_completions' }))
-  await adapter.chat(chatBody, chatCtx)
+  await createAdapter(provider()).chat(chatBody, chatCtx)
 
   expect(fetchSpy).toHaveBeenCalledTimes(1)
   expect(calledPath(fetchSpy)).toMatch(/\/chat\/completions$/)
 })
 
-test('flavor is honoured for openai_compatible providers too', async () => {
+test('an openai_compatible provider is served over chat completions too', async () => {
   const fetchSpy = stubFetch()
   const adapter = createAdapter(provider({
     adapter: 'openai_compatible',
     baseUrl: 'https://api.example/v1',
-    apiFlavor: 'responses',
   }))
   await adapter.chat(chatBody, chatCtx)
 
-  expect(calledPath(fetchSpy)).toMatch(/\/responses$/)
-})
-
-test('a responses-flavored openai_compatible provider still needs a base URL', () => {
-  expect(() =>
-    createAdapter(provider({
-      adapter: 'openai_compatible', baseUrl: null, apiFlavor: 'responses',
-    })),
-  ).toThrow(/base URL/i)
+  expect(calledPath(fetchSpy)).toBe('https://api.example/v1/chat/completions')
 })

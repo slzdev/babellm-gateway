@@ -3,17 +3,7 @@ import type { ProviderRow } from '@/lib/db/schema'
 import { UnsupportedOperationError } from '@/lib/gateway/errors'
 import { createGeminiAdapter } from './gemini'
 import { createOpenAIAdapter } from './openai'
-import { createResponsesAdapter } from './openai/responses'
-import type { ApiFlavor, ProviderAdapter, ProviderConfig, ProviderRuntime } from './types'
-
-/**
- * The single place flavor is decided. It reads one column today, but every
- * caller goes through it so that a per-model layer — which the catalog could
- * supply — lands here rather than in each call site.
- */
-export function resolveApiFlavor(provider: ProviderRow): ApiFlavor {
-  return provider.apiFlavor
-}
+import type { ProviderAdapter, ProviderConfig, ProviderRuntime } from './types'
 
 export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
   return {
@@ -23,23 +13,7 @@ export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
     baseUrl: provider.baseUrl,
     credentials: decryptJson<Record<string, unknown>>(provider.credentials),
     config: JSON.parse(provider.config) as ProviderConfig,
-    apiFlavor: resolveApiFlavor(provider),
   }
-}
-
-/**
- * Chat Completions and Responses providers share every branch above this
- * point — credentials, base URL, adapter kind — and differ only in which
- * client method the adapter calls. Keeping that choice in one helper is what
- * lets the two cases above read identically otherwise. `runtime.apiFlavor`
- * is read here rather than re-derived: `resolveProviderRuntime` already
- * called `resolveApiFlavor` once, and it remains the only caller of that
- * function on this path.
- */
-function adapterFor(runtime: ProviderRuntime): ProviderAdapter {
-  return runtime.apiFlavor === 'responses'
-    ? createResponsesAdapter(runtime)
-    : createOpenAIAdapter(runtime)
 }
 
 export function createAdapter(provider: ProviderRow): ProviderAdapter {
@@ -47,14 +21,14 @@ export function createAdapter(provider: ProviderRow): ProviderAdapter {
 
   switch (runtime.adapter) {
     case 'openai':
-      return adapterFor(runtime)
+      return createOpenAIAdapter(runtime)
     case 'openai_compatible':
       if (!runtime.baseUrl) {
         throw new Error(
           `Provider "${runtime.name}" is openai_compatible but has no base URL configured.`,
         )
       }
-      return adapterFor(runtime)
+      return createOpenAIAdapter(runtime)
     case 'gemini':
       return createGeminiAdapter(runtime)
     case 'bedrock':
