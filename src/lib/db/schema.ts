@@ -77,6 +77,11 @@ export const routeTargets = pgTable('route_targets', {
   // Nullable with no default, because NULL is a distinct behaviour rather than
   // a missing value: it means the gateway forwards the client's body untouched.
   serviceTier: serviceTierEnum('service_tier'),
+  // Nullable with no default, because NULL is a distinct behaviour rather than
+  // a missing value: it means "inherit the provider's flavor". A default would
+  // make a target that was deliberately set to chat_completions
+  // indistinguishable from one that was never configured.
+  apiFlavor: apiFlavorEnum('api_flavor'),
   // Nullable with no default: NULL means "inherit the global", and 0 is a
   // distinct, meaningful value — "never open this target" — so a default
   // would make the two indistinguishable.

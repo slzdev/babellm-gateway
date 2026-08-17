@@ -5,6 +5,7 @@ import { catalogModels, providers, routeTargets, virtualModels } from '@/lib/db/
 import { resolveModel } from '@/lib/gateway/resolve'
 import { encryptJson } from '@/lib/crypto'
 import { resetDb } from '../../helpers/db'
+import { seedTargets } from '../../helpers/gateway'
 
 beforeEach(async () => {
   process.env.ENCRYPTION_KEY = 'c'.repeat(64)
@@ -246,4 +247,40 @@ test('a direct provider/model address is never breakable', async () => {
   expect(candidates[0].breakable).toBe(false)
   expect(candidates[0].breakerThreshold).toBeNull()
   expect(candidates[0].breakerCooldownSeconds).toBeNull()
+})
+
+test('a target with no flavor inherits the provider', async () => {
+  const { model, targets } = await seedTargets({
+    targets: [{ name: 'p1' }],
+  })
+  await db.update(providers).set({ apiFlavor: 'responses' })
+    .where(eq(providers.id, targets[0].provider.id))
+
+  const { candidates } = await resolveModel(model.name)
+
+  expect(candidates[0].apiFlavor).toBe('responses')
+})
+
+test('a target flavor overrides the provider', async () => {
+  const { model } = await seedTargets({
+    targets: [{ name: 'p1', apiFlavor: 'responses' }],
+  })
+  // The provider still says chat_completions; the target wins.
+  const { candidates } = await resolveModel(model.name)
+
+  expect(candidates[0].apiFlavor).toBe('responses')
+})
+
+test('a direct provider/model address inherits the provider flavor', async () => {
+  // No route_targets row stands behind a direct address, so there is nothing
+  // that could have overridden the provider's setting.
+  const [provider] = await db.insert(providers).values({
+    name: 'openai', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
+    apiFlavor: 'responses',
+  }).returning()
+  await db.insert(catalogModels).values({ providerId: provider.id, modelId: 'gpt-5' })
+
+  const { candidates } = await resolveModel(`${provider.name}/gpt-5`)
+
+  expect(candidates[0].apiFlavor).toBe('responses')
 })

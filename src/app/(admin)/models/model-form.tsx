@@ -6,6 +6,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FormDialog } from '@/components/admin/form-dialog'
 import type { PickerGroup } from '@/lib/admin/catalog'
+import type { ApiFlavor } from '@/lib/api-flavors'
+import { ApiFlavorSelect } from './api-flavor-select'
 import { ModelCombobox } from './model-combobox'
 import { ServiceTierSelect } from './service-tier-select'
 import { addTargetAction, createModelAction, type ActionState } from './actions'
@@ -47,7 +49,7 @@ export function AddTargetDialog({
   globalCooldown,
 }: {
   virtualModelId: string
-  providers: Array<{ id: string; name: string }>
+  providers: Array<{ id: string; name: string; apiFlavor: ApiFlavor }>
   groupsByProvider: Record<string, PickerGroup[]>
   /** The global breaker settings, shown as placeholders so an operator can
    *  see what a blank field would inherit without looking it up elsewhere. */
@@ -55,6 +57,7 @@ export function AddTargetDialog({
   globalCooldown: number
 }) {
   const [providerId, setProviderId] = useState(providers[0]?.id ?? '')
+  const selectedProvider = providers.find((provider) => provider.id === providerId)
 
   return (
     <FormDialog<ActionState>
@@ -102,6 +105,16 @@ export function AddTargetDialog({
         <ServiceTierSelect id={`tier-${virtualModelId}`} />
         <p className="text-xs text-muted-foreground">
           Sent upstream as <code>service_tier</code>, replacing any value the client sent.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={`flavor-${virtualModelId}`}>API flavor</Label>
+        <ApiFlavorSelect
+          id={`flavor-${virtualModelId}`}
+          providerDefault={selectedProvider?.apiFlavor ?? 'chat_completions'}
+        />
+        <p className="text-xs text-muted-foreground">
+          Which endpoint this target is called on. Only meaningful for OpenAI-shaped providers.
         </p>
       </div>
       <div className="grid gap-4 grid-cols-2">

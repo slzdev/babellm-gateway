@@ -4,7 +4,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FormDialog } from '@/components/admin/form-dialog'
 import type { PickerGroup } from '@/lib/admin/catalog'
+import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ServiceTier } from '@/lib/service-tiers'
+import { ApiFlavorSelect } from './api-flavor-select'
 import { ModelCombobox } from './model-combobox'
 import { ServiceTierSelect } from './service-tier-select'
 import { updateTargetAction, type ActionState } from './actions'
@@ -13,6 +15,7 @@ export function EditTargetDialog({
   target,
   virtualModelId,
   groups,
+  providerApiFlavor,
   globalThreshold,
   globalCooldown,
   open,
@@ -24,11 +27,14 @@ export function EditTargetDialog({
     priority: number
     weight: number
     serviceTier: ServiceTier | null
+    apiFlavor: ApiFlavor | null
     breakerThreshold: number | null
     breakerCooldownSeconds: number | null
   }
   virtualModelId: string
   groups: PickerGroup[]
+  /** The provider's own flavor, shown in the inherit option. */
+  providerApiFlavor: ApiFlavor
   /** The global breaker settings, shown as placeholders so an operator can
    *  see what a blank field would inherit without looking it up elsewhere. */
   globalThreshold: number
@@ -77,6 +83,17 @@ export function EditTargetDialog({
         <ServiceTierSelect id={`edit-tier-${target.id}`} defaultValue={target.serviceTier} />
         <p className="text-xs text-muted-foreground">
           Sent upstream as <code>service_tier</code>, replacing any value the client sent.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={`edit-flavor-${target.id}`}>API flavor</Label>
+        <ApiFlavorSelect
+          id={`edit-flavor-${target.id}`}
+          defaultValue={target.apiFlavor}
+          providerDefault={providerApiFlavor}
+        />
+        <p className="text-xs text-muted-foreground">
+          Which endpoint this target is called on. Only meaningful for OpenAI-shaped providers.
         </p>
       </div>
       <div className="grid gap-4 grid-cols-2">

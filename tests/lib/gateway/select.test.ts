@@ -15,6 +15,7 @@ function candidate(name: string, weight = 100, priority = 0): Candidate {
     priority,
     weight,
     serviceTier: null,
+    apiFlavor: 'chat_completions',
     breakable: true,
     breakerThreshold: null,
     breakerCooldownSeconds: null,

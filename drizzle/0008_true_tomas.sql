@@ -1,0 +1,1 @@
+ALTER TABLE "route_targets" ADD COLUMN "api_flavor" "api_flavor";

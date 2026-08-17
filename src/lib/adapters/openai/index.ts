@@ -16,7 +16,7 @@ import { resolveProviderPaths } from './paths'
 export type { OpenAIClientFactory }
 
 const FLAVOR_HINT =
-  'If this provider only implements the Responses API, set its API flavor to "responses" on the Providers page.'
+  'If this endpoint only implements the Responses API, set the route target\'s API flavor to "responses" — or the provider\'s, if every target should follow it.'
 
 export function createOpenAIAdapter(
   runtime: ProviderRuntime,

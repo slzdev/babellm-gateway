@@ -19,7 +19,7 @@ import { resolveProviderPaths } from './paths'
 // dashboard makes this exactly as reachable as the reverse mistake, so it
 // gets the same treatment.
 const FLAVOR_HINT =
-  'If this provider only implements the Chat Completions API, set its API flavor to "chat_completions" on the Providers page.'
+  'If this endpoint only implements the Chat Completions API, set the route target\'s API flavor to "chat_completions" — or the provider\'s, if every target should follow it.'
 
 /**
  * A provider that serves /v1/responses but not /v1/chat/completions. It holds

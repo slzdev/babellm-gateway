@@ -3,12 +3,14 @@ import { apiKeys, providers, routeTargets, virtualModels } from '@/lib/db/schema
 import { encryptJson } from '@/lib/crypto'
 import { generateApiKey } from '@/lib/gateway/auth'
 import type { ServiceTier } from '@/lib/admin/models'
+import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ProviderAdapter } from '@/lib/adapters/types'
 
 export interface SeedOptions {
   virtualModel?: string
   upstreamModel?: string
   serviceTier?: ServiceTier | null
+  apiFlavor?: ApiFlavor | null
   adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
   credentials?: Record<string, unknown>
   /** Limits on the seeded API key. Absent means an unlimited key, which is
@@ -38,6 +40,7 @@ export async function seedGateway(options: SeedOptions = {}) {
     providerId: provider.id,
     upstreamModel,
     serviceTier: options.serviceTier ?? null,
+    apiFlavor: options.apiFlavor ?? null,
   }).returning()
 
   const generated = generateApiKey()
@@ -83,6 +86,7 @@ export interface TargetSpec {
   weight?: number
   enabled?: boolean
   serviceTier?: ServiceTier | null
+  apiFlavor?: ApiFlavor | null
   adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
 }
 
@@ -128,6 +132,7 @@ export async function seedTargets(options: SeedTargetsOptions) {
       priority: spec.priority ?? 0,
       weight: spec.weight ?? 100,
       serviceTier: spec.serviceTier ?? null,
+      apiFlavor: spec.apiFlavor ?? null,
       enabled: spec.enabled ?? true,
     }).returning()
 

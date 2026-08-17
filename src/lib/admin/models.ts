@@ -5,6 +5,7 @@ import {
   providers, routeTargets, virtualModels,
   type RouteTargetRow, type VirtualModelRow,
 } from '@/lib/db/schema'
+import { API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
 import { SERVICE_TIERS, type ServiceTier } from '@/lib/service-tiers'
 
 export type RoutingPolicy = 'failover' | 'weighted' | 'round_robin'
@@ -26,6 +27,7 @@ export interface RouteTargetInput {
   priority?: number
   weight?: number
   serviceTier?: ServiceTier | null
+  apiFlavor?: ApiFlavor | null
   enabled?: boolean
   breakerThreshold?: number | null
   breakerCooldownSeconds?: number | null
@@ -46,6 +48,7 @@ export interface VirtualModelListItem {
     priority: number
     weight: number
     serviceTier: ServiceTier | null
+    apiFlavor: ApiFlavor | null
     enabled: boolean
     breakerThreshold: number | null
     breakerCooldownSeconds: number | null
@@ -70,6 +73,7 @@ function toListItem(model: VirtualModelRow, rows: TargetRow[]): VirtualModelList
       priority: target.priority,
       weight: target.weight,
       serviceTier: target.serviceTier,
+      apiFlavor: target.apiFlavor,
       enabled: target.enabled,
       breakerThreshold: target.breakerThreshold,
       breakerCooldownSeconds: target.breakerCooldownSeconds,
@@ -204,6 +208,7 @@ function validateTargetFields(input: {
   priority?: number
   weight?: number
   serviceTier?: ServiceTier | null
+  apiFlavor?: ApiFlavor | null
   breakerThreshold?: number | null
   breakerCooldownSeconds?: number | null
 }) {
@@ -212,6 +217,7 @@ function validateTargetFields(input: {
     priority?: number
     weight?: number
     serviceTier?: ServiceTier | null
+    apiFlavor?: ApiFlavor | null
     breakerThreshold?: number | null
     breakerCooldownSeconds?: number | null
   } = {}
@@ -241,6 +247,14 @@ function validateTargetFields(input: {
     }
     patch.serviceTier = input.serviceTier
   }
+  // `null` means "inherit the provider's flavor" — a real, distinct setting,
+  // not an omission. Only `undefined` leaves this field alone.
+  if (input.apiFlavor !== undefined) {
+    if (input.apiFlavor !== null && !API_FLAVORS.includes(input.apiFlavor)) {
+      throw new Error(`"${input.apiFlavor}" is not a supported API flavor.`)
+    }
+    patch.apiFlavor = input.apiFlavor
+  }
   if (input.breakerThreshold !== undefined) {
     patch.breakerThreshold = validateBreakerThreshold(input.breakerThreshold)
   }
@@ -257,6 +271,7 @@ export async function addRouteTarget(input: RouteTargetInput): Promise<RouteTarg
     priority: input.priority ?? 0,
     weight: input.weight ?? 100,
     serviceTier: input.serviceTier ?? null,
+    apiFlavor: input.apiFlavor ?? null,
     breakerThreshold: input.breakerThreshold,
     breakerCooldownSeconds: input.breakerCooldownSeconds,
   })
@@ -268,6 +283,7 @@ export async function addRouteTarget(input: RouteTargetInput): Promise<RouteTarg
     priority: validated.priority!,
     weight: validated.weight!,
     serviceTier: validated.serviceTier ?? null,
+    apiFlavor: validated.apiFlavor ?? null,
     enabled: input.enabled ?? true,
     breakerThreshold: validated.breakerThreshold ?? null,
     breakerCooldownSeconds: validated.breakerCooldownSeconds ?? null,
@@ -282,6 +298,7 @@ export async function updateRouteTarget(
     priority?: number
     weight?: number
     serviceTier?: ServiceTier | null
+    apiFlavor?: ApiFlavor | null
     enabled?: boolean
     breakerThreshold?: number | null
     breakerCooldownSeconds?: number | null

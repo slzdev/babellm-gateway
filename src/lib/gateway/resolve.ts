@@ -5,6 +5,7 @@ import {
   catalogModels, providers, routeTargets, virtualModels,
   type ProviderRow,
 } from '@/lib/db/schema'
+import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ServiceTier } from '@/lib/service-tiers'
 import { GatewayError } from './errors'
 import type { SelectableModel } from './select'
@@ -21,6 +22,10 @@ export interface Candidate {
   /** The tier this target pins `service_tier` to, or null to forward the
    * client's body untouched. */
   serviceTier: ServiceTier | null
+  /** The protocol this target's endpoint speaks. Resolved rather than
+   *  nullable: NULL on the target means "inherit the provider", and the
+   *  routing loop must never have to know that. */
+  apiFlavor: ApiFlavor
   /**
    * Whether an open breaker may demote this candidate.
    *
@@ -112,6 +117,7 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
       priority: target.priority,
       weight: target.weight,
       serviceTier: target.serviceTier,
+      apiFlavor: target.apiFlavor ?? provider.apiFlavor,
       breakable: true,
       breakerThreshold: target.breakerThreshold,
       breakerCooldownSeconds: target.breakerCooldownSeconds,
@@ -167,6 +173,9 @@ async function resolveDirect(
       // No route_targets row stands behind a direct address, so there is
       // nothing that could have configured a tier for it.
       serviceTier: null,
+      // No route_targets row stands behind a direct address, so there is
+      // nothing that could have overridden the provider's flavor.
+      apiFlavor: row.provider.apiFlavor,
       // No route_targets row stands behind a direct address, so there is
       // nothing to break and nothing that could have configured a breaker.
       breakable: false,

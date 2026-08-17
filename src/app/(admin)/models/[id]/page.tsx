@@ -130,6 +130,7 @@ export default async function ModelDetailPage({
                 <TableHead className="text-right">Priority</TableHead>
                 <TableHead className="text-right">Weight</TableHead>
                 <TableHead>Service tier</TableHead>
+                <TableHead>API flavor</TableHead>
                 <TableHead>Enabled</TableHead>
                 <TableHead>Health</TableHead>
                 <TableHead className="w-0"><span className="sr-only">Actions</span></TableHead>
@@ -151,6 +152,11 @@ export default async function ModelDetailPage({
                       : <span className="text-muted-foreground">—</span>}
                   </TableCell>
                   <TableCell>
+                    {target.apiFlavor
+                      ? <Badge variant="outline">{target.apiFlavor}</Badge>
+                      : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={target.enabled ? 'default' : 'secondary'}>
                       {target.enabled ? 'enabled' : 'disabled'}
                     </Badge>
@@ -161,6 +167,10 @@ export default async function ModelDetailPage({
                       target={target}
                       virtualModelId={model.id}
                       groups={groupsByProvider[target.providerId] ?? []}
+                      providerApiFlavor={
+                        providers.find((provider) => provider.id === target.providerId)?.apiFlavor
+                        ?? 'chat_completions'
+                      }
                       breakerState={breakers.get(target.id)?.state ?? 'closed'}
                       globalThreshold={routingSettings.threshold}
                       globalCooldown={routingSettings.cooldownSeconds}
@@ -170,7 +180,7 @@ export default async function ModelDetailPage({
               ))}
               {model.targets.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
                     No targets — requests to this model will fail with 503.
                   </TableCell>
                 </TableRow>
