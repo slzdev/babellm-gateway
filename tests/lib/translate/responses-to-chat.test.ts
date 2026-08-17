@@ -267,6 +267,22 @@ test('a length finish becomes incomplete with a reason', () => {
   expect(res.incomplete_details).toEqual({ reason: 'max_output_tokens' })
 })
 
+test('a content_filter finish becomes incomplete with that reason', () => {
+  const res = fromCompletion(completion({ content: 'partial' }, 'content_filter'), req, 'resp_1')
+
+  expect(res.status).toBe('incomplete')
+  expect(res.incomplete_details).toEqual({ reason: 'content_filter' })
+})
+
+test('a refusal becomes a refusal content part on the message', () => {
+  const res = fromCompletion(completion({ content: null, refusal: 'cannot help with that' }), req, 'resp_1')
+
+  expect(res.output).toEqual([{
+    type: 'message', id: expect.stringMatching(/^msg_/), role: 'assistant', status: 'completed',
+    content: [{ type: 'refusal', refusal: 'cannot help with that' }],
+  }])
+})
+
 test('usage is restated in the Responses spelling', () => {
   const res = fromCompletion(completion({ content: 'hi' }), req, 'resp_1')
 
