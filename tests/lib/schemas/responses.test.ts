@@ -16,6 +16,23 @@ test('accepts structured input items', () => {
     ],
   })
   expect(Array.isArray(parsed.input)).toBe(true)
+
+  const input = parsed.input as Record<string, unknown>[]
+  expect(input[1]).toMatchObject({ type: 'function_call', call_id: 'c1', name: 'f', arguments: '{}' })
+  expect(input[2]).toMatchObject({ type: 'function_call_output', call_id: 'c1', output: 'ok' })
+})
+
+test('a malformed function_call falls through to the passthrough catch-all', () => {
+  // The catch-all's looseness is intentional (see the comment on inputItem in
+  // responses.ts): a function_call missing `name` fails the strict member and
+  // is accepted by the trailing z.looseObject({ type: z.string() }) instead,
+  // so a Responses item type this gateway hasn't modeled yet still reaches a
+  // Responses-native provider unmodified.
+  const result = responsesRequestSchema.safeParse({
+    model: 'm',
+    input: [{ type: 'function_call', call_id: 'c1', arguments: '{}' }],
+  })
+  expect(result.success).toBe(true)
 })
 
 test('keeps unknown keys so they reach the provider', () => {

@@ -29,6 +29,16 @@ const inputItem = z.union([
   // A shape this gateway has not been taught. Kept rather than rejected: on the
   // passthrough path the provider may well understand it, and the translator
   // reports it as dropped rather than refusing the request.
+  //
+  // This catch-all also shadows the stricter members above: a `function_call`
+  // missing `name`, say, fails that member and falls through to be accepted
+  // here instead — z.union tries members in order and takes the first match,
+  // not the best one. That is deliberate, not an oversight. Tightening the
+  // catch-all to exclude known `type`s would block a Responses item type
+  // OpenAI ships next month from reaching a Responses-native provider
+  // unmodified, which is the whole point of keeping it loose — the provider,
+  // not this gateway, is the authority on its own protocol there. `chat.ts`'s
+  // `contentPart` uses the identical idiom for the same reason.
   z.looseObject({ type: z.string() }),
 ])
 
