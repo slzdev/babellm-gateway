@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { assertServiceable, droppedParams, toChatRequest } from '@/lib/translate/responses-to-chat'
+import { assertServiceable, droppedParams, fromCompletion, toChatRequest } from '@/lib/translate/responses-to-chat'
 
 test('a bare string input becomes one user message', () => {
   expect(toChatRequest({ model: 'm', input: 'hi' }).messages)
@@ -213,4 +213,75 @@ test('the rejection is a non-retryable 400', () => {
   } catch (err) {
     expect(err).toMatchObject({ name: 'ProviderError', status: 400, retryable: false })
   }
+})
+
+const req = { model: 'virtual', input: 'hi' }
+
+function completion(message: Record<string, unknown>, finish = 'stop') {
+  return {
+    id: 'chatcmpl-1', object: 'chat.completion', created: 1, model: 'up-model',
+    choices: [{ index: 0, message: { role: 'assistant', ...message }, finish_reason: finish }],
+    usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+  } as never
+}
+
+test('assistant content becomes a message output item', () => {
+  const res = fromCompletion(completion({ content: 'hello' }), req, 'resp_1')
+
+  expect(res.id).toBe('resp_1')
+  expect(res.object).toBe('response')
+  expect(res.status).toBe('completed')
+  expect(res.output).toEqual([{
+    type: 'message', id: expect.stringMatching(/^msg_/), role: 'assistant', status: 'completed',
+    content: [{ type: 'output_text', text: 'hello', annotations: [] }],
+  }])
+})
+
+test('reasoning_content becomes a reasoning item before the message', () => {
+  const res = fromCompletion(completion({ content: 'hello', reasoning_content: 'thinking' }), req, 'resp_1')
+
+  expect(res.output[0]).toMatchObject({
+    type: 'reasoning', summary: [{ type: 'summary_text', text: 'thinking' }],
+  })
+  expect(res.output[1]).toMatchObject({ type: 'message' })
+})
+
+test('tool calls become function_call items', () => {
+  const res = fromCompletion(completion({
+    content: null,
+    tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'f', arguments: '{"a":1}' } }],
+  }, 'tool_calls'), req, 'resp_1')
+
+  expect(res.output).toEqual([{
+    type: 'function_call', id: expect.stringMatching(/^fc_/), call_id: 'call_1',
+    name: 'f', arguments: '{"a":1}', status: 'completed',
+  }])
+  // A tool call is a finished turn, not a truncated one.
+  expect(res.status).toBe('completed')
+})
+
+test('a length finish becomes incomplete with a reason', () => {
+  const res = fromCompletion(completion({ content: 'partial' }, 'length'), req, 'resp_1')
+
+  expect(res.status).toBe('incomplete')
+  expect(res.incomplete_details).toEqual({ reason: 'max_output_tokens' })
+})
+
+test('usage is restated in the Responses spelling', () => {
+  const res = fromCompletion(completion({ content: 'hi' }), req, 'resp_1')
+
+  expect(res.usage).toMatchObject({ input_tokens: 3, output_tokens: 2, total_tokens: 5 })
+})
+
+test('the request parameters are echoed back', () => {
+  // The real API returns them on the response object, and the request is in
+  // hand, so mirroring it costs nothing and improves client fidelity.
+  const res = fromCompletion(completion({ content: 'hi' }), {
+    model: 'virtual', input: 'hi', instructions: 'be terse', temperature: 0.5,
+    tools: [{ type: 'function', name: 'f' }],
+  }, 'resp_1')
+
+  expect(res).toMatchObject({
+    instructions: 'be terse', temperature: 0.5, tools: [{ type: 'function', name: 'f' }],
+  })
 })

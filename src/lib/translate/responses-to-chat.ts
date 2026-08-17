@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import type { ChatCompletion, ResponsesResult } from '@/lib/adapters/types'
 import { ProviderError } from '@/lib/gateway/errors'
 import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
 import type { ResponsesRequest } from '@/lib/schemas/responses'
@@ -5,8 +7,9 @@ import type { ResponsesRequest } from '@/lib/schemas/responses'
 /**
  * The other half of the round trip `chat-to-responses.ts` holds: this module
  * translates a Responses request into Chat Completions, for the case where a
- * Responses-shaped call lands on a chat-only provider. Later tasks add the
- * result and stream halves to this same file, mirroring how the sibling
+ * Responses-shaped call lands on a chat-only provider, and translates the
+ * chat-only provider's completion back into the Response shape the client
+ * asked for. The stream half is a later task, mirroring how the sibling
  * module grew.
  *
  * Pure — no client, no I/O — so it tests as plain functions.
@@ -319,4 +322,151 @@ export function toChatRequest(req: ResponsesRequest): ChatCompletionRequest {
     ...(req.user ? { user: req.user } : {}),
     ...(responseFormat ? { response_format: responseFormat } : {}),
   } as ChatCompletionRequest
+}
+
+type OutputItem = ResponsesResult['output'][number]
+
+/**
+ * `reasoning_content` is not part of Chat Completions' own schema — it is the
+ * de facto convention DeepSeek, vLLM and OpenRouter use, and the one this
+ * gateway's own `fromResponse` (chat-to-responses.ts) writes on the way out —
+ * so a completion that carries it needs a cast to read it back.
+ */
+type ChatMessageWithReasoning = ChatCompletion['choices'][number]['message'] & {
+  reasoning_content?: string
+}
+
+/**
+ * `finish_reason` doubles as both the response-level status and, applied
+ * uniformly, the status of every item in `output` — the same convention
+ * `captureResponse` (gateway/protocols/responses.ts) uses for its own
+ * synthesized message item. `tool_calls` falls through to `completed`
+ * deliberately: a tool call is a finished turn, not a truncated one.
+ */
+function statusOf(
+  finishReason: string,
+): { status: 'completed' | 'incomplete'; incompleteDetails: NonNullable<ResponsesResult['incomplete_details']> | null } {
+  if (finishReason === 'length') {
+    return { status: 'incomplete', incompleteDetails: { reason: 'max_output_tokens' } }
+  }
+  if (finishReason === 'content_filter') {
+    return { status: 'incomplete', incompleteDetails: { reason: 'content_filter' } }
+  }
+  return { status: 'completed', incompleteDetails: null }
+}
+
+/**
+ * Expands one Chat message into the ordered items a Response's flat `output`
+ * array carries: reasoning first (it precedes the answer it led to), then the
+ * message (only when there is content or a refusal to show — a bare tool
+ * call has neither), then one function_call per tool call. Ids are minted
+ * here since a Chat Completion never carries per-item ids of its own.
+ */
+function toOutput(message: ChatMessageWithReasoning, itemStatus: 'completed' | 'incomplete'): OutputItem[] {
+  const output: OutputItem[] = []
+
+  if (message.reasoning_content) {
+    output.push({
+      id: `rs_${randomUUID()}`,
+      type: 'reasoning',
+      summary: [{ type: 'summary_text', text: message.reasoning_content }],
+      status: itemStatus,
+    } as unknown as OutputItem)
+  }
+
+  const content: { type: string; [key: string]: unknown }[] = []
+  if (message.content) content.push({ type: 'output_text', text: message.content, annotations: [] })
+  if (message.refusal) content.push({ type: 'refusal', refusal: message.refusal })
+  if (content.length > 0) {
+    output.push({
+      id: `msg_${randomUUID()}`,
+      type: 'message',
+      role: 'assistant',
+      status: itemStatus,
+      content,
+    } as unknown as OutputItem)
+  }
+
+  // Only a function tool call has a `.function` to read a name/arguments
+  // from — the same restriction assertServiceable enforces on the way in, so
+  // a custom tool call can never reach a Chat Completions provider as a call
+  // for it to answer with in the first place.
+  const toolCalls = (message.tool_calls ?? []) as unknown as {
+    id: string
+    function: { name: string; arguments: string }
+  }[]
+  for (const call of toolCalls) {
+    output.push({
+      id: `fc_${randomUUID()}`,
+      type: 'function_call',
+      call_id: call.id,
+      name: call.function.name,
+      arguments: call.function.arguments,
+      status: itemStatus,
+    } as unknown as OutputItem)
+  }
+
+  return output
+}
+
+/**
+ * The inverse of `usageFromResponses` (gateway/usage.ts): Chat's
+ * `prompt_tokens`/`completion_tokens` restated under the Responses spelling
+ * `input_tokens`/`output_tokens`. Undefined when the completion carries no
+ * usage at all — a fabricated all-zero object would read as "this cost
+ * nothing" rather than "the provider did not say".
+ */
+function toUsage(usage: ChatCompletion['usage']): ResponsesResult['usage'] | undefined {
+  if (!usage) return undefined
+  return {
+    input_tokens: usage.prompt_tokens,
+    output_tokens: usage.completion_tokens,
+    total_tokens: usage.total_tokens,
+    ...(usage.prompt_tokens_details
+      ? { input_tokens_details: { cached_tokens: usage.prompt_tokens_details.cached_tokens } }
+      : {}),
+    ...(usage.completion_tokens_details
+      ? { output_tokens_details: { reasoning_tokens: usage.completion_tokens_details.reasoning_tokens } }
+      : {}),
+  } as ResponsesResult['usage']
+}
+
+/**
+ * Translates a chat-only provider's completion back into the Response shape
+ * the client asked for. `id` is minted by the caller (`newResponseId()`),
+ * never here — this path has no upstream Responses id to preserve, since the
+ * target is a stateless chat provider. `model` comes from the completion, not
+ * `req`: the gateway's own identity step overwrites it with the virtual model
+ * name afterwards, and duplicating that here would be a second source of
+ * truth.
+ */
+export function fromCompletion(res: ChatCompletion, req: ResponsesRequest, id: string): ResponsesResult {
+  const choice = res.choices[0]
+  const message = choice.message as ChatMessageWithReasoning
+  const { status, incompleteDetails } = statusOf(choice.finish_reason)
+
+  return {
+    id,
+    object: 'response',
+    created_at: res.created,
+    model: res.model,
+    status,
+    incomplete_details: incompleteDetails,
+    output: toOutput(message, status),
+    ...(res.usage ? { usage: toUsage(res.usage) } : {}),
+    // Echoed from the request: the real API returns them on the response
+    // object, and the request is in hand, so mirroring it costs nothing and
+    // improves client fidelity.
+    instructions: req.instructions ?? null,
+    tools: req.tools ?? [],
+    ...(req.tool_choice === undefined ? {} : { tool_choice: req.tool_choice }),
+    temperature: req.temperature ?? null,
+    top_p: req.top_p ?? null,
+    ...(req.text === undefined ? {} : { text: req.text }),
+    ...(req.reasoning === undefined ? {} : { reasoning: req.reasoning }),
+    ...(req.max_output_tokens == null ? {} : { max_output_tokens: req.max_output_tokens }),
+    parallel_tool_calls: req.parallel_tool_calls ?? true,
+    metadata: req.metadata ?? null,
+    ...(req.user === undefined ? {} : { user: req.user }),
+  } as unknown as ResponsesResult
 }
