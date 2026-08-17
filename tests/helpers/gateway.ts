@@ -65,6 +65,17 @@ export function chatRequest(body: unknown, apiKey: string | null) {
   })
 }
 
+export function responsesRequest(body: unknown, apiKey: string | null) {
+  return new Request('http://gateway.test/v1/responses', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+}
+
 export function fakeAdapterDeps(adapter: Partial<ProviderAdapter>) {
   return {
     createAdapter: () => ({

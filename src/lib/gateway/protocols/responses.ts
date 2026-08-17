@@ -1,7 +1,9 @@
-import type { ResponseStreamEvent } from '@/lib/adapters/types'
+import type { AttemptContext, ResponseStreamEvent, ResponsesResult } from '@/lib/adapters/types'
 import type { LogUsage } from '@/lib/logs/types'
-import type { ClassifiedError } from '../errors'
-import { rewriteResponse } from '../identity'
+import { responsesRequestSchema, type ResponsesRequest } from '@/lib/schemas/responses'
+import { UnsupportedOperationError, type ClassifiedError } from '../errors'
+import { parseWith, type Ingress } from '../handler'
+import { newResponseId, rewriteResponse } from '../identity'
 import type { StreamCapture, StreamProtocol } from '../sse'
 import { usageFromResponses } from '../usage'
 
@@ -62,4 +64,45 @@ export const responsesStreamProtocol: StreamProtocol<ResponseStreamEvent> = {
   },
 
   isContentDelta: (event) => CONTENT_DELTAS.has(event.type),
+}
+
+/**
+ * An adapter that does not implement the pair cannot serve this shape at all.
+ * 501 rather than 500: classifyProviderError already maps
+ * UnsupportedOperationError to a non-retryable 501, which is the same answer an
+ * unimplemented adapter type gives.
+ */
+function requirePair<T>(method: T | undefined, ctx: AttemptContext, name: string): T {
+  if (!method) {
+    throw new UnsupportedOperationError(
+      `This provider cannot serve a Responses request for \`${ctx.upstreamModel}\`: it has no ${name} implementation. Set the route target's API flavor to "responses".`,
+    )
+  }
+  return method
+}
+
+export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, ResponseStreamEvent> = {
+  parse: (raw) => parseWith(responsesRequestSchema, raw),
+  modelOf: (req) => req.model,
+  isStream: (req) => req.stream === true,
+  // Filled in by Task 14; a passthrough target expresses everything it is sent.
+  droppedFor: () => [],
+  run: (adapter, ctx, req) =>
+    requirePair(adapter.respond, ctx, 'respond').call(adapter, req, ctx),
+  runStream: (adapter, ctx, req) =>
+    requirePair(adapter.respondStream, ctx, 'respondStream').call(adapter, req, ctx),
+  finish: (res, identity) => rewriteResponse(res, identity),
+  usageOf: (res) => usageFromResponses(res.usage as never),
+  newIdentityId: newResponseId,
+  stream: responsesStreamProtocol,
+  captureResponse: (identity, capture, outcome) => ({
+    id: identity.id,
+    object: 'response',
+    model: identity.model,
+    status: outcome === 'ok' ? 'completed' : 'incomplete',
+    output: [{
+      type: 'message', role: 'assistant', status: outcome === 'ok' ? 'completed' : 'incomplete',
+      content: [{ type: 'output_text', text: capture.text, annotations: [] }],
+    }],
+  }),
 }
