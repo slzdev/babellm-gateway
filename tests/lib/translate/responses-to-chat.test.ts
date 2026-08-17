@@ -96,6 +96,18 @@ test('tools are un-nested into the chat shape', () => {
   }])
 })
 
+test('a hosted tool never reaches the output as a malformed function tool', () => {
+  // Chat Completions can express only function tools. assertServiceable
+  // rejects a hosted tool before this module runs, but toTools must not emit
+  // a structurally invalid {function: {name: undefined}} regardless.
+  const { tools } = toChatRequest({
+    model: 'm', input: 'hi',
+    tools: [{ type: 'web_search' }, { type: 'function', name: 'f' }] as never,
+  })
+
+  expect(tools).toEqual([{ type: 'function', function: { name: 'f' } }])
+})
+
 test('a named tool_choice is un-nested too', () => {
   expect(toChatRequest({ model: 'm', input: 'hi', tool_choice: { type: 'function', name: 'f' } }).tool_choice)
     .toEqual({ type: 'function', function: { name: 'f' } })

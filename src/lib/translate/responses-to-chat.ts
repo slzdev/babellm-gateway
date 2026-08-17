@@ -128,23 +128,33 @@ function toMessageContent(
 }
 
 function toTools(tools: Tool[]) {
-  return tools.map((tool) => {
-    const t = tool as unknown as {
-      name: string
-      description?: string
-      parameters?: Record<string, unknown>
-      strict?: boolean | null
-    }
-    return {
-      type: 'function' as const,
-      function: {
-        name: t.name,
-        ...(t.description === undefined ? {} : { description: t.description }),
-        ...(t.parameters === undefined ? {} : { parameters: t.parameters }),
-        ...(t.strict === undefined ? {} : { strict: t.strict }),
-      },
-    }
-  })
+  return tools
+    // Chat Completions can express only function tools; a hosted tool
+    // (web_search, file_search, ...) has no `name` to un-nest and mapping it
+    // anyway would emit `function: {name: undefined}`, which fails Chat's own
+    // schema. This is belt to assertServiceable's braces, not a policy
+    // decision of its own — that check runs before this module does and
+    // already refuses the request for any non-function tool, so nothing here
+    // is meant to be reachable in production. A pure function still must
+    // never emit a structurally invalid value for whatever a caller hands it.
+    .filter((tool) => (tool as { type: string }).type === 'function')
+    .map((tool) => {
+      const t = tool as unknown as {
+        name: string
+        description?: string
+        parameters?: Record<string, unknown>
+        strict?: boolean | null
+      }
+      return {
+        type: 'function' as const,
+        function: {
+          name: t.name,
+          ...(t.description === undefined ? {} : { description: t.description }),
+          ...(t.parameters === undefined ? {} : { parameters: t.parameters }),
+          ...(t.strict === undefined ? {} : { strict: t.strict }),
+        },
+      }
+    })
 }
 
 function toToolChoice(choice: ToolChoice): ChatCompletionRequest['tool_choice'] {
