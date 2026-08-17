@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import type { ChatCompletion, ResponsesResult } from '@/lib/adapters/types'
+import type { ChatCompletion, ChatCompletionChunk, ResponseStreamEvent, ResponsesResult } from '@/lib/adapters/types'
 import { ProviderError } from '@/lib/gateway/errors'
+import { usageFrom } from '@/lib/gateway/usage'
+import type { LogUsage } from '@/lib/logs/types'
 import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
 import type { ResponsesRequest } from '@/lib/schemas/responses'
 
@@ -432,6 +434,28 @@ function toUsage(usage: ChatCompletion['usage']): ResponsesResult['usage'] | und
 }
 
 /**
+ * Fields a Responses object echoes straight back from the request that
+ * produced it — shared by `fromCompletion` (one snapshot) and
+ * `fromCompletionStream` (one snapshot per lifecycle event), so the two
+ * never drift apart on what a client sees reflected back.
+ */
+function echoedRequestFields(req: ResponsesRequest) {
+  return {
+    instructions: req.instructions ?? null,
+    tools: req.tools ?? [],
+    ...(req.tool_choice === undefined ? {} : { tool_choice: req.tool_choice }),
+    temperature: req.temperature ?? null,
+    top_p: req.top_p ?? null,
+    ...(req.text === undefined ? {} : { text: req.text }),
+    ...(req.reasoning === undefined ? {} : { reasoning: req.reasoning }),
+    ...(req.max_output_tokens == null ? {} : { max_output_tokens: req.max_output_tokens }),
+    parallel_tool_calls: req.parallel_tool_calls ?? true,
+    metadata: req.metadata ?? null,
+    ...(req.user === undefined ? {} : { user: req.user }),
+  }
+}
+
+/**
  * Translates a chat-only provider's completion back into the Response shape
  * the client asked for. `id` is minted by the caller (`newResponseId()`),
  * never here — this path has no upstream Responses id to preserve, since the
@@ -454,19 +478,331 @@ export function fromCompletion(res: ChatCompletion, req: ResponsesRequest, id: s
     incomplete_details: incompleteDetails,
     output: toOutput(message, status),
     ...(res.usage ? { usage: toUsage(res.usage) } : {}),
-    // Echoed from the request: the real API returns them on the response
-    // object, and the request is in hand, so mirroring it costs nothing and
-    // improves client fidelity.
-    instructions: req.instructions ?? null,
-    tools: req.tools ?? [],
-    ...(req.tool_choice === undefined ? {} : { tool_choice: req.tool_choice }),
-    temperature: req.temperature ?? null,
-    top_p: req.top_p ?? null,
-    ...(req.text === undefined ? {} : { text: req.text }),
-    ...(req.reasoning === undefined ? {} : { reasoning: req.reasoning }),
-    ...(req.max_output_tokens == null ? {} : { max_output_tokens: req.max_output_tokens }),
-    parallel_tool_calls: req.parallel_tool_calls ?? true,
-    metadata: req.metadata ?? null,
-    ...(req.user === undefined ? {} : { user: req.user }),
+    ...echoedRequestFields(req),
   } as unknown as ResponsesResult
+}
+
+/**
+ * Chat Completions chunks are positional deltas — one `choices[0].delta`
+ * fragment at a time, with no notion of "item" at all. Responses events are
+ * semantic and indexed by `output_index`, which counts every output item —
+ * reasoning, message, and function calls alike — in the order they open,
+ * while `tool_calls[].index` on the incoming chunk counts only tool calls.
+ * Those two counters are never the same number once more than one kind of
+ * item appears, so the map between them — `outputIndex` alongside a
+ * `toolCalls` entry per chunk-index — is the only state this translator
+ * keeps.
+ */
+interface StreamState {
+  /** Monotonic across every event the gateway emits, from 0. */
+  sequence: number
+  /** Counts every output item — reasoning and message included — which is
+   *  what output_index means, unlike tool_calls[].index. */
+  outputIndex: number
+  reasoning: { index: number; itemId: string; text: string } | null
+  message: { index: number; itemId: string; text: string } | null
+  /** Keyed by the chunk's tool_calls[].index, which is dense over tool calls
+   *  only and therefore never equals output_index. */
+  toolCalls: Map<number, { index: number; itemId: string; callId: string; name: string; args: string }>
+  finishReason: string | null
+  usage: LogUsage | null
+}
+
+type ToolCallEntry = NonNullable<ReturnType<StreamState['toolCalls']['get']>>
+
+/**
+ * `reasoning_content` is the same non-standard convention `toOutput` reads
+ * off a buffered completion (see `ChatMessageWithReasoning` above) — here on
+ * the streamed delta instead of the assembled message.
+ */
+type DeltaWithReasoning = {
+  content?: string | null
+  reasoning_content?: string
+  tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[]
+}
+
+/**
+ * A response snapshot as it stands at some point in the stream: on
+ * `response.created`/`response.in_progress` there is no output yet and no
+ * usage; on the terminal event both are final. One builder for all of them
+ * so the "echoed from the request" fields (see `echoedRequestFields`) are
+ * never duplicated per call site.
+ */
+function buildResponse(
+  id: string,
+  req: ResponsesRequest,
+  createdAt: number,
+  status: 'in_progress' | 'completed' | 'incomplete',
+  incompleteDetails: NonNullable<ResponsesResult['incomplete_details']> | null,
+  output: OutputItem[],
+  usage: ResponsesResult['usage'] | undefined,
+): ResponsesResult {
+  return {
+    id,
+    object: 'response',
+    created_at: createdAt,
+    model: req.model,
+    status,
+    incomplete_details: incompleteDetails,
+    output,
+    ...(usage ? { usage } : {}),
+    ...echoedRequestFields(req),
+  } as unknown as ResponsesResult
+}
+
+/**
+ * The Responses spelling of the four numbers `usageFrom` (gateway/usage.ts)
+ * already normalized into `LogUsage`. `total_tokens` is not one of those four
+ * — it is derived here as input+output rather than carried through from the
+ * upstream chunk, which costs nothing since that is exactly what it measures,
+ * and stays null rather than 0 when either side is unmeasured.
+ */
+function toResponseUsage(usage: LogUsage | null): ResponsesResult['usage'] | undefined {
+  if (!usage) return undefined
+  const { promptTokens, completionTokens, cachedTokens, reasoningTokens } = usage
+  return {
+    input_tokens: promptTokens,
+    output_tokens: completionTokens,
+    total_tokens: promptTokens != null && completionTokens != null ? promptTokens + completionTokens : null,
+    ...(cachedTokens != null ? { input_tokens_details: { cached_tokens: cachedTokens } } : {}),
+    ...(reasoningTokens != null ? { output_tokens_details: { reasoning_tokens: reasoningTokens } } : {}),
+  } as unknown as ResponsesResult['usage']
+}
+
+/**
+ * Opens the reasoning item. Always output_index 0 when it appears at all,
+ * since reasoning is the first thing a model streams — nothing else could
+ * have claimed a lower index yet.
+ */
+function* openReasoning(state: StreamState): Generator<ResponseStreamEvent> {
+  const index = state.outputIndex++
+  const itemId = `rs_${randomUUID()}`
+  state.reasoning = { index, itemId, text: '' }
+  yield {
+    type: 'response.output_item.added',
+    output_index: index,
+    sequence_number: state.sequence++,
+    item: { id: itemId, type: 'reasoning', summary: [], status: 'in_progress' },
+  } as unknown as ResponseStreamEvent
+}
+
+/**
+ * Closes the reasoning item if one is open — a no-op otherwise, so every call
+ * site can call this unconditionally on a phase transition or at stream end
+ * without first checking `state.reasoning`. Appends the finished item to
+ * `output` for the terminal response's `output` array and clears the slot so
+ * a second close (e.g. both a phase transition and the end-of-stream sweep)
+ * only emits once.
+ */
+function* closeReasoning(state: StreamState, output: OutputItem[]): Generator<ResponseStreamEvent> {
+  if (!state.reasoning) return
+  const { index, itemId, text } = state.reasoning
+  yield {
+    type: 'response.reasoning_summary_text.done',
+    item_id: itemId, output_index: index, summary_index: 0, text,
+    sequence_number: state.sequence++,
+  } as unknown as ResponseStreamEvent
+  const item = { id: itemId, type: 'reasoning', summary: [{ type: 'summary_text', text }], status: 'completed' }
+  yield {
+    type: 'response.output_item.done', item, output_index: index,
+    sequence_number: state.sequence++,
+  } as unknown as ResponseStreamEvent
+  output.push(item as unknown as OutputItem)
+  state.reasoning = null
+}
+
+/** Opens the message item and its sole content part in the same breath — a
+ *  Chat Completions message never has more than one text part streaming. */
+function* openMessage(state: StreamState): Generator<ResponseStreamEvent> {
+  const index = state.outputIndex++
+  const itemId = `msg_${randomUUID()}`
+  state.message = { index, itemId, text: '' }
+  yield {
+    type: 'response.output_item.added', output_index: index, sequence_number: state.sequence++,
+    item: { id: itemId, type: 'message', role: 'assistant', status: 'in_progress', content: [] },
+  } as unknown as ResponseStreamEvent
+  yield {
+    type: 'response.content_part.added', item_id: itemId, output_index: index, content_index: 0,
+    part: { type: 'output_text', text: '', annotations: [] }, sequence_number: state.sequence++,
+  } as unknown as ResponseStreamEvent
+}
+
+/** See `closeReasoning` — same no-op-when-absent, close-once contract. */
+function* closeMessage(state: StreamState, output: OutputItem[]): Generator<ResponseStreamEvent> {
+  if (!state.message) return
+  const { index, itemId, text } = state.message
+  yield {
+    type: 'response.output_text.done', item_id: itemId, output_index: index, content_index: 0, text,
+    sequence_number: state.sequence++,
+  } as unknown as ResponseStreamEvent
+  yield {
+    type: 'response.content_part.done', item_id: itemId, output_index: index, content_index: 0,
+    part: { type: 'output_text', text, annotations: [] }, sequence_number: state.sequence++,
+  } as unknown as ResponseStreamEvent
+  const item = {
+    id: itemId, type: 'message', role: 'assistant', status: 'completed',
+    content: [{ type: 'output_text', text, annotations: [] }],
+  }
+  yield {
+    type: 'response.output_item.done', item, output_index: index, sequence_number: state.sequence++,
+  } as unknown as ResponseStreamEvent
+  output.push(item as unknown as OutputItem)
+  state.message = null
+}
+
+/**
+ * Opens one function_call item. Unlike reasoning/message, several of these
+ * can be open at once — parallel tool calls — so this is called per new
+ * `tool_calls[].index` rather than gated on a single state slot.
+ */
+function* openToolCall(
+  state: StreamState,
+  toolIndex: number,
+  callId: string,
+  name: string,
+): Generator<ResponseStreamEvent> {
+  const index = state.outputIndex++
+  const itemId = `fc_${randomUUID()}`
+  state.toolCalls.set(toolIndex, { index, itemId, callId, name, args: '' })
+  yield {
+    type: 'response.output_item.added', output_index: index, sequence_number: state.sequence++,
+    item: { id: itemId, type: 'function_call', call_id: callId, name, arguments: '', status: 'in_progress' },
+  } as unknown as ResponseStreamEvent
+}
+
+/** Closes one function_call item. Called once per entry at stream end —
+ *  Chat Completions never signals a single tool call as finished mid-stream,
+ *  only the whole choice via `finish_reason`. */
+function* closeToolCall(entry: ToolCallEntry, state: StreamState, output: OutputItem[]): Generator<ResponseStreamEvent> {
+  yield {
+    type: 'response.function_call_arguments.done', item_id: entry.itemId, output_index: entry.index,
+    name: entry.name, arguments: entry.args, sequence_number: state.sequence++,
+  } as unknown as ResponseStreamEvent
+  const item = {
+    id: entry.itemId, type: 'function_call', call_id: entry.callId, name: entry.name,
+    arguments: entry.args, status: 'completed',
+  }
+  yield {
+    type: 'response.output_item.done', item, output_index: entry.index, sequence_number: state.sequence++,
+  } as unknown as ResponseStreamEvent
+  output.push(item as unknown as OutputItem)
+}
+
+/**
+ * Translates a chat-only provider's chunk stream into Responses events, the
+ * streaming counterpart to `fromCompletion` above. `id` and `req` play the
+ * same roles they do there — a caller-minted id with no upstream Responses id
+ * to preserve, and the request whose fields get echoed onto every response
+ * snapshot.
+ *
+ * Framing: `response.created` then `response.in_progress` fire before any
+ * chunk is read, both describing an empty in-progress response — real
+ * content only exists once the first chunk arrives. The terminal event fires
+ * only after the chunk stream itself ends, not the moment a `finish_reason`
+ * is seen, because a provider may still send a trailing usage-only chunk
+ * (empty `choices`) after the one that carried `finish_reason` — the
+ * "usage from the final chunk" test below depends on this.
+ */
+export async function* fromCompletionStream(
+  chunks: AsyncIterable<ChatCompletionChunk>,
+  req: ResponsesRequest,
+  id: string,
+): AsyncIterable<ResponseStreamEvent> {
+  const state: StreamState = {
+    sequence: 0, outputIndex: 0, reasoning: null, message: null,
+    toolCalls: new Map(), finishReason: null, usage: null,
+  }
+  const output: OutputItem[] = []
+  const createdAt = Math.floor(Date.now() / 1000)
+
+  yield {
+    type: 'response.created', sequence_number: state.sequence++,
+    response: buildResponse(id, req, createdAt, 'in_progress', null, [], undefined),
+  } as unknown as ResponseStreamEvent
+  yield {
+    type: 'response.in_progress', sequence_number: state.sequence++,
+    response: buildResponse(id, req, createdAt, 'in_progress', null, [], undefined),
+  } as unknown as ResponseStreamEvent
+
+  for await (const rawChunk of chunks) {
+    // Usage rides its own top-level field, independent of `choices` — the
+    // real API's trailing usage-only chunk has an empty choices array, so
+    // this check cannot live inside the `choice` guard below.
+    if (rawChunk.usage) state.usage = usageFrom(rawChunk.usage)
+
+    const choice = rawChunk.choices?.[0]
+    if (!choice) continue
+    const delta = choice.delta as DeltaWithReasoning
+
+    if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
+      if (!state.reasoning) yield* openReasoning(state)
+      state.reasoning!.text += delta.reasoning_content
+      yield {
+        type: 'response.reasoning_summary_text.delta', item_id: state.reasoning!.itemId,
+        output_index: state.reasoning!.index, summary_index: 0, delta: delta.reasoning_content,
+        sequence_number: state.sequence++,
+      } as unknown as ResponseStreamEvent
+    }
+
+    if (typeof delta.content === 'string' && delta.content.length > 0) {
+      // The message supersedes reasoning the moment real content starts —
+      // Chat Completions gives no explicit "reasoning is done" signal, so a
+      // phase transition is the only place to infer one.
+      if (!state.message) {
+        yield* closeReasoning(state, output)
+        yield* openMessage(state)
+      }
+      state.message!.text += delta.content
+      yield {
+        type: 'response.output_text.delta', item_id: state.message!.itemId,
+        output_index: state.message!.index, content_index: 0, delta: delta.content,
+        sequence_number: state.sequence++,
+      } as unknown as ResponseStreamEvent
+    }
+
+    if (Array.isArray(delta.tool_calls)) {
+      for (const tc of delta.tool_calls) {
+        if (!state.toolCalls.has(tc.index)) {
+          // Same transition as above, triggered once — by the first tool
+          // call — rather than per call, since a second parallel call opens
+          // alongside calls already in flight, not after closing them.
+          if (state.toolCalls.size === 0) {
+            yield* closeMessage(state, output)
+            yield* closeReasoning(state, output)
+          }
+          yield* openToolCall(state, tc.index, tc.id ?? '', tc.function?.name ?? '')
+        }
+        const entry = state.toolCalls.get(tc.index)!
+        // A provider that splits id and name across chunks gets the name
+        // filled in whenever it does arrive, not just on the opening chunk.
+        if (tc.function?.name && !entry.name) entry.name = tc.function.name
+        if (typeof tc.function?.arguments === 'string' && tc.function.arguments.length > 0) {
+          entry.args += tc.function.arguments
+          yield {
+            type: 'response.function_call_arguments.delta', item_id: entry.itemId,
+            output_index: entry.index, delta: tc.function.arguments, sequence_number: state.sequence++,
+          } as unknown as ResponseStreamEvent
+        }
+      }
+    }
+
+    if (choice.finish_reason) state.finishReason = choice.finish_reason
+  }
+
+  // Whatever is still open closes here, in output_index order: reasoning (if
+  // the model never produced a message), then the message, then every tool
+  // call — matching the order they opened in, since Chat Completions gives no
+  // per-item "done" signal short of the stream itself ending.
+  yield* closeReasoning(state, output)
+  yield* closeMessage(state, output)
+  for (const entry of state.toolCalls.values()) yield* closeToolCall(entry, state, output)
+
+  const { status, incompleteDetails } = statusOf(state.finishReason ?? 'stop')
+  const response = buildResponse(id, req, createdAt, status, incompleteDetails, output, toResponseUsage(state.usage))
+
+  yield {
+    type: status === 'incomplete' ? 'response.incomplete' : 'response.completed',
+    sequence_number: state.sequence++,
+    response,
+  } as unknown as ResponseStreamEvent
 }
