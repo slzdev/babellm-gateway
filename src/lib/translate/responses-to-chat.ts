@@ -1,3 +1,4 @@
+import { ProviderError } from '@/lib/gateway/errors'
 import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
 import type { ResponsesRequest } from '@/lib/schemas/responses'
 
@@ -239,6 +240,59 @@ function toMessages(input: ResponsesRequest['input']): ChatMessage[] {
   }
 
   return messages
+}
+
+/**
+ * The rejections, as opposed to the drops.
+ *
+ * droppedParams covers parameters that shade the answer — the request still
+ * gets a right-shaped response, just missing an extra or two. These change
+ * it: a request asking for `web_search` against a provider that cannot
+ * search is answered wrongly in a way that looks right, which is the one
+ * failure mode the "drop and report" rule cannot cover. So it is refused
+ * outright rather than silently degraded.
+ *
+ * The tool check is inverted on purpose: reject anything that is not
+ * `type: 'function'`, rather than denying a fixed list of hosted-tool names.
+ * Chat Completions can express exactly one kind of tool, so this is total —
+ * a hosted tool OpenAI ships next month is caught by the same rule without
+ * this file being touched again. A deny-list would let it through to
+ * `toTools`, which silently drops anything it doesn't recognise.
+ *
+ * Non-retryable on purpose, twice over: it stops the chain rather than
+ * replaying a request every target would refuse, and — because `execute`
+ * only reports health for retryable failures — it cannot open a circuit
+ * breaker on a target that is perfectly healthy.
+ *
+ * `background` is NOT checked here: it is refused for every target
+ * regardless of API flavor, so the ingress schema rejects it at parse time
+ * instead of every translation path re-checking it.
+ */
+export function assertServiceable(req: ResponsesRequest, provider: string): void {
+  const nonFunction = req.tools?.find((tool) => tool.type !== 'function')
+  if (nonFunction) {
+    throw refuse(
+      `The \`${nonFunction.type}\` tool is not available on provider "${provider}", which serves the Chat Completions API. Route this model to a target whose API flavor is "responses".`,
+    )
+  }
+
+  for (const field of ['previous_response_id', 'conversation'] as const) {
+    if (req[field] != null) {
+      throw refuse(
+        `\`${field}\` is not supported on provider "${provider}", which serves the Chat Completions API and holds no conversation state. Send the full input, or route this model to a target whose API flavor is "responses".`,
+      )
+    }
+  }
+
+  if (Array.isArray(req.input) && req.input.some((item) => item.type === 'item_reference')) {
+    throw refuse(
+      `An \`item_reference\` input item cannot be resolved on provider "${provider}", which serves the Chat Completions API and holds no conversation state.`,
+    )
+  }
+}
+
+function refuse(message: string): ProviderError {
+  return new ProviderError({ status: 400, message, code: 'unsupported_parameter', retryable: false })
 }
 
 export function toChatRequest(req: ResponsesRequest): ChatCompletionRequest {

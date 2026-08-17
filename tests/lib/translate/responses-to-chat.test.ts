@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { droppedParams, toChatRequest } from '@/lib/translate/responses-to-chat'
+import { assertServiceable, droppedParams, toChatRequest } from '@/lib/translate/responses-to-chat'
 
 test('a bare string input becomes one user message', () => {
   expect(toChatRequest({ model: 'm', input: 'hi' }).messages)
@@ -165,4 +165,52 @@ test('store: false is not reported, because it is what chat does anyway', () => 
   // Reporting an inert value would put a line in the header on nearly every
   // request and bury the ones that changed the answer.
   expect(droppedParams({ model: 'm', input: 'hi', store: false })).toEqual([])
+})
+
+test.each([
+  'web_search', 'file_search', 'code_interpreter', 'image_generation', 'computer_use', 'mcp',
+])('rejects the hosted tool %s by name', (type) => {
+  // Dropping a hosted tool would answer the request wrongly rather than
+  // approximately: the model cannot search, and says so as if it had.
+  expect(() => assertServiceable({ model: 'm', input: 'hi', tools: [{ type }] }, 'p1'))
+    .toThrow(new RegExp(`${type}.*p1`))
+})
+
+test('rejects an unknown, not-yet-invented tool type', () => {
+  // The check is an inversion (reject anything that is not `function`), not a
+  // deny-list of today's hosted tools: a type OpenAI ships tomorrow must be
+  // caught by the same rule without this file ever being touched again.
+  expect(() => assertServiceable({ model: 'm', input: 'hi', tools: [{ type: 'quantum_search' }] }, 'p1'))
+    .toThrow(new RegExp('quantum_search.*p1'))
+})
+
+test('accepts a function tool', () => {
+  expect(() => assertServiceable({ model: 'm', input: 'hi', tools: [{ type: 'function', name: 'f' }] }, 'p1'))
+    .not.toThrow()
+})
+
+test('rejects previous_response_id, which a chat provider cannot resolve', () => {
+  expect(() => assertServiceable({ model: 'm', input: 'hi', previous_response_id: 'resp_1' }, 'p1'))
+    .toThrow(/previous_response_id/)
+})
+
+test('rejects conversation for the same reason', () => {
+  expect(() => assertServiceable({ model: 'm', input: 'hi', conversation: 'conv_1' }, 'p1'))
+    .toThrow(/conversation/)
+})
+
+test('rejects an item_reference input item', () => {
+  expect(() => assertServiceable({ model: 'm', input: [{ type: 'item_reference', id: 'msg_1' }] }, 'p1'))
+    .toThrow(/item_reference/)
+})
+
+test('the rejection is a non-retryable 400', () => {
+  // Non-retryable twice over: execute must not replay a doomed request against
+  // every target, and recordHealth must not demote a target that is healthy.
+  try {
+    assertServiceable({ model: 'm', input: 'hi', tools: [{ type: 'web_search' }] }, 'p1')
+    expect.unreachable()
+  } catch (err) {
+    expect(err).toMatchObject({ name: 'ProviderError', status: 400, retryable: false })
+  }
 })
