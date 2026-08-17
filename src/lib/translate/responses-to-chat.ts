@@ -500,7 +500,16 @@ interface StreamState {
    *  what output_index means, unlike tool_calls[].index. */
   outputIndex: number
   reasoning: { index: number; itemId: string; text: string } | null
-  message: { index: number; itemId: string; text: string } | null
+  /** A message can carry two content parts — text and refusal — each opened
+   *  lazily on its own first delta. `nextContentIndex` hands each its
+   *  `content_index` in whichever order they actually appear; the `*Index`
+   *  fields double as "has this part been opened yet" (null = not yet). */
+  message: {
+    index: number; itemId: string
+    text: string; textIndex: number | null
+    refusal: string; refusalIndex: number | null
+    nextContentIndex: number
+  } | null
   /** Keyed by the chunk's tool_calls[].index, which is dense over tool calls
    *  only and therefore never equals output_index. */
   toolCalls: Map<number, { index: number; itemId: string; callId: string; name: string; args: string }>
@@ -517,6 +526,7 @@ type ToolCallEntry = NonNullable<ReturnType<StreamState['toolCalls']['get']>>
  */
 type DeltaWithReasoning = {
   content?: string | null
+  refusal?: string | null
   reasoning_content?: string
   tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[]
 }
@@ -611,38 +621,82 @@ function* closeReasoning(state: StreamState, output: OutputItem[]): Generator<Re
   state.reasoning = null
 }
 
-/** Opens the message item and its sole content part in the same breath — a
- *  Chat Completions message never has more than one text part streaming. */
-function* openMessage(state: StreamState): Generator<ResponseStreamEvent> {
+/** Opens the message item only — its content parts (text, refusal) open
+ *  lazily and separately, see `openTextPart`/`openRefusalPart`, since which
+ *  ones a given stream carries is not known until their first delta. */
+function* openMessageItem(state: StreamState): Generator<ResponseStreamEvent> {
   const index = state.outputIndex++
   const itemId = `msg_${randomUUID()}`
-  state.message = { index, itemId, text: '' }
+  state.message = { index, itemId, text: '', textIndex: null, refusal: '', refusalIndex: null, nextContentIndex: 0 }
   yield {
     type: 'response.output_item.added', output_index: index, sequence_number: state.sequence++,
     item: { id: itemId, type: 'message', role: 'assistant', status: 'in_progress', content: [] },
   } as unknown as ResponseStreamEvent
+}
+
+/** Opens the message's `output_text` content part on its first `content`
+ *  delta. Requires `state.message` to already be open. */
+function* openTextPart(state: StreamState): Generator<ResponseStreamEvent> {
+  const message = state.message!
+  message.textIndex = message.nextContentIndex++
   yield {
-    type: 'response.content_part.added', item_id: itemId, output_index: index, content_index: 0,
-    part: { type: 'output_text', text: '', annotations: [] }, sequence_number: state.sequence++,
+    type: 'response.content_part.added', item_id: message.itemId, output_index: message.index,
+    content_index: message.textIndex, part: { type: 'output_text', text: '', annotations: [] },
+    sequence_number: state.sequence++,
   } as unknown as ResponseStreamEvent
 }
 
-/** See `closeReasoning` — same no-op-when-absent, close-once contract. */
-function* closeMessage(state: StreamState, output: OutputItem[]): Generator<ResponseStreamEvent> {
-  if (!state.message) return
-  const { index, itemId, text } = state.message
+/** Opens the message's `refusal` content part on its first `refusal` delta.
+ *  Requires `state.message` to already be open. */
+function* openRefusalPart(state: StreamState): Generator<ResponseStreamEvent> {
+  const message = state.message!
+  message.refusalIndex = message.nextContentIndex++
   yield {
-    type: 'response.output_text.done', item_id: itemId, output_index: index, content_index: 0, text,
+    type: 'response.content_part.added', item_id: message.itemId, output_index: message.index,
+    content_index: message.refusalIndex, part: { type: 'refusal', refusal: '' },
     sequence_number: state.sequence++,
   } as unknown as ResponseStreamEvent
-  yield {
-    type: 'response.content_part.done', item_id: itemId, output_index: index, content_index: 0,
-    part: { type: 'output_text', text, annotations: [] }, sequence_number: state.sequence++,
-  } as unknown as ResponseStreamEvent
-  const item = {
-    id: itemId, type: 'message', role: 'assistant', status: 'completed',
-    content: [{ type: 'output_text', text, annotations: [] }],
+}
+
+/**
+ * See `closeReasoning` — same no-op-when-absent, close-once contract. Closes
+ * whichever of the two content parts actually opened (a stream may carry
+ * text, a refusal, or — if a provider genuinely streams both — either order,
+ * text closing first here since that is this translator's own tie-break, not
+ * anything the source stream specifies).
+ */
+function* closeMessage(state: StreamState, output: OutputItem[]): Generator<ResponseStreamEvent> {
+  if (!state.message) return
+  const { index, itemId, text, textIndex, refusal, refusalIndex } = state.message
+  const content: { type: string; [key: string]: unknown }[] = []
+
+  if (textIndex !== null) {
+    yield {
+      type: 'response.output_text.done', item_id: itemId, output_index: index, content_index: textIndex, text,
+      sequence_number: state.sequence++,
+    } as unknown as ResponseStreamEvent
+    const part = { type: 'output_text', text, annotations: [] }
+    yield {
+      type: 'response.content_part.done', item_id: itemId, output_index: index, content_index: textIndex, part,
+      sequence_number: state.sequence++,
+    } as unknown as ResponseStreamEvent
+    content[textIndex] = part
   }
+
+  if (refusalIndex !== null) {
+    yield {
+      type: 'response.refusal.done', item_id: itemId, output_index: index, content_index: refusalIndex, refusal,
+      sequence_number: state.sequence++,
+    } as unknown as ResponseStreamEvent
+    const part = { type: 'refusal', refusal }
+    yield {
+      type: 'response.content_part.done', item_id: itemId, output_index: index, content_index: refusalIndex, part,
+      sequence_number: state.sequence++,
+    } as unknown as ResponseStreamEvent
+    content[refusalIndex] = part
+  }
+
+  const item = { id: itemId, type: 'message', role: 'assistant', status: 'completed', content }
   yield {
     type: 'response.output_item.done', item, output_index: index, sequence_number: state.sequence++,
   } as unknown as ResponseStreamEvent
@@ -750,12 +804,29 @@ export async function* fromCompletionStream(
       // phase transition is the only place to infer one.
       if (!state.message) {
         yield* closeReasoning(state, output)
-        yield* openMessage(state)
+        yield* openMessageItem(state)
       }
+      if (state.message!.textIndex === null) yield* openTextPart(state)
       state.message!.text += delta.content
       yield {
         type: 'response.output_text.delta', item_id: state.message!.itemId,
-        output_index: state.message!.index, content_index: 0, delta: delta.content,
+        output_index: state.message!.index, content_index: state.message!.textIndex, delta: delta.content,
+        sequence_number: state.sequence++,
+      } as unknown as ResponseStreamEvent
+    }
+
+    if (typeof delta.refusal === 'string' && delta.refusal.length > 0) {
+      // Same message-item lifecycle as `content` above — a refusal is just
+      // the other content part a message can carry.
+      if (!state.message) {
+        yield* closeReasoning(state, output)
+        yield* openMessageItem(state)
+      }
+      if (state.message!.refusalIndex === null) yield* openRefusalPart(state)
+      state.message!.refusal += delta.refusal
+      yield {
+        type: 'response.refusal.delta', item_id: state.message!.itemId,
+        output_index: state.message!.index, content_index: state.message!.refusalIndex, delta: delta.refusal,
         sequence_number: state.sequence++,
       } as unknown as ResponseStreamEvent
     }

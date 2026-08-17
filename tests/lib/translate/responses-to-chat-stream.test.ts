@@ -22,6 +22,7 @@ type Ev = {
   output_index: number
   item: { type: string; [key: string]: unknown }
   text: string
+  refusal: string
   arguments: string
   response: { incomplete_details: unknown; usage: unknown }
 }
@@ -115,4 +116,31 @@ test('usage from the final chunk reaches response.completed', async () => {
   const events = await collect([chunk({ content: 'hi' }, 'stop'), withUsage])
 
   expect(events.at(-1)!.response.usage).toMatchObject({ input_tokens: 4, output_tokens: 2 })
+})
+
+test('a refusal streams through its own content part', async () => {
+  const events = await collect([chunk({ refusal: 'I can' }), chunk({ refusal: 'not help with that' }, 'stop')])
+  const types = events.map((e) => e.type)
+
+  expect(types).toEqual([
+    'response.created',
+    'response.in_progress',
+    'response.output_item.added',
+    'response.content_part.added',
+    'response.refusal.delta',
+    'response.refusal.delta',
+    'response.refusal.done',
+    'response.content_part.done',
+    'response.output_item.done',
+    'response.completed',
+  ])
+
+  const done = events.find((e) => e.type === 'response.refusal.done')!
+  expect(done.refusal).toBe('I cannot help with that')
+})
+
+test('sequence numbers stay monotonic from zero across a refusal stream', async () => {
+  const events = await collect([chunk({ refusal: 'no' }, 'stop')])
+
+  expect(events.map((e) => e.sequence_number)).toEqual([...events.keys()])
 })
