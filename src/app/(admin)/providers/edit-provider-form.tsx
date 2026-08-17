@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FormDialog } from '@/components/admin/form-dialog'
 import type { AdapterType } from '@/lib/adapters/credentials'
+import { API_FLAVORS } from '@/lib/api-flavors'
 import type { ProviderListItem } from '@/lib/admin/providers'
 import { updateProviderAction, type ActionState } from './actions'
 import { AdvancedPathsFields } from './advanced-paths-fields'
@@ -49,6 +50,23 @@ export function EditProviderDialog({
             defaultValue={provider.baseUrl ?? ''}
           />
         </div>
+        {provider.adapter === 'openai' || provider.adapter === 'openai_compatible' ? (
+          <div className="space-y-2">
+            <Label htmlFor={`apiFlavor-${provider.id}`}>API flavor</Label>
+            <select
+              id={`apiFlavor-${provider.id}`}
+              name="apiFlavor"
+              defaultValue={provider.apiFlavor}
+              className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+            >
+              {API_FLAVORS.map((flavor) => <option key={flavor} value={flavor}>{flavor}</option>)}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Choose Responses if this endpoint returns 404 on
+              {' '}<code>/v1/chat/completions</code>.
+            </p>
+          </div>
+        ) : null}
         <RegistryNamespaceField
           id={`ns-${provider.id}`}
           adapter={provider.adapter}

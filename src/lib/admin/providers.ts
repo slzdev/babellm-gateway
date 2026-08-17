@@ -7,6 +7,7 @@ import {
 import { decryptJson, encryptJson } from '@/lib/crypto'
 import { credentialSchemas, maskCredentials, type AdapterType } from '@/lib/adapters/credentials'
 import { createAdapter } from '@/lib/adapters/registry'
+import type { ApiFlavor } from '@/lib/api-flavors'
 import { PATH_FIELDS } from '@/lib/adapters/openai/paths'
 import { parseProviderConfig, readRegistryNamespace } from '@/lib/catalog/config'
 
@@ -17,6 +18,7 @@ export interface ProviderInput {
   credentials: Record<string, unknown>
   config?: Record<string, unknown>
   enabled?: boolean
+  apiFlavor?: ApiFlavor
 }
 
 export interface ProviderListItem {
@@ -25,6 +27,7 @@ export interface ProviderListItem {
   adapter: AdapterType
   baseUrl: string | null
   enabled: boolean
+  apiFlavor: ApiFlavor
   maskedCredentials: Record<string, string>
   targetCount: number
   catalogModelCount: number
@@ -90,6 +93,7 @@ export async function listProviders(): Promise<ProviderListItem[]> {
     adapter: row.adapter,
     baseUrl: row.baseUrl,
     enabled: row.enabled,
+    apiFlavor: row.apiFlavor,
     maskedCredentials: maskCredentials(
       decryptJson<Record<string, unknown>>(row.credentials),
     ),
@@ -125,6 +129,7 @@ export async function createProvider(input: ProviderInput): Promise<ProviderRow>
     credentials: encryptJson(credentials),
     config: JSON.stringify(input.config ?? {}),
     enabled: input.enabled ?? true,
+    apiFlavor: input.apiFlavor ?? 'chat_completions',
   }).returning()
   return row
 }
@@ -193,6 +198,7 @@ export async function updateProvider(
     credentials,
     config: input.config ? JSON.stringify(input.config) : existing.config,
     enabled: input.enabled ?? existing.enabled,
+    apiFlavor: input.apiFlavor ?? existing.apiFlavor,
     updatedAt: new Date(),
   }).where(eq(providers.id, id)).returning()
 

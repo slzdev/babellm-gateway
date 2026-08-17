@@ -24,8 +24,8 @@ const CONFIG_KEYS: Record<keyof ProviderPaths, string> = {
 /**
  * The one description of these fields, read by the provider forms to render
  * them and by the server actions to collect them. Keeping the list here rather
- * than in the form is what stops a third endpoint from having to be added in
- * three places.
+ * than in the form is what stops these three fields from having to be added in
+ * three places, once a fourth endpoint shows up.
  */
 export const PATH_FIELDS = [
   {

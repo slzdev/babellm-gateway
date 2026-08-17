@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest'
 import OpenAI from 'openai'
 import { createOpenAIAdapter } from '@/lib/adapters/openai'
+import { createResponsesAdapter } from '@/lib/adapters/openai/responses'
 import type { ProviderConfig, ProviderRuntime } from '@/lib/adapters/types'
 
 /**
@@ -15,6 +16,15 @@ import type { ProviderConfig, ProviderRuntime } from '@/lib/adapters/types'
 const completion = {
   id: 'chatcmpl-1', object: 'chat.completion', created: 1, model: 'clone-model',
   choices: [{ index: 0, message: { role: 'assistant', content: 'hi' }, finish_reason: 'stop' }],
+}
+
+const response = {
+  id: 'resp_1', object: 'response', created_at: 1, model: 'clone-model',
+  status: 'completed', incomplete_details: null,
+  output: [{
+    type: 'message', id: 'msg_1', role: 'assistant', status: 'completed',
+    content: [{ type: 'output_text', text: 'hi', annotations: [] }],
+  }],
 }
 
 /** A real SDK client whose transport records the URL instead of sending it. */
@@ -80,4 +90,14 @@ test('a configured models path is appended to the base URL', async () => {
 
   expect(urls).toEqual(['https://api.example/v1/api/v2/models'])
   expect(models.map((m) => m.id)).toEqual(['clone-model'])
+})
+
+test('a configured responses path is appended to the base URL', async () => {
+  const { runtime, factory, urls } = recordingRuntime(
+    { responsesPath: '/api/v2/responses' },
+    response,
+  )
+  await createResponsesAdapter(runtime, factory as never).chat(chatBody, ctx)
+
+  expect(urls).toEqual(['https://api.example/v1/api/v2/responses'])
 })

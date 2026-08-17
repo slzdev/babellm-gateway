@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import { createOpenAIAdapter } from '@/lib/adapters/openai'
+import { createResponsesAdapter } from '@/lib/adapters/openai/responses'
 import type { ProviderConfig, ProviderRuntime } from '@/lib/adapters/types'
 
 /**
@@ -35,12 +36,29 @@ const completion = {
   choices: [{ index: 0, message: { role: 'assistant', content: 'hi' }, finish_reason: 'stop' }],
 }
 
+const response = {
+  id: 'resp_1', object: 'response', created_at: 1, model: 'clone-model',
+  status: 'completed', incomplete_details: null,
+  output: [{
+    type: 'message', id: 'msg_1', role: 'assistant', status: 'completed',
+    content: [{ type: 'output_text', text: 'hi', annotations: [] }],
+  }],
+}
+
 function chatClient() {
   const create = vi.fn().mockImplementation(async (params: { stream?: boolean }) =>
     params.stream
       ? { async *[Symbol.asyncIterator]() { /* an empty stream is enough */ } }
       : completion)
   return { create, factory: vi.fn().mockReturnValue({ chat: { completions: { create } } }) }
+}
+
+function responsesClient() {
+  const create = vi.fn().mockImplementation(async (params: { stream?: boolean }) =>
+    params.stream
+      ? { async *[Symbol.asyncIterator]() { /* an empty stream is enough */ } }
+      : response)
+  return { create, factory: vi.fn().mockReturnValue({ responses: { create } }) }
 }
 
 function modelsClient() {
@@ -88,6 +106,39 @@ describe('chat completions path', () => {
 
     expect(create.mock.calls[0][1]).toMatchObject({ signal: ctx.signal, path: '/api/v2/chat' })
   })
+
+  test('ignores a responses path, which this flavor never calls', async () => {
+    const { create, factory } = chatClient()
+    const rt = runtime({ responsesPath: '/api/v2/responses' })
+    await createOpenAIAdapter(rt, factory as never).chat(body, ctx)
+
+    expect(create.mock.calls[0][1]).toMatchObject({ path: '/chat/completions' })
+  })
+})
+
+describe('responses path', () => {
+  test('sends the SDK default when the provider configures nothing', async () => {
+    const { create, factory } = responsesClient()
+    await createResponsesAdapter(runtime({}), factory as never).chat(body, ctx)
+
+    expect(create.mock.calls[0][1]).toMatchObject({ path: '/responses' })
+  })
+
+  test('sends the configured path instead', async () => {
+    const { create, factory } = responsesClient()
+    const rt = runtime({ responsesPath: '/api/v2/responses' })
+    await createResponsesAdapter(rt, factory as never).chat(body, ctx)
+
+    expect(create.mock.calls[0][1]).toMatchObject({ path: '/api/v2/responses' })
+  })
+
+  test('sends the configured path on the streaming call too', async () => {
+    const { create, factory } = responsesClient()
+    const rt = runtime({ responsesPath: '/api/v2/responses' })
+    await drain(createResponsesAdapter(rt, factory as never).chatStream(body, ctx))
+
+    expect(create.mock.calls[0][1]).toMatchObject({ path: '/api/v2/responses' })
+  })
 })
 
 describe('models path', () => {
@@ -105,6 +156,14 @@ describe('models path', () => {
     await createOpenAIAdapter(rt, factory as never).listModels!({ signal: ctx.signal })
 
     expect(list.mock.calls[0][0]).toMatchObject({ path: '/api/v2/models', signal: ctx.signal })
+  })
+
+  test('applies to a Responses provider, which discovers models the same way', async () => {
+    const { list, factory } = modelsClient()
+    const rt = runtime({ modelsPath: '/api/v2/models' })
+    await createResponsesAdapter(rt, factory as never).listModels!({ signal: ctx.signal })
+
+    expect(list.mock.calls[0][0]).toMatchObject({ path: '/api/v2/models' })
   })
 })
 
