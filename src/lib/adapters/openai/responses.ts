@@ -9,6 +9,8 @@ import type {
   ChatCompletionChunk,
   ProviderAdapter,
   ProviderRuntime,
+  ResponsesResult,
+  ResponseStreamEvent,
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { toProviderError } from './errors'
@@ -80,5 +82,47 @@ export function createResponsesAdapter(
     },
 
     listModels: (ctx) => listModels(client, ctx, paths.models),
+
+    /**
+     * The matching path: Responses in, Responses out. No translation at all —
+     * which is the whole reason this pair exists rather than the ingress
+     * normalising to Chat Completions. Hosted tools, reasoning items and
+     * encrypted content survive only here.
+     */
+    async respond(req, ctx): Promise<ResponsesResult> {
+      try {
+        return await client.responses.create(
+          // The cast is a type assertion only — `include` and friends are
+          // typed loosely in the gateway's own schema (new values ship faster
+          // than this would be updated) but forwarded exactly as received.
+          { ...req, model: ctx.upstreamModel, stream: false } as OpenAI.Responses.ResponseCreateParamsNonStreaming,
+          { signal: ctx.signal, path: paths.responses },
+        ) as ResponsesResult
+      } catch (err) {
+        throw toProviderError(err, FLAVOR_HINT)
+      }
+    },
+
+    async *respondStream(req, ctx): AsyncIterable<ResponseStreamEvent> {
+      // Both the call that opens the stream and the iteration that drains it
+      // can fail, and they fail differently — the first before the gateway has
+      // committed a response, the second after. Both must arrive at the routing
+      // loop already interpreted.
+      let stream
+      try {
+        stream = await client.responses.create(
+          { ...req, model: ctx.upstreamModel, stream: true } as OpenAI.Responses.ResponseCreateParamsStreaming,
+          { signal: ctx.signal, path: paths.responses },
+        )
+      } catch (err) {
+        throw toProviderError(err, FLAVOR_HINT)
+      }
+
+      try {
+        for await (const event of stream as AsyncIterable<ResponseStreamEvent>) yield event
+      } catch (err) {
+        throw toProviderError(err, FLAVOR_HINT)
+      }
+    },
   }
 }

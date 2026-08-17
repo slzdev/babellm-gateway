@@ -2,9 +2,12 @@ import type OpenAI from 'openai'
 import type { AdapterType } from '@/lib/adapters/credentials'
 import type { CatalogFields } from '@/lib/catalog/types'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
+import type { ResponsesRequest } from '@/lib/schemas/responses'
 
 export type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion
 export type ChatCompletionChunk = OpenAI.Chat.Completions.ChatCompletionChunk
+export type ResponsesResult = OpenAI.Responses.Response
+export type ResponseStreamEvent = OpenAI.Responses.ResponseStreamEvent
 
 export interface ProviderConfig {
   /** Skip sending stream_options.include_usage — some clones reject it. */
@@ -80,4 +83,11 @@ export interface ProviderAdapter {
    * sync reports `unsupported` rather than failing.
    */
   listModels?(ctx: ListModelsContext): Promise<DiscoveredModel[]>
+  /** Optional until Phase 4: an adapter without it answers a Responses
+   *  request with 501 unsupported_operation rather than a missing method. */
+  respond?(req: ResponsesRequest, ctx: AttemptContext): Promise<ResponsesResult>
+  respondStream?(
+    req: ResponsesRequest,
+    ctx: AttemptContext,
+  ): AsyncIterable<ResponseStreamEvent>
 }
