@@ -9,6 +9,7 @@ import type { ProviderConfig } from '../types'
 export const DEFAULT_PATHS = {
   models: '/models',
   chatCompletions: '/chat/completions',
+  responses: '/responses',
 } as const
 
 export type ProviderPaths = { -readonly [K in keyof typeof DEFAULT_PATHS]: string }
@@ -17,6 +18,7 @@ export type ProviderPaths = { -readonly [K in keyof typeof DEFAULT_PATHS]: strin
 const CONFIG_KEYS: Record<keyof ProviderPaths, string> = {
   models: 'modelsPath',
   chatCompletions: 'chatCompletionsPath',
+  responses: 'responsesPath',
 }
 
 /**
@@ -37,6 +39,12 @@ export const PATH_FIELDS = [
     label: 'Chat completions path',
     placeholder: DEFAULT_PATHS.chatCompletions,
     help: 'Where this provider serves chat completions.',
+  },
+  {
+    name: 'responsesPath',
+    label: 'Responses path',
+    placeholder: DEFAULT_PATHS.responses,
+    help: 'Where this provider serves the Responses API.',
   },
 ] as const
 
@@ -128,5 +136,6 @@ export function resolveProviderPaths(config: ProviderConfig): ProviderPaths {
   return {
     models: resolve('models'),
     chatCompletions: resolve('chatCompletions'),
+    responses: resolve('responses'),
   }
 }

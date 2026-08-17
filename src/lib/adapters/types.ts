@@ -33,6 +33,7 @@ export interface ProviderConfig {
    */
   modelsPath?: string
   chatCompletionsPath?: string
+  responsesPath?: string
   [key: string]: unknown
 }
 
