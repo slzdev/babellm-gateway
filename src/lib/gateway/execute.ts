@@ -30,6 +30,18 @@ export interface ExecuteResult<T> {
 
 export interface ExecuteDeps {
   createAdapter: (provider: ProviderRow) => ProviderAdapter
+  /**
+   * Reports an attempt's outcome to the circuit breaker.
+   *
+   * Synchronous and must never throw: the implementation is fire-and-forget,
+   * like emitRequestLog. Health bookkeeping may not add latency to a response
+   * or fail a request that has already succeeded.
+   */
+  recordHealth?: (
+    candidate: Candidate,
+    outcome: 'success' | 'failure',
+    error?: string,
+  ) => void
 }
 
 export function attemptContext(
@@ -112,6 +124,16 @@ export async function execute<T>(
   const attempts: AttemptRecord[] = []
   let last: RoutedError | undefined
 
+  const recordHealth = (
+    candidate: Candidate,
+    outcome: 'success' | 'failure',
+    error?: string,
+  ) => {
+    // A direct provider/model address has no route_targets row behind it and
+    // is never demoted, so there is nothing to learn about it.
+    if (candidate.breakable) deps.recordHealth?.(candidate, outcome, error)
+  }
+
   for (const [index, candidate] of chain.entries()) {
     const startedAt = Date.now()
 
@@ -142,11 +164,19 @@ export async function execute<T>(
         candidate,
       )
       attempts.push(record(index, candidate, Date.now() - startedAt))
+      recordHealth(candidate, 'success')
       return { value, candidate, attempts }
     } catch (err) {
       const classified = classifyProviderError(err)
       attempts.push(record(index, candidate, Date.now() - startedAt, classified))
       last = routed(classified, attempts, candidate)
+
+      // Only a retryable failure is evidence about the target. A 4xx means it
+      // answered, and an aborted client produces a retryable 504 that says
+      // nothing about the provider at all.
+      if (classified.retryable && !clientSignal.aborted) {
+        recordHealth(candidate, 'failure', classified.message)
+      }
 
       // Failing over onto a request nobody is waiting for wastes an upstream
       // call and, worse, can leave a second provider streaming into a closed

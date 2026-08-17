@@ -43,10 +43,16 @@ export function AddTargetDialog({
   virtualModelId,
   providers,
   groupsByProvider,
+  globalThreshold,
+  globalCooldown,
 }: {
   virtualModelId: string
   providers: Array<{ id: string; name: string }>
   groupsByProvider: Record<string, PickerGroup[]>
+  /** The global breaker settings, shown as placeholders so an operator can
+   *  see what a blank field would inherit without looking it up elsewhere. */
+  globalThreshold: number
+  globalCooldown: number
 }) {
   const [providerId, setProviderId] = useState(providers[0]?.id ?? '')
 
@@ -97,6 +103,28 @@ export function AddTargetDialog({
         <p className="text-xs text-muted-foreground">
           Sent upstream as <code>service_tier</code>, replacing any value the client sent.
         </p>
+      </div>
+      <div className="grid gap-4 grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor={`breaker-threshold-${virtualModelId}`}>Breaker threshold</Label>
+          <Input
+            id={`breaker-threshold-${virtualModelId}`}
+            name="breakerThreshold"
+            type="number"
+            min={0}
+            placeholder={`${globalThreshold} (inherited)`}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`breaker-cooldown-${virtualModelId}`}>Breaker cooldown (s)</Label>
+          <Input
+            id={`breaker-cooldown-${virtualModelId}`}
+            name="breakerCooldownSeconds"
+            type="number"
+            min={1}
+            placeholder={`${globalCooldown} (inherited)`}
+          />
+        </div>
       </div>
     </FormDialog>
   )

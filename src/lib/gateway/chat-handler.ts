@@ -17,6 +17,7 @@ import {
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
 import { GatewayError, RoutedError, errorResponse, type ClassifiedError } from './errors'
 import { execute, type AttemptRecord } from './execute'
+import { openTargetsFor, recordHealth } from './health'
 import { newCompletionId, rewriteCompletion } from './identity'
 import { resolveModel, type Candidate } from './resolve'
 import { selectOrder } from './select'
@@ -292,7 +293,8 @@ export async function handleChatCompletions(
     limits = await checkLimits(apiKey)
 
     const { model, candidates } = await resolveModel(body.model)
-    const chain = selectOrder(candidates, model)
+    const open = await openTargetsFor(candidates)
+    const chain = selectOrder(candidates, model, { open })
 
     void touchApiKey(apiKey.id).catch((err) =>
       console.error(`[gateway] failed to update last_used_at request_id=${requestId}`, err),
@@ -305,7 +307,7 @@ export async function handleChatCompletions(
       // still a failure before the response is committed — which is what
       // makes failover safe for streams.
       const result = await execute(
-        chain, requestId, request.signal, deps,
+        chain, requestId, request.signal, { ...deps, recordHealth },
         (adapter, ctx, candidate) =>
           startChatStream(adapter.chatStream(bodyFor(candidate, body), ctx)),
       )
@@ -353,7 +355,7 @@ export async function handleChatCompletions(
     }
 
     const result = await execute(
-      chain, requestId, request.signal, deps,
+      chain, requestId, request.signal, { ...deps, recordHealth },
       (adapter, ctx, candidate) => adapter.chat(bodyFor(candidate, body), ctx),
     )
     dropped = droppedFor(result.candidate, bodyFor(result.candidate, body))

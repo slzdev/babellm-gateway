@@ -4,6 +4,14 @@ import { nextCursor as defaultNextCursor } from './rr-cursor'
 export interface SelectDeps {
   random: () => number
   nextCursor: (virtualModelId: string) => number
+  /**
+   * Target ids whose breaker is currently open.
+   *
+   * Empty when health is unavailable, which is deliberate: "we could not read
+   * health" and "nothing is open" are the same value, so failing open is a
+   * property of the type rather than a branch someone can forget.
+   */
+  open: ReadonlySet<string>
 }
 
 /**
@@ -44,6 +52,13 @@ function tiersOf(candidates: Candidate[]): Candidate[][] {
  * a model whose targets are all zero with nothing to try. They stay inside the
  * tier because sinking them past a later one would invert the order priority
  * exists to express.
+ *
+ * An open breaker does sink past later tiers, and the difference is the source
+ * of the signal. A weight of 0 is a configured preference, so honouring
+ * priority above it respects what the operator asked for. An open breaker is
+ * an observed fact — evidence this target is failing right now. Demoting a
+ * target you have evidence is broken below one you have no such evidence about
+ * is not overriding the operator's intent, it is serving it.
  */
 function weightedOrder(candidates: Candidate[], random: () => number): Candidate[] {
   const pool = candidates.filter((c) => c.weight > 0)
@@ -107,17 +122,35 @@ export function selectOrder(
 ): Candidate[] {
   if (candidates.length === 0) return []
 
-  const { random = Math.random, nextCursor = defaultNextCursor } = deps
+  const {
+    random = Math.random,
+    nextCursor = defaultNextCursor,
+    open = new Set<string>(),
+  } = deps
   // Read once per request rather than once per tier: advancing the cursor per
   // tier would make how fast a model cycles depend on how it happens to be
   // tiered, and skip positions in the tiers that are shorter.
   const cursor = model.policy === 'round_robin' ? nextCursor(model.id) : 0
 
-  const ordered = tiersOf(candidates).flatMap((tier) =>
-    model.policy === 'weighted' ? weightedOrder(tier, random)
-    : model.policy === 'round_robin' ? rotate(tier, cursor)
-    : tier,
-  )
+  const arrange = (subset: Candidate[]) =>
+    tiersOf(subset).flatMap((tier) =>
+      model.policy === 'weighted' ? weightedOrder(tier, random)
+      : model.policy === 'round_robin' ? rotate(tier, cursor)
+      : tier,
+    )
+
+  // Partition before tiering, so an open breaker sinks past *later tiers* and
+  // not merely to the back of its own. See the note above weightedOrder for
+  // why this is the opposite of what a zero weight does.
+  //
+  // Demotion, never exclusion: with every target open the healthy partition is
+  // empty and the chain is simply the full candidate list in policy order — so
+  // a total outage degrades to today's behaviour instead of to a 503.
+  const isOpen = (candidate: Candidate) => candidate.breakable && open.has(candidate.targetId)
+  const ordered = [
+    ...arrange(candidates.filter((candidate) => !isOpen(candidate))),
+    ...arrange(candidates.filter(isOpen)),
+  ]
 
   // max_attempts is a bare integer column, so a 0 or a negative is storable.
   // One attempt is the smallest number that still asks a provider anything.

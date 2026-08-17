@@ -7,6 +7,7 @@ import {
   removeRouteTarget, setRouteTargetEnabled, updateRouteTarget, updateVirtualModel,
   type RoutingPolicy, type ServiceTier,
 } from '@/lib/admin/models'
+import { getHealthStore } from '@/lib/health'
 
 export interface ActionState {
   error?: string
@@ -43,6 +44,12 @@ function checkboxValue(value: FormDataEntryValue | null): boolean {
 function serviceTierValue(value: FormDataEntryValue | null): ServiceTier | null {
   const tier = String(value ?? '')
   return tier === '' ? null : (tier as ServiceTier)
+}
+
+/** A blank field means inherit, which is a null — not a 0, and not NaN. */
+function optionalInteger(value: FormDataEntryValue | null): number | null {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  return raw === '' ? null : Number(raw)
 }
 
 export async function createModelAction(
@@ -98,6 +105,8 @@ export async function addTargetAction(
       priority: Number(formData.get('priority') ?? 0),
       weight: Number(formData.get('weight') ?? 100),
       serviceTier: serviceTierValue(formData.get('serviceTier')),
+      breakerThreshold: optionalInteger(formData.get('breakerThreshold')),
+      breakerCooldownSeconds: optionalInteger(formData.get('breakerCooldownSeconds')),
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not add the target.' }
@@ -117,6 +126,8 @@ export async function updateTargetAction(
       priority: Number(formData.get('priority') ?? 0),
       weight: Number(formData.get('weight') ?? 100),
       serviceTier: serviceTierValue(formData.get('serviceTier')),
+      breakerThreshold: optionalInteger(formData.get('breakerThreshold')),
+      breakerCooldownSeconds: optionalInteger(formData.get('breakerCooldownSeconds')),
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not update the target.' }
@@ -139,6 +150,15 @@ export async function removeTargetAction(formData: FormData): Promise<void> {
   await requireAdmin()
   await removeRouteTarget(String(formData.get('id')))
   revalidateModel(String(formData.get('virtualModelId')))
+}
+
+export async function resetTargetBreakerAction(formData: FormData): Promise<void> {
+  await requireAdmin()
+  const id = String(formData.get('id') ?? '')
+  const virtualModelId = String(formData.get('virtualModelId') ?? '')
+
+  await getHealthStore().reset(id)
+  revalidatePath(`/models/${virtualModelId}`)
 }
 
 export async function deleteModelAction(formData: FormData): Promise<void> {

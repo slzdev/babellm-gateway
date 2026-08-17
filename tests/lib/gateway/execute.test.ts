@@ -14,6 +14,9 @@ function candidate(name: string): Candidate {
     priority: 0,
     weight: 100,
     serviceTier: null,
+    breakable: true,
+    breakerThreshold: null,
+    breakerCooldownSeconds: null,
   }
 }
 
@@ -185,4 +188,85 @@ test('attempts record a latency', async () => {
   const run = vi.fn().mockResolvedValue('body')
   const result = await execute([candidate('a')], 'req_1', live, deps, run)
   expect(result.attempts[0].latencyMs).toBeGreaterThanOrEqual(0)
+})
+
+/** Collects (targetId, outcome) pairs so a test can assert on the whole set
+ *  of calls, including the ones that must not happen. */
+function recorder() {
+  const calls: Array<[string, string]> = []
+  return {
+    calls,
+    recordHealth: (c: Candidate, outcome: 'success' | 'failure') => {
+      calls.push([c.targetId, outcome])
+    },
+  }
+}
+
+test('a successful attempt is recorded as a success', async () => {
+  const { calls, recordHealth } = recorder()
+  await execute([candidate('a')], 'req_1', live, { ...deps, recordHealth }, async () => 'body')
+
+  expect(calls).toEqual([['target-a', 'success']])
+})
+
+test('a retryable failure is recorded against the target that produced it', async () => {
+  const { calls, recordHealth } = recorder()
+  const run = vi.fn()
+    .mockRejectedValueOnce(new ProviderError({ status: 503, message: 'down', retryable: true }))
+    .mockResolvedValueOnce('body')
+
+  await execute([candidate('a'), candidate('b')], 'req_1', live, { ...deps, recordHealth }, run)
+
+  expect(calls).toEqual([['target-a', 'failure'], ['target-b', 'success']])
+})
+
+test('a client hanging up is not held against the target', async () => {
+  // An AbortError classifies as a retryable 504. Counting it would open
+  // breakers on healthy targets serving slow, cancellable generations.
+  const { calls, recordHealth } = recorder()
+  const controller = new AbortController()
+  controller.abort()
+  const run = vi.fn().mockRejectedValue(new DOMException('aborted', 'AbortError'))
+
+  await expect(
+    execute([candidate('a')], 'req_1', controller.signal, { ...deps, recordHealth }, run),
+  ).rejects.toThrow()
+
+  expect(calls).toEqual([])
+})
+
+test('a non-retryable 4xx is recorded in neither direction', async () => {
+  // The target answered, so it is not a failure; but clearing the counter
+  // would let one bad client erase real accumulated evidence.
+  const { calls, recordHealth } = recorder()
+  const run = vi.fn().mockRejectedValue(
+    new ProviderError({ status: 400, message: 'bad', retryable: false }),
+  )
+
+  await expect(
+    execute([candidate('a')], 'req_1', live, { ...deps, recordHealth }, run),
+  ).rejects.toThrow()
+
+  expect(calls).toEqual([])
+})
+
+test('an unconstructable adapter is not recorded', async () => {
+  // No upstream call was made, so there is nothing to protect.
+  const { calls, recordHealth } = recorder()
+  const createAdapter = () => { throw new UnsupportedOperationError('no adapter') }
+
+  await expect(
+    execute([candidate('a')], 'req_1', live, { createAdapter, recordHealth }, async () => 'body'),
+  ).rejects.toThrow()
+
+  expect(calls).toEqual([])
+})
+
+test('an unbreakable candidate is never recorded', async () => {
+  const { calls, recordHealth } = recorder()
+  const direct = { ...candidate('a'), breakable: false }
+
+  await execute([direct], 'req_1', live, { ...deps, recordHealth }, async () => 'body')
+
+  expect(calls).toEqual([])
 })

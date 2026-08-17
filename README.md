@@ -131,6 +131,38 @@ fails over on the same loop until its first chunk lands.
 actually served. Targets can pin a service tier (`flex`, `priority`,
 `ultrafast`, …) where the provider supports one.
 
+### A breaker per target
+
+A target that fails retryably — 429, 5xx, timeout, connection error — five
+times in a row (configurable; `0` disables the breaker for that scope) opens
+for a 30-second cooldown (also configurable, globally or per target). An open
+target doesn't drop out of the chain — it sinks behind every closed target,
+across every priority tier — so a total outage still gets attempted instead of
+turning into a `503`. Client aborts and fatal 4xx never count against a
+target.
+
+There's no separate half-open state to track: the open marker's TTL is the
+cooldown itself, and the failure counter's TTL is set longer on purpose, so
+the counter is still at the threshold when the marker expires. The target
+rejoins the chain on the next request, and one more failure re-opens it
+immediately — a free probe with no scheduler behind it.
+
+`<provider>/<model>` direct addresses are a single link, not a chain, so
+they're never breakered — demoting the only candidate could only turn a
+maybe-success into a guaranteed failure.
+
+State lives in Redis when `REDIS_URL` is set, and per process otherwise, so
+multiple instances each learn a target is down on their own. In steady state
+it costs two Redis commands per request — one `MGET` on the read path, one
+fire-and-forget `DEL` on success — and adds no latency. Breaker state and a
+manual reset live on each virtual model's page.
+
+Two things worth knowing before production surfaces them: a stream that fails
+after its first chunk isn't counted, since success is recorded at the same
+first-chunk boundary failover already uses; and a threshold or cooldown
+change takes up to 10 seconds to reach other instances, the interval routing
+settings are cached for.
+
 ### Direct addressing
 
 Skip the virtual model entirely — `<provider>/<model>` reaches anything in the
@@ -289,8 +321,6 @@ phases. What's still missing:
 - **No Responses API, either end.** Everything enters through
   `/v1/chat/completions` and every OpenAI-shaped provider is called on
   `/chat/completions`.
-- **No circuit breaker.** A provider that is hard down is re-attempted every
-  request, so each one pays a wasted call and its timeout before failing over.
 - **Spend counters are volatile** without `REDIS_URL` — a restart resets each
   key's total spend to zero.
 - **Round-robin state is per process**, so multiple instances skew the

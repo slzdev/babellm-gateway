@@ -21,6 +21,18 @@ export interface Candidate {
   /** The tier this target pins `service_tier` to, or null to forward the
    * client's body untouched. */
   serviceTier: ServiceTier | null
+  /**
+   * Whether an open breaker may demote this candidate.
+   *
+   * False for a direct `provider/model` address: `targetId` there is a
+   * catalog_models id, the chain has exactly one link, and demoting the only
+   * link could only convert a request that might have succeeded into a
+   * guaranteed failure.
+   */
+  breakable: boolean
+  /** Per-target breaker overrides. NULL inherits the global setting. */
+  breakerThreshold: number | null
+  breakerCooldownSeconds: number | null
 }
 
 export interface ResolvedModel {
@@ -100,6 +112,9 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
       priority: target.priority,
       weight: target.weight,
       serviceTier: target.serviceTier,
+      breakable: true,
+      breakerThreshold: target.breakerThreshold,
+      breakerCooldownSeconds: target.breakerCooldownSeconds,
     })),
   }
 }
@@ -152,6 +167,11 @@ async function resolveDirect(
       // No route_targets row stands behind a direct address, so there is
       // nothing that could have configured a tier for it.
       serviceTier: null,
+      // No route_targets row stands behind a direct address, so there is
+      // nothing to break and nothing that could have configured a breaker.
+      breakable: false,
+      breakerThreshold: null,
+      breakerCooldownSeconds: null,
     }],
   }
 }

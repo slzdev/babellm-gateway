@@ -214,3 +214,36 @@ test('a direct address has no service tier to apply', async () => {
   // that could have configured a tier.
   expect(candidates[0].serviceTier).toBeNull()
 })
+
+test('virtual model targets are breakable and carry their overrides', async () => {
+  const { fast, model } = await seed()
+  await db.insert(routeTargets).values({
+    virtualModelId: model.id,
+    providerId: fast.id,
+    upstreamModel: 'fast-1',
+    breakerThreshold: 2,
+    // Left null on purpose: overrides apply per field, so this target pins a
+    // threshold and still inherits the global cooldown.
+    breakerCooldownSeconds: null,
+  })
+
+  const { candidates } = await resolveModel('house-model')
+
+  expect(candidates[0].breakable).toBe(true)
+  expect(candidates[0].breakerThreshold).toBe(2)
+  expect(candidates[0].breakerCooldownSeconds).toBeNull()
+})
+
+test('a direct provider/model address is never breakable', async () => {
+  // It is a single-candidate chain, so an open breaker could only turn a
+  // request that might have succeeded into a guaranteed 503.
+  const { fast } = await seed()
+  await db.insert(catalogModels).values({ providerId: fast.id, modelId: 'gpt-5' })
+
+  const { candidates } = await resolveModel('fast-provider/gpt-5')
+
+  expect(candidates).toHaveLength(1)
+  expect(candidates[0].breakable).toBe(false)
+  expect(candidates[0].breakerThreshold).toBeNull()
+  expect(candidates[0].breakerCooldownSeconds).toBeNull()
+})

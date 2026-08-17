@@ -1,6 +1,7 @@
 import 'server-only'
 import { db } from '@/lib/db'
 import { settings } from '@/lib/db/schema'
+import type { BreakerConfig } from '@/lib/health/types'
 
 export const DEFAULT_REGISTRY_URL = 'https://models.dev/api.json'
 
@@ -129,4 +130,56 @@ export async function setLoggingSettings(
   }
 
   return getLoggingSettings()
+}
+
+export const DEFAULT_BREAKER_THRESHOLD = 5
+export const DEFAULT_BREAKER_COOLDOWN_SECONDS = 30
+
+const ROUTING_KEYS = {
+  breakerThreshold: 'routing.breaker_threshold',
+  breakerCooldownSeconds: 'routing.breaker_cooldown_seconds',
+} as const
+
+export async function getRoutingSettings(): Promise<BreakerConfig> {
+  const rows = await db.select().from(settings)
+  const byKey = new Map(rows.map((row) => [row.key, row.value]))
+
+  const threshold = byKey.get(ROUTING_KEYS.breakerThreshold)
+  const cooldown = byKey.get(ROUTING_KEYS.breakerCooldownSeconds)
+
+  return {
+    threshold: typeof threshold === 'number' ? threshold : DEFAULT_BREAKER_THRESHOLD,
+    cooldownSeconds:
+      typeof cooldown === 'number' ? cooldown : DEFAULT_BREAKER_COOLDOWN_SECONDS,
+  }
+}
+
+export async function setRoutingSettings(
+  patch: Partial<BreakerConfig>,
+): Promise<BreakerConfig> {
+  const writes: Array<[string, unknown]> = []
+
+  if (patch.threshold !== undefined) {
+    // 0 is legal and means "never open a breaker"; a negative or fractional
+    // count is not a number of failures at all.
+    if (!Number.isInteger(patch.threshold) || patch.threshold < 0) {
+      throw new Error('The breaker threshold must be a whole number of failures, 0 or more.')
+    }
+    writes.push([ROUTING_KEYS.breakerThreshold, patch.threshold])
+  }
+  if (patch.cooldownSeconds !== undefined) {
+    if (!Number.isInteger(patch.cooldownSeconds) || patch.cooldownSeconds < 1) {
+      throw new Error('The breaker cooldown must be a whole number of seconds, 1 or more.')
+    }
+    writes.push([ROUTING_KEYS.breakerCooldownSeconds, patch.cooldownSeconds])
+  }
+
+  for (const [key, value] of writes) {
+    await db
+      .insert(settings)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: new Date() } })
+  }
+
+  return getRoutingSettings()
 }

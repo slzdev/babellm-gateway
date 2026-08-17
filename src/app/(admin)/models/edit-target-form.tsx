@@ -13,6 +13,8 @@ export function EditTargetDialog({
   target,
   virtualModelId,
   groups,
+  globalThreshold,
+  globalCooldown,
   open,
   onOpenChange,
 }: {
@@ -22,9 +24,15 @@ export function EditTargetDialog({
     priority: number
     weight: number
     serviceTier: ServiceTier | null
+    breakerThreshold: number | null
+    breakerCooldownSeconds: number | null
   }
   virtualModelId: string
   groups: PickerGroup[]
+  /** The global breaker settings, shown as placeholders so an operator can
+   *  see what a blank field would inherit without looking it up elsewhere. */
+  globalThreshold: number
+  globalCooldown: number
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
@@ -70,6 +78,30 @@ export function EditTargetDialog({
         <p className="text-xs text-muted-foreground">
           Sent upstream as <code>service_tier</code>, replacing any value the client sent.
         </p>
+      </div>
+      <div className="grid gap-4 grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor={`edit-breaker-threshold-${target.id}`}>Breaker threshold</Label>
+          <Input
+            id={`edit-breaker-threshold-${target.id}`}
+            name="breakerThreshold"
+            type="number"
+            min={0}
+            defaultValue={target.breakerThreshold ?? ''}
+            placeholder={`${globalThreshold} (inherited)`}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`edit-breaker-cooldown-${target.id}`}>Breaker cooldown (s)</Label>
+          <Input
+            id={`edit-breaker-cooldown-${target.id}`}
+            name="breakerCooldownSeconds"
+            type="number"
+            min={1}
+            defaultValue={target.breakerCooldownSeconds ?? ''}
+            placeholder={`${globalCooldown} (inherited)`}
+          />
+        </div>
       </div>
     </FormDialog>
   )

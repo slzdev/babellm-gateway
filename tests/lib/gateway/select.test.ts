@@ -15,6 +15,9 @@ function candidate(name: string, weight = 100, priority = 0): Candidate {
     priority,
     weight,
     serviceTier: null,
+    breakable: true,
+    breakerThreshold: null,
+    breakerCooldownSeconds: null,
   }
 }
 
@@ -328,4 +331,80 @@ test('negative priorities tier ahead of the default', () => {
     { random: rolls(0.5) },
   )
   expect(names(chain)).toEqual(['urgent', 'normal'])
+})
+
+/** The ids `candidate()` generates, so a test names targets the way it reads. */
+const openSet = (...names: string[]) => new Set(names.map((n) => `target-${n}`))
+
+test('an open target sinks behind a healthy one in the same tier', () => {
+  const chain = selectOrder(
+    [candidate('a'), candidate('b')],
+    model({ maxAttempts: 5 }),
+    { open: openSet('a') },
+  )
+  expect(names(chain)).toEqual(['b', 'a'])
+})
+
+test('an open target sinks past a later tier', () => {
+  // A weight of 0 stays inside its tier; an open breaker does not. A weight is
+  // a configured preference, an open breaker is an observed fact.
+  const chain = selectOrder(
+    [candidate('a', 100, 0), candidate('b', 100, 1)],
+    model({ maxAttempts: 5 }),
+    { open: openSet('a') },
+  )
+  expect(names(chain)).toEqual(['b', 'a'])
+})
+
+test('with every target open the chain is the full list in policy order', () => {
+  const chain = selectOrder(
+    [candidate('a', 100, 0), candidate('b', 100, 1)],
+    model({ maxAttempts: 5 }),
+    { open: openSet('a', 'b') },
+  )
+  // Demotion, never exclusion: a total outage must not become a 503 where
+  // today it would have been an attempt.
+  expect(names(chain)).toEqual(['a', 'b'])
+})
+
+test('max_attempts spends its budget on healthy targets first', () => {
+  const chain = selectOrder(
+    [candidate('a', 100, 0), candidate('b', 100, 0), candidate('c', 100, 1)],
+    model({ maxAttempts: 2 }),
+    { open: openSet('a', 'b') },
+  )
+  expect(names(chain)).toEqual(['c', 'a'])
+})
+
+test('an unbreakable candidate is never treated as open', () => {
+  const direct = { ...candidate('a'), breakable: false }
+  const chain = selectOrder([direct], model({ maxAttempts: 1 }), { open: openSet('a') })
+  expect(names(chain)).toEqual(['a'])
+})
+
+test('no health information is the same as nothing being open', () => {
+  const chain = selectOrder([candidate('a'), candidate('b')], model({ maxAttempts: 5 }))
+  expect(names(chain)).toEqual(['a', 'b'])
+})
+
+test('weighted ordering still applies within each partition', () => {
+  const chain = selectOrder(
+    [candidate('a'), candidate('b'), candidate('c')],
+    model({ policy: 'weighted', maxAttempts: 5 }),
+    { open: openSet('a'), random: () => 0 },
+  )
+  // 'a' is last however the draw falls; the healthy two are drawn among
+  // themselves.
+  expect(names(chain).at(-1)).toBe('a')
+  expect(names(chain).slice(0, 2).sort()).toEqual(['b', 'c'])
+})
+
+test('round robin still rotates within the healthy partition', () => {
+  const chain = selectOrder(
+    [candidate('a'), candidate('b'), candidate('c')],
+    model({ policy: 'round_robin', maxAttempts: 5 }),
+    { open: openSet('c'), nextCursor: () => 1 },
+  )
+  // The healthy pair [a, b] rotates by one; the open target follows behind.
+  expect(names(chain)).toEqual(['b', 'a', 'c'])
 })

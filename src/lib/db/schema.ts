@@ -78,6 +78,11 @@ export const routeTargets = pgTable('route_targets', {
   // Nullable with no default, because NULL is a distinct behaviour rather than
   // a missing value: it means the gateway forwards the client's body untouched.
   serviceTier: serviceTierEnum('service_tier'),
+  // Nullable with no default: NULL means "inherit the global", and 0 is a
+  // distinct, meaningful value — "never open this target" — so a default
+  // would make the two indistinguishable.
+  breakerThreshold: integer('breaker_threshold'),
+  breakerCooldownSeconds: integer('breaker_cooldown_seconds'),
   enabled: boolean('enabled').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })

@@ -10,9 +10,11 @@ import {
 } from '@/components/ui/table'
 import { PageHeader } from '@/components/admin/page-header'
 import { listPickerModels, targetWarnings, type TargetWarning } from '@/lib/admin/catalog'
+import { targetBreakerViews, type TargetBreakerView } from '@/lib/admin/health'
 import { getVirtualModel } from '@/lib/admin/models'
 import { listProviders } from '@/lib/admin/providers'
 import { requireAdmin } from '@/lib/admin/session'
+import { resolveRoutingSettings } from '@/lib/routing-settings'
 import { AddTargetDialog } from '../model-form'
 import { ModelSectionActions } from '../model-section-actions'
 import { TargetRowActions } from '../target-row-actions'
@@ -31,6 +33,23 @@ function TargetWarningBadge({ warning }: { warning: TargetWarning | undefined })
   return <Badge variant="destructive" className="ml-2">not in catalog</Badge>
 }
 
+function BreakerBadge({ view }: { view: TargetBreakerView | undefined }) {
+  // A healthy target renders nothing at all: the normal case is every row
+  // healthy, and a column of "closed" badges is noise that hides the one row
+  // that matters.
+  if (!view || view.state === 'closed') return null
+  if (view.state === 'open') {
+    return (
+      <Badge variant="destructive" title={view.lastError ?? undefined}>
+        open{view.reopensIn === null ? '' : ` · ${view.reopensIn}s`}
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="outline" title={view.lastError ?? undefined}>half-open</Badge>
+  )
+}
+
 export default async function ModelDetailPage({
   params,
 }: {
@@ -42,7 +61,12 @@ export default async function ModelDetailPage({
   const model = await getVirtualModel(id)
   if (!model) notFound()
 
-  const [providers, warnings] = await Promise.all([listProviders(), targetWarnings()])
+  const [providers, warnings, breakers, routingSettings] = await Promise.all([
+    listProviders(),
+    targetWarnings(),
+    targetBreakerViews(model.targets),
+    resolveRoutingSettings(),
+  ])
   const groupsByProvider = Object.fromEntries(
     await Promise.all(
       providers.map(async (provider) => [provider.id, await listPickerModels(provider.id)] as const),
@@ -91,6 +115,8 @@ export default async function ModelDetailPage({
                 virtualModelId={model.id}
                 providers={providers}
                 groupsByProvider={groupsByProvider}
+                globalThreshold={routingSettings.threshold}
+                globalCooldown={routingSettings.cooldownSeconds}
               />
             </CardAction>
           ) : null}
@@ -105,6 +131,7 @@ export default async function ModelDetailPage({
                 <TableHead className="text-right">Weight</TableHead>
                 <TableHead>Service tier</TableHead>
                 <TableHead>Enabled</TableHead>
+                <TableHead>Health</TableHead>
                 <TableHead className="w-0"><span className="sr-only">Actions</span></TableHead>
               </TableRow>
             </TableHeader>
@@ -128,18 +155,22 @@ export default async function ModelDetailPage({
                       {target.enabled ? 'enabled' : 'disabled'}
                     </Badge>
                   </TableCell>
+                  <TableCell><BreakerBadge view={breakers.get(target.id)} /></TableCell>
                   <TableCell className="pr-4 text-right">
                     <TargetRowActions
                       target={target}
                       virtualModelId={model.id}
                       groups={groupsByProvider[target.providerId] ?? []}
+                      breakerState={breakers.get(target.id)?.state ?? 'closed'}
+                      globalThreshold={routingSettings.threshold}
+                      globalCooldown={routingSettings.cooldownSeconds}
                     />
                   </TableCell>
                 </TableRow>
               ))}
               {model.targets.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                     No targets — requests to this model will fail with 503.
                   </TableCell>
                 </TableRow>

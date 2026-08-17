@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { requireAdmin } from '@/lib/admin/session'
 import { DRIVERS, clearRequestLogStoreCache } from '@/lib/logs'
-import { setLoggingSettings } from '@/lib/settings'
+import { clearRoutingSettingsCache } from '@/lib/routing-settings'
+import { setLoggingSettings, setRoutingSettings } from '@/lib/settings'
 
 export interface ActionState {
   error?: string
@@ -52,4 +53,29 @@ export async function saveLoggingSettingsAction(
   revalidatePath('/settings')
   revalidatePath('/logs')
   return { success: 'Logging settings saved.' }
+}
+
+export async function saveRoutingSettingsAction(
+  _prev: ActionState | undefined,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin()
+  const thresholdRaw = formData.get('breakerThreshold')
+  if (typeof thresholdRaw !== 'string' || thresholdRaw.trim() === '') {
+    return { error: 'A threshold is required — enter 0 to disable the breaker.' }
+  }
+  try {
+    await setRoutingSettings({
+      threshold: Number(thresholdRaw),
+      cooldownSeconds: Number(formData.get('breakerCooldownSeconds')),
+    })
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Could not save the settings.' }
+  }
+
+  // This instance picks the change up immediately. Others converge when their
+  // own cache expires.
+  clearRoutingSettingsCache()
+  revalidatePath('/settings')
+  return { success: 'Routing settings saved.' }
 }

@@ -4,10 +4,13 @@ import { PageHeader } from '@/components/admin/page-header'
 import { requireAdmin } from '@/lib/admin/session'
 import { db } from '@/lib/db'
 import { settings as settingsTable } from '@/lib/db/schema'
+import { healthStoreStatus } from '@/lib/health'
 import { DRIVERS, LOG_SETTINGS_TTL_MS, resolveRequestLogStore } from '@/lib/logs'
-import { getLoggingSettings } from '@/lib/settings'
+import { ROUTING_SETTINGS_TTL_MS } from '@/lib/routing-settings'
+import { getLoggingSettings, getRoutingSettings } from '@/lib/settings'
 import { usageStoreStatus } from '@/lib/usage'
 import { GovernanceForm } from './governance-form'
+import { RoutingForm } from './routing-form'
 import { UsageStatus } from './usage-status'
 
 export const dynamic = 'force-dynamic'
@@ -25,9 +28,10 @@ function maintenance(
 
 export default async function SettingsPage() {
   await requireAdmin()
-  const [settings, resolved, [lastRun]] = await Promise.all([
+  const [settings, resolved, routingSettings, [lastRun]] = await Promise.all([
     getLoggingSettings(),
     resolveRequestLogStore(),
+    getRoutingSettings(),
     db
       .select({ value: settingsTable.value })
       .from(settingsTable)
@@ -57,7 +61,12 @@ export default async function SettingsPage() {
             activeStore={resolved.store.name}
             ttlSeconds={LOG_SETTINGS_TTL_MS / 1000}
           />
-          <UsageStatus {...usageStoreStatus()} />
+          <RoutingForm
+            threshold={routingSettings.threshold}
+            cooldownSeconds={routingSettings.cooldownSeconds}
+            ttlSeconds={ROUTING_SETTINGS_TTL_MS / 1000}
+          />
+          <UsageStatus usage={usageStoreStatus()} health={healthStoreStatus()} />
           <p className="pt-6 text-xs text-muted-foreground">
             Maintenance last ran: {maintenance(
               lastRun?.value as { at: string; created: string[]; dropped: string[] } | undefined ?? null,

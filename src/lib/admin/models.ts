@@ -27,6 +27,8 @@ export interface RouteTargetInput {
   weight?: number
   serviceTier?: ServiceTier | null
   enabled?: boolean
+  breakerThreshold?: number | null
+  breakerCooldownSeconds?: number | null
 }
 
 export interface VirtualModelListItem {
@@ -45,6 +47,8 @@ export interface VirtualModelListItem {
     weight: number
     serviceTier: ServiceTier | null
     enabled: boolean
+    breakerThreshold: number | null
+    breakerCooldownSeconds: number | null
   }>
 }
 
@@ -67,6 +71,8 @@ function toListItem(model: VirtualModelRow, rows: TargetRow[]): VirtualModelList
       weight: target.weight,
       serviceTier: target.serviceTier,
       enabled: target.enabled,
+      breakerThreshold: target.breakerThreshold,
+      breakerCooldownSeconds: target.breakerCooldownSeconds,
     })),
   }
 }
@@ -126,6 +132,24 @@ function validateMaxAttempts(value: number): number {
   return value
 }
 
+/** Null is a value here — it means "inherit the global" — so only a supplied
+ *  number is checked. 0 is legal and disables the breaker for this target. */
+function validateBreakerThreshold(value: number | null | undefined): number | null | undefined {
+  if (value === null || value === undefined) return value
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error('The breaker threshold must be a whole number of failures, 0 or more.')
+  }
+  return value
+}
+
+function validateBreakerCooldown(value: number | null | undefined): number | null | undefined {
+  if (value === null || value === undefined) return value
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error('The breaker cooldown must be a whole number of seconds, 1 or more.')
+  }
+  return value
+}
+
 export async function createVirtualModel(input: VirtualModelInput): Promise<VirtualModelRow> {
   const name = validateName(input.name)
   const maxAttempts = validateMaxAttempts(input.maxAttempts ?? 3)
@@ -180,12 +204,16 @@ function validateTargetFields(input: {
   priority?: number
   weight?: number
   serviceTier?: ServiceTier | null
+  breakerThreshold?: number | null
+  breakerCooldownSeconds?: number | null
 }) {
   const patch: {
     upstreamModel?: string
     priority?: number
     weight?: number
     serviceTier?: ServiceTier | null
+    breakerThreshold?: number | null
+    breakerCooldownSeconds?: number | null
   } = {}
 
   if (input.upstreamModel !== undefined) {
@@ -213,6 +241,12 @@ function validateTargetFields(input: {
     }
     patch.serviceTier = input.serviceTier
   }
+  if (input.breakerThreshold !== undefined) {
+    patch.breakerThreshold = validateBreakerThreshold(input.breakerThreshold)
+  }
+  if (input.breakerCooldownSeconds !== undefined) {
+    patch.breakerCooldownSeconds = validateBreakerCooldown(input.breakerCooldownSeconds)
+  }
 
   return patch
 }
@@ -223,6 +257,8 @@ export async function addRouteTarget(input: RouteTargetInput): Promise<RouteTarg
     priority: input.priority ?? 0,
     weight: input.weight ?? 100,
     serviceTier: input.serviceTier ?? null,
+    breakerThreshold: input.breakerThreshold,
+    breakerCooldownSeconds: input.breakerCooldownSeconds,
   })
 
   const [row] = await db.insert(routeTargets).values({
@@ -233,6 +269,8 @@ export async function addRouteTarget(input: RouteTargetInput): Promise<RouteTarg
     weight: validated.weight!,
     serviceTier: validated.serviceTier ?? null,
     enabled: input.enabled ?? true,
+    breakerThreshold: validated.breakerThreshold ?? null,
+    breakerCooldownSeconds: validated.breakerCooldownSeconds ?? null,
   }).returning()
   return row
 }
@@ -245,6 +283,8 @@ export async function updateRouteTarget(
     weight?: number
     serviceTier?: ServiceTier | null
     enabled?: boolean
+    breakerThreshold?: number | null
+    breakerCooldownSeconds?: number | null
   },
 ): Promise<RouteTargetRow> {
   const patch: Record<string, unknown> = validateTargetFields(input)

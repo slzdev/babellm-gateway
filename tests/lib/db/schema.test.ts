@@ -111,3 +111,26 @@ test('the retired api_flavor column still exists and defaults', async () => {
 
   expect(row.apiFlavor).toBe('chat_completions')
 })
+
+test('route targets carry nullable breaker overrides', async () => {
+  const [p] = await db.insert(providers).values({
+    name: 'breaker-p', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
+  }).returning()
+  const [model] = await db.insert(virtualModels).values({ name: 'breaker-model' }).returning()
+  const [row] = await db.insert(routeTargets).values({
+    virtualModelId: model.id, providerId: p.id, upstreamModel: 'm-1',
+  }).returning()
+
+  // NULL is the inherit signal, so the columns must have no default.
+  expect(row.breakerThreshold).toBeNull()
+  expect(row.breakerCooldownSeconds).toBeNull()
+
+  await db.update(routeTargets)
+    .set({ breakerThreshold: 0, breakerCooldownSeconds: 5 })
+    .where(eq(routeTargets.id, row.id))
+  const [updated] = await db.select().from(routeTargets).where(eq(routeTargets.id, row.id))
+
+  // 0 is a real value — "never open this target" — not an absent one.
+  expect(updated.breakerThreshold).toBe(0)
+  expect(updated.breakerCooldownSeconds).toBe(5)
+})

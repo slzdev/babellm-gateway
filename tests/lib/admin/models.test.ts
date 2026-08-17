@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm'
 import { beforeEach, expect, test } from 'vitest'
 import { db } from '@/lib/db'
 import { routeTargets, virtualModels } from '@/lib/db/schema'
@@ -300,4 +301,38 @@ test('editing another field leaves the service tier alone', async () => {
 
   const updated = await updateRouteTarget(target.id, { weight: 90 })
   expect(updated.serviceTier).toBe('scale')
+})
+
+async function target() {
+  const p = await provider('breaker-p')
+  const model = await createVirtualModel({ name: 'breaker-model' })
+  return addRouteTarget({ virtualModelId: model.id, providerId: p.id, upstreamModel: 'm-1' })
+}
+
+test('breaker overrides round-trip, and blank clears back to inherit', async () => {
+  const row = await target()
+
+  await updateRouteTarget(row.id, { breakerThreshold: 2, breakerCooldownSeconds: 10 })
+  let [saved] = await db.select().from(routeTargets).where(eq(routeTargets.id, row.id))
+  expect(saved.breakerThreshold).toBe(2)
+  expect(saved.breakerCooldownSeconds).toBe(10)
+
+  // null is how a blank form field says "inherit the global again".
+  await updateRouteTarget(row.id, { breakerThreshold: null, breakerCooldownSeconds: null })
+  ;[saved] = await db.select().from(routeTargets).where(eq(routeTargets.id, row.id))
+  expect(saved.breakerThreshold).toBeNull()
+  expect(saved.breakerCooldownSeconds).toBeNull()
+})
+
+test('a per-target threshold of 0 is stored, not treated as absent', async () => {
+  const row = await target()
+  await updateRouteTarget(row.id, { breakerThreshold: 0 })
+  const [saved] = await db.select().from(routeTargets).where(eq(routeTargets.id, row.id))
+  expect(saved.breakerThreshold).toBe(0)
+})
+
+test('an invalid override is rejected rather than stored', async () => {
+  const row = await target()
+  await expect(updateRouteTarget(row.id, { breakerThreshold: -1 })).rejects.toThrow(/threshold/i)
+  await expect(updateRouteTarget(row.id, { breakerCooldownSeconds: 0 })).rejects.toThrow(/cooldown/i)
 })
