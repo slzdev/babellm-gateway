@@ -19,9 +19,10 @@ import { GatewayError, RoutedError, errorResponse, type ClassifiedError } from '
 import { execute, type AttemptRecord } from './execute'
 import { openTargetsFor, recordHealth } from './health'
 import { newCompletionId, rewriteCompletion } from './identity'
+import { chatStreamProtocol } from './protocols/chat'
 import { resolveModel, type Candidate } from './resolve'
 import { selectOrder } from './select'
-import { sseResponse, startChatStream } from './sse'
+import { sseResponse, startStream } from './sse'
 import { usageFrom } from './usage'
 
 export interface ChatHandlerDeps {
@@ -303,17 +304,14 @@ export async function handleChatCompletions(
     const identity = { id: newCompletionId(), model: body.model }
 
     if (stream) {
-      // startChatStream pulls the first chunk, so a failure inside `run` is
+      // startStream pulls the first chunk, so a failure inside `run` is
       // still a failure before the response is committed — which is what
       // makes failover safe for streams.
       const result = await execute(
         chain, requestId, request.signal, { ...deps, recordHealth },
         (adapter, ctx, candidate) =>
-          startChatStream(adapter.chatStream(bodyFor(candidate, body), ctx)),
+          startStream(adapter.chatStream(bodyFor(candidate, body), ctx)),
       )
-      // execute resolves only once the first chunk is in hand, so this is
-      // time-to-first-token without any plumbing into the stream itself.
-      const ttftMs = Date.now() - startedAt
       // Against the body the winning target was actually sent, not the client's
       // — otherwise a tier this gateway added would be dropped by a Gemini
       // target without ever being reported.
@@ -328,11 +326,12 @@ export async function handleChatCompletions(
 
       return sseResponse(
         result.value,
+        chatStreamProtocol,
         identity,
         attemptHeaders(result.candidate, requestId, dropped, limits),
         (outcome, capture) =>
           log(200, outcome, result.attempts, {
-            ttftMs,
+            ...(capture.firstDeltaAt === null ? {} : { ttftMs: capture.firstDeltaAt - startedAt }),
             candidate: result.candidate,
             usage: capture.usage,
             error: capture.error ?? undefined,

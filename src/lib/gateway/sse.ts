@@ -1,47 +1,27 @@
-import type { ChatCompletionChunk } from '@/lib/adapters/types'
 import type { LogUsage } from '@/lib/logs/types'
 import { classifyProviderError, type ClassifiedError } from './errors'
-import { rewriteChunk, type IdentityOptions } from './identity'
-import { usageFrom } from './usage'
+import type { IdentityOptions } from './identity'
 
-const encoder = new TextEncoder()
-
-function event(payload: unknown): Uint8Array {
-  return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
+/**
+ * The framing and accounting that differ between ingresses (Chat's unnamed
+ * `data:` events terminated by `[DONE]`, Responses' named `event:` lines with
+ * no terminator) live behind this interface. Everything else in this file —
+ * the relay loop, disconnect handling, single-settle discipline — is shared.
+ */
+export interface StreamProtocol<Chunk> {
+  frame(chunk: Chunk, identity: IdentityOptions): Uint8Array
+  terminator: Uint8Array | null
+  errorEvent(err: ClassifiedError): Uint8Array
+  accumulate(captured: StreamCapture, chunk: Chunk, maxBytes: number): void
+  usageOf(chunk: Chunk): LogUsage | null
+  /** True for an event that carries generated content, which is what TTFT measures. */
+  isContentDelta(chunk: Chunk): boolean
 }
 
-const DONE = encoder.encode('data: [DONE]\n\n')
-
-/** Assembles assistant text for payload capture, stopping at the byte cap.
- * Only runs when capture was requested, so streams for keys without payload
- * logging pay nothing.
- *
- * The post-truncation guard (stop calling this once `captured.truncated` is
- * set) lives at the CALL SITE, not here — see `if (capture &&
- * !captured.truncated)` below. Do not move that check into this function: a
- * future edit that relocates the call without carrying the guard would let a
- * later small chunk resume appending after truncation. */
-function accumulate(captured: StreamCapture, chunk: ChatCompletionChunk, maxBytes: number) {
-  const delta = chunk.choices?.[0]?.delta?.content
-  // Upstream JSON is untrusted: a non-string content field would make
-  // Buffer.byteLength throw, and a throw here is inside the relay loop —
-  // it would turn a healthy stream into an interrupted one.
-  if (typeof delta !== 'string' || delta.length === 0) return
-  const width = Buffer.byteLength(delta, 'utf8')
-  // A running total rather than re-measuring the accumulated text on every
-  // chunk, which would be quadratic over a token-per-chunk stream.
-  if (captured.bytes + width > maxBytes) {
-    captured.truncated = true
-    return
-  }
-  captured.text += delta
-  captured.bytes += width
-}
-
-export interface StartedChatStream {
-  chunks: AsyncIterable<ChatCompletionChunk>
+export interface StartedStream<Chunk> {
+  chunks: AsyncIterable<Chunk>
   /** The raw source iterator, exposed so a cancelled response can clean it up. */
-  iterator: AsyncIterator<ChatCompletionChunk>
+  iterator: AsyncIterator<Chunk>
 }
 
 /**
@@ -49,9 +29,9 @@ export interface StartedChatStream {
  * committed an HTTP response, which is what makes clean error status codes —
  * and, in Phase 2, failover — possible.
  */
-export async function startChatStream(
-  source: AsyncIterable<ChatCompletionChunk>,
-): Promise<StartedChatStream> {
+export async function startStream<Chunk>(
+  source: AsyncIterable<Chunk>,
+): Promise<StartedStream<Chunk>> {
   const iterator = source[Symbol.asyncIterator]()
   const first = await iterator.next()
 
@@ -85,6 +65,8 @@ export interface StreamCapture {
    * and the row it logs — can say why. Null on every outcome but
    * stream_interrupted. */
   error: ClassifiedError | null
+  /** Epoch ms of the first content-bearing event, for TTFT. Null if none arrived. */
+  firstDeltaAt: number | null
 }
 
 export interface CaptureOptions {
@@ -92,8 +74,9 @@ export interface CaptureOptions {
   maxBytes: number
 }
 
-export function sseResponse(
-  started: StartedChatStream,
+export function sseResponse<Chunk>(
+  started: StartedStream<Chunk>,
+  protocol: StreamProtocol<Chunk>,
   identity: IdentityOptions,
   headers: HeadersInit,
   onSettle?: (outcome: StreamOutcome, capture: StreamCapture) => void,
@@ -115,7 +98,9 @@ export function sseResponse(
 
   // Accumulated as the stream is relayed, so the settle callback — whichever
   // of the three paths reaches it — reports what actually got through.
-  const captured: StreamCapture = { usage: null, text: '', bytes: 0, truncated: false, error: null }
+  const captured: StreamCapture = {
+    usage: null, text: '', bytes: 0, truncated: false, error: null, firstDeltaAt: null,
+  }
 
   function settle(outcome: StreamOutcome) {
     if (settled) return
@@ -134,9 +119,17 @@ export function sseResponse(
           if (cancelled) return
           // include_usage puts this on the final chunk; a provider that omits
           // it simply leaves captured.usage null.
-          if (chunk.usage) captured.usage = usageFrom(chunk.usage)
-          if (capture && !captured.truncated) accumulate(captured, chunk, capture.maxBytes)
-          controller.enqueue(event(rewriteChunk(chunk, identity)))
+          const usage = protocol.usageOf(chunk)
+          if (usage) captured.usage = usage
+          // Recorded on the first content-bearing event rather than the first event
+          // at all: a Responses stream opens with response.created, which upstream
+          // emits instantly, and a chat stream opens with the role delta. Neither is
+          // a token, and treating them as one reports a TTFT of nearly zero.
+          if (captured.firstDeltaAt === null && protocol.isContentDelta(chunk)) {
+            captured.firstDeltaAt = Date.now()
+          }
+          if (capture && !captured.truncated) protocol.accumulate(captured, chunk, capture.maxBytes)
+          controller.enqueue(protocol.frame(chunk, identity))
         }
       } catch (err) {
         if (cancelled) return
@@ -145,20 +138,11 @@ export function sseResponse(
         // synchronously — the log entry needs this in place by then.
         captured.error = classified
         settle('stream_interrupted')
-        controller.enqueue(
-          event({
-            error: {
-              message: classified.message,
-              type: classified.type,
-              param: null,
-              code: 'stream_interrupted',
-            },
-          }),
-        )
+        controller.enqueue(protocol.errorEvent(classified))
       } finally {
         if (!cancelled) {
           settle('ok')
-          controller.enqueue(DONE)
+          if (protocol.terminator) controller.enqueue(protocol.terminator)
           controller.close()
         }
       }
