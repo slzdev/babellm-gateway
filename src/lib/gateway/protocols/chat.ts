@@ -1,6 +1,9 @@
-import type { ChatCompletionChunk } from '@/lib/adapters/types'
+import type { ChatCompletion, ChatCompletionChunk } from '@/lib/adapters/types'
+import { chatCompletionRequestSchema, type ChatCompletionRequest } from '@/lib/schemas/chat'
+import { droppedParams as geminiDroppedParams } from '@/lib/translate/chat-to-gemini'
 import type { ClassifiedError } from '../errors'
-import { rewriteChunk } from '../identity'
+import { parseWith, type Ingress } from '../handler'
+import { newCompletionId, rewriteChunk, rewriteCompletion } from '../identity'
 import type { StreamCapture, StreamProtocol } from '../sse'
 import { usageFrom } from '../usage'
 
@@ -49,4 +52,30 @@ export const chatStreamProtocol: StreamProtocol<ChatCompletionChunk> = {
     return (typeof delta?.content === 'string' && delta.content.length > 0)
       || (typeof delta?.reasoning_content === 'string' && delta.reasoning_content.length > 0)
   },
+}
+
+export const chatIngress: Ingress<ChatCompletionRequest, ChatCompletion, ChatCompletionChunk> = {
+  parse: (raw) => parseWith(chatCompletionRequestSchema, raw),
+  modelOf: (req) => req.model,
+  isStream: (req) => req.stream === true,
+  // Only Gemini translates today: the OpenAI-shaped adapters forward the
+  // request as sent, so there is nothing they can fail to express.
+  droppedFor: (candidate, req) =>
+    candidate.provider.adapter === 'gemini' ? geminiDroppedParams(req) : [],
+  run: (adapter, ctx, req) => adapter.chat(req, ctx),
+  runStream: (adapter, ctx, req) => adapter.chatStream(req, ctx),
+  finish: (res, identity) => rewriteCompletion(res, identity),
+  usageOf: (res) => usageFrom(res.usage),
+  newIdentityId: newCompletionId,
+  stream: chatStreamProtocol,
+  captureResponse: (identity, capture, outcome) => ({
+    id: identity.id,
+    object: 'chat.completion',
+    model: identity.model,
+    choices: [{
+      index: 0,
+      message: { role: 'assistant', content: capture.text },
+      finish_reason: outcome === 'ok' ? 'stop' : null,
+    }],
+  }),
 }
