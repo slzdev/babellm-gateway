@@ -19,6 +19,7 @@ export interface ProviderInput {
   config?: Record<string, unknown>
   enabled?: boolean
   apiFlavor?: ApiFlavor
+  forceUpstreamStream?: boolean
 }
 
 export interface ProviderListItem {
@@ -28,6 +29,11 @@ export interface ProviderListItem {
   baseUrl: string | null
   enabled: boolean
   apiFlavor: ApiFlavor
+  forceUpstreamStream: boolean
+  /** The provider's configured attempt timeout, or null when it uses the
+   *  default — absent rather than defaulted so the edit form can leave its box
+   *  empty, which is how the form says "use the default". */
+  timeoutMs: number | null
   maskedCredentials: Record<string, string>
   targetCount: number
   catalogModelCount: number
@@ -59,6 +65,14 @@ function validate(adapter: AdapterType, credentials: unknown, baseUrl?: string |
     throw new Error('An openai_compatible provider requires a base URL.')
   }
   return result.data as Record<string, unknown>
+}
+
+/** Only a number that is actually stored. A config written by hand could hold
+ *  anything, and a bad value must not reach the form as a prefilled default
+ *  the operator would then re-save. */
+function readTimeoutMs(config: string): number | null {
+  const value = parseProviderConfig(config).timeoutMs
+  return typeof value === 'number' && Number.isInteger(value) ? value : null
 }
 
 function readPathOverrides(config: string): Record<string, string> {
@@ -94,6 +108,8 @@ export async function listProviders(): Promise<ProviderListItem[]> {
     baseUrl: row.baseUrl,
     enabled: row.enabled,
     apiFlavor: row.apiFlavor,
+    forceUpstreamStream: row.forceUpstreamStream,
+    timeoutMs: readTimeoutMs(row.config),
     maskedCredentials: maskCredentials(
       decryptJson<Record<string, unknown>>(row.credentials),
     ),
@@ -130,6 +146,7 @@ export async function createProvider(input: ProviderInput): Promise<ProviderRow>
     config: JSON.stringify(input.config ?? {}),
     enabled: input.enabled ?? true,
     apiFlavor: input.apiFlavor ?? 'chat_completions',
+    forceUpstreamStream: input.forceUpstreamStream ?? false,
   }).returning()
   return row
 }
@@ -199,6 +216,7 @@ export async function updateProvider(
     config: input.config ? JSON.stringify(input.config) : existing.config,
     enabled: input.enabled ?? existing.enabled,
     apiFlavor: input.apiFlavor ?? existing.apiFlavor,
+    forceUpstreamStream: input.forceUpstreamStream ?? existing.forceUpstreamStream,
     updatedAt: new Date(),
   }).where(eq(providers.id, id)).returning()
 

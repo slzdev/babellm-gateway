@@ -228,3 +228,62 @@ test('listProviders reports each provider flavor', async () => {
   const [item] = await listProviders()
   expect(item.apiFlavor).toBe('responses')
 })
+
+test('a provider is created not forcing upstream streams', async () => {
+  const row = await createProvider({
+    name: 'p1', adapter: 'openai', credentials: { apiKey: 'sk-x' },
+  })
+
+  expect(row.forceUpstreamStream).toBe(false)
+})
+
+test('createProvider stores forceUpstreamStream when asked', async () => {
+  const row = await createProvider({
+    name: 'p2', adapter: 'openai', credentials: { apiKey: 'sk-x' }, forceUpstreamStream: true,
+  })
+
+  expect(row.forceUpstreamStream).toBe(true)
+})
+
+test('updateProvider leaves forceUpstreamStream alone when the key is absent', async () => {
+  const created = await createProvider({
+    name: 'p3', adapter: 'openai', credentials: { apiKey: 'sk-x' }, forceUpstreamStream: true,
+  })
+
+  const updated = await updateProvider(created.id, { name: 'renamed' })
+
+  expect(updated.forceUpstreamStream).toBe(true)
+})
+
+test('updateProvider can turn forcing back off', async () => {
+  const created = await createProvider({
+    name: 'p4', adapter: 'openai', credentials: { apiKey: 'sk-x' }, forceUpstreamStream: true,
+  })
+
+  const updated = await updateProvider(created.id, { forceUpstreamStream: false })
+
+  expect(updated.forceUpstreamStream).toBe(false)
+})
+
+test('listProviders surfaces forcing and the configured timeout', async () => {
+  await createProvider({
+    name: 'p5',
+    adapter: 'openai',
+    credentials: { apiKey: 'sk-x' },
+    forceUpstreamStream: true,
+    config: { timeoutMs: 600_000 },
+  })
+
+  const [item] = await listProviders()
+
+  expect(item.forceUpstreamStream).toBe(true)
+  expect(item.timeoutMs).toBe(600_000)
+})
+
+test('listProviders reports a null timeout when the provider has none, so the form can show a placeholder', async () => {
+  await createProvider({ name: 'p6', adapter: 'openai', credentials: { apiKey: 'sk-x' } })
+
+  const [item] = await listProviders()
+
+  expect(item.timeoutMs).toBeNull()
+})

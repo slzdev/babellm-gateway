@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { FormDialog } from '@/components/admin/form-dialog'
 import { createProviderAction, type ActionState } from './actions'
 import { AdvancedPathsFields } from './advanced-paths-fields'
@@ -11,6 +12,7 @@ import { CredentialField } from './provider-fields'
 import { RegistryNamespaceField } from './registry-namespace-field'
 import type { AdapterType } from '@/lib/adapters/credentials'
 import { API_FLAVOR_LABELS, API_FLAVORS } from '@/lib/api-flavors'
+import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS } from '@/lib/timeouts'
 
 const ADAPTERS: AdapterType[] = ['openai', 'openai_compatible', 'gemini', 'bedrock']
 
@@ -70,6 +72,37 @@ export function CreateProviderDialog() {
         ) : null}
 
         <RegistryNamespaceField id="registryNamespace" adapter={adapter} />
+
+        <div className="space-y-2">
+          <Label htmlFor="timeoutMs">Request timeout (ms)</Label>
+          <Input
+            id="timeoutMs"
+            name="timeoutMs"
+            type="number"
+            min="1"
+            max={MAX_TIMEOUT_MS}
+            placeholder={String(DEFAULT_TIMEOUT_MS)}
+          />
+          <p className="text-xs text-muted-foreground">
+            How long one attempt may take before the gateway gives up and tries the
+            next target. Blank uses {DEFAULT_TIMEOUT_MS} ms. Raise it for a provider
+            that serves long requests.
+          </p>
+        </div>
+
+        <div className="space-y-2 sm:col-span-2">
+          <div className="flex items-center gap-2">
+            <Switch id="forceUpstreamStream" name="forceUpstreamStream" />
+            <Label htmlFor="forceUpstreamStream">Force upstream streaming</Label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Open the upstream request as a stream even when the client asked for a
+            single response. Some providers refuse long non-streaming requests. The
+            client still gets one response — only the upstream leg changes. This is
+            the default for every model on the provider — override it per model on
+            the Catalog page.
+          </p>
+        </div>
       </div>
 
       {adapter === 'bedrock' ? (

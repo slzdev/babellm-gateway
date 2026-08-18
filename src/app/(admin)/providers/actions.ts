@@ -12,6 +12,7 @@ import {
 } from '@/lib/adapters/paths'
 import { parseRegistryNamespace } from '@/lib/catalog/config'
 import { syncProvider, type SyncResult } from '@/lib/catalog/sync'
+import { parseTimeoutMs } from '@/lib/timeouts'
 
 export interface ActionState {
   error?: string
@@ -68,6 +69,16 @@ function apiFlavorFrom(formData: FormData): ApiFlavor | undefined {
     : undefined
 }
 
+/**
+ * The Switch posts its `name` only when checked, and Base UI posts the string
+ * "on". An unchecked switch therefore submits nothing, which is "false" and
+ * not "leave it alone" — the field is rendered for every adapter, so absence
+ * is always a real answer.
+ */
+function forceUpstreamStreamFrom(formData: FormData): boolean {
+  return !['false', 'off', null, ''].includes(formData.get('forceUpstreamStream') as string | null)
+}
+
 export async function createProviderAction(
   _prev: ActionState | undefined,
   formData: FormData,
@@ -88,6 +99,10 @@ export async function createProviderAction(
       namespace ? { registryNamespace: namespace } : {},
       pathInputFrom(formData),
     )
+
+    const timeoutMs = parseTimeoutMs(String(formData.get('timeoutMs') ?? ''))
+    if (timeoutMs === null) delete config.timeoutMs
+    else config.timeoutMs = timeoutMs
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Invalid provider configuration.' }
   }
@@ -101,6 +116,7 @@ export async function createProviderAction(
       credentials: credentialsFrom(formData, adapter),
       config,
       apiFlavor: apiFlavorFrom(formData),
+      forceUpstreamStream: forceUpstreamStreamFrom(formData),
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not create the provider.' }
@@ -197,6 +213,10 @@ export async function updateProviderAction(
     if (namespace) config.registryNamespace = namespace
     else delete config.registryNamespace
 
+    const timeoutMs = parseTimeoutMs(String(formData.get('timeoutMs') ?? ''))
+    if (timeoutMs === null) delete config.timeoutMs
+    else config.timeoutMs = timeoutMs
+
     await updateProvider(id, {
       name: String(formData.get('name') ?? ''),
       adapter,
@@ -206,6 +226,7 @@ export async function updateProviderAction(
       ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
       config,
       apiFlavor: apiFlavorFrom(formData),
+      forceUpstreamStream: forceUpstreamStreamFrom(formData),
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not update the provider.' }
