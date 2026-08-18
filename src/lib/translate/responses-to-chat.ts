@@ -277,14 +277,14 @@ export function assertServiceable(req: ResponsesRequest, provider: string): void
   const nonFunction = req.tools?.find((tool) => tool.type !== 'function')
   if (nonFunction) {
     throw refuse(
-      `The \`${nonFunction.type}\` tool is not available on provider "${provider}", which serves the Chat Completions API. Route this model to a target whose API flavor is "responses".`,
+      `The \`${nonFunction.type}\` tool is not available on provider "${provider}", which serves the Chat Completions API. Set this model's API flavor to "responses", or route it to a provider that serves the Responses API.`,
     )
   }
 
   for (const field of ['previous_response_id', 'conversation'] as const) {
     if (req[field] != null) {
       throw refuse(
-        `\`${field}\` is not supported on provider "${provider}", which serves the Chat Completions API and holds no conversation state. Send the full input, or route this model to a target whose API flavor is "responses".`,
+        `\`${field}\` is not supported on provider "${provider}", which serves the Chat Completions API and holds no conversation state. Send the full input, set this model's API flavor to "responses", or route it to a provider that serves the Responses API.`,
       )
     }
   }
