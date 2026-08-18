@@ -332,6 +332,22 @@ export function fromMessage(msg: Anthropic.Message, model: string): ChatCompleti
 }
 
 /**
+ * Merges only the usage fields an event actually reported into the running
+ * accumulator. `MessageDeltaUsage` types every field as `number | null`, and a
+ * `message_delta` that has nothing new to say about, say, `input_tokens` can
+ * carry it as an explicit `null` rather than omitting it — a plain
+ * `Object.assign` would let that null erase the real count `message_start`
+ * already established, under-reporting cost silently. Skipping null and
+ * undefined keeps whichever event last reported a real number in charge of
+ * that field.
+ */
+function mergeUsage(into: AnthropicUsage, from: Partial<AnthropicUsage> | undefined): void {
+  for (const [key, value] of Object.entries(from ?? {})) {
+    if (value != null) (into as Record<string, number>)[key] = value
+  }
+}
+
+/**
  * Anthropic streams semantic events over content blocks, which is closer to
  * the Responses stream than to Gemini's whole-response chunks. The state kept
  * here is small: which content-block index is which tool call (a Chat
@@ -382,7 +398,7 @@ export async function* fromMessageStream(
       case 'message_start': {
         id = event.message.id ?? ''
         responseModel = event.message.model ?? model
-        Object.assign(usage, event.message.usage ?? {})
+        mergeUsage(usage, event.message.usage)
         break
       }
 
@@ -421,7 +437,7 @@ export async function* fromMessageStream(
       }
 
       case 'message_delta': {
-        Object.assign(usage, event.usage ?? {})
+        mergeUsage(usage, event.usage)
         const stop = (event.delta as { stop_reason?: string | null }).stop_reason
         if (stop) yield chunk({}, finishReasonFor(stop, sawToolUse))
         break

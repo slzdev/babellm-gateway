@@ -98,6 +98,23 @@ test('two tool_use blocks keep separate tool call indexes', async () => {
   expect(indexes).toEqual([0, 1, 1])
 })
 
+test('a null usage field on message_delta does not erase what message_start reported', async () => {
+  const chunks = await collect([
+    start,
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'x' } },
+    {
+      type: 'message_delta',
+      delta: { stop_reason: 'end_turn' },
+      usage: { input_tokens: null, output_tokens: 3 },
+    },
+  ])
+
+  expect(chunks.at(-1)?.usage).toEqual({
+    prompt_tokens: 7, completion_tokens: 3, total_tokens: 10,
+  })
+})
+
 test('stream_options.include_usage false suppresses the usage chunk', async () => {
   const chunks = await collect([
     start,
