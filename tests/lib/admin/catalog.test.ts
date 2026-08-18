@@ -346,3 +346,46 @@ test('a target whose model pins nothing reports the provider as the source', asy
 
   expect(views[target.id]).toEqual({ flavor: 'responses', source: 'provider' })
 })
+
+test('the Anthropic flavor and a messages path are stored on the model', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [before] = await listCatalog()
+
+  await setModelGateway(before.id, {
+    apiFlavor: 'anthropic_messages',
+    messagesPath: 'anthropic/v1/messages/',
+  })
+
+  const [item] = await listCatalog()
+  expect(item.apiFlavor).toBe('anthropic_messages')
+  // parseProviderPath normalizes the missing leading slash and the trailing one.
+  expect(item.messagesPath).toBe('/anthropic/v1/messages')
+})
+
+test('a blank messages path clears back to inheriting the provider', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [before] = await listCatalog()
+  await setModelGateway(before.id, { messagesPath: '/m' })
+
+  await setModelGateway(before.id, { messagesPath: '' })
+
+  const [item] = await listCatalog()
+  expect(item.messagesPath).toBeNull()
+})
+
+test('a full URL in the messages path is refused rather than saved', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [before] = await listCatalog()
+
+  await expect(setModelGateway(before.id, { messagesPath: 'https://elsewhere.test/v1/messages' }))
+    .rejects.toThrow(/not a valid path/)
+
+  const [item] = await listCatalog()
+  expect(item.messagesPath).toBeNull()
+})
+
+test('the list item reports the provider messages path as the inherited placeholder', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [item] = await listCatalog()
+  expect(item.providerPaths.messagesPath).toBe('/messages')
+})

@@ -139,6 +139,7 @@ export async function setModelGatewayAction(
       apiFlavor: apiFlavorValue(formData.get('apiFlavor')),
       chatCompletionsPath: String(formData.get('chatCompletionsPath') ?? ''),
       responsesPath: String(formData.get('responsesPath') ?? ''),
+      messagesPath: String(formData.get('messagesPath') ?? ''),
     })
   } catch (err) {
     return {

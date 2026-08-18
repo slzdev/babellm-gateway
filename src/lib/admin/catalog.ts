@@ -44,8 +44,6 @@ export interface CatalogListItem {
   apiFlavor: ApiFlavor | null
   chatCompletionsPath: string | null
   responsesPath: string | null
-  // No catalog_models column yet for this one — see Task 3 — so it always
-  // reads null until that override becomes storable.
   messagesPath: string | null
   /** What a blank field on this row would inherit, so the dialog can show it
    *  as a placeholder instead of sending an operator to the Providers page. */
@@ -97,7 +95,7 @@ function toItem(
     apiFlavor: row.apiFlavor,
     chatCompletionsPath: row.chatCompletionsPath,
     responsesPath: row.responsesPath,
-    messagesPath: null,
+    messagesPath: row.messagesPath,
     providerApiFlavor,
     providerPaths,
   }
@@ -339,6 +337,7 @@ export interface ModelGatewayInput {
   apiFlavor?: ApiFlavor | null
   chatCompletionsPath?: string | null
   responsesPath?: string | null
+  messagesPath?: string | null
 }
 
 /**
@@ -371,6 +370,9 @@ export async function setModelGateway(
   }
   if (input.responsesPath !== undefined) {
     patch.responsesPath = parseProviderPath(input.responsesPath ?? '')
+  }
+  if (input.messagesPath !== undefined) {
+    patch.messagesPath = parseProviderPath(input.messagesPath ?? '')
   }
 
   await db.update(catalogModels).set(patch).where(eq(catalogModels.id, id))
