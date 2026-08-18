@@ -242,13 +242,36 @@ test('gemini accepts model path overrides and ignores them', () => {
   expect(typeof adapter.chat).toBe('function')
 })
 
-test('an anthropic_messages model gets the Anthropic adapter, wrapped for respond', () => {
+test('an anthropic_messages model hits /messages, not /chat/completions or /responses', async () => {
+  const fetchSpy = stubFetch()
   const adapter = createAdapter(
     provider({ adapter: 'openai_compatible', baseUrl: 'https://api.example/v1' }),
     'anthropic_messages',
   )
-  expect(typeof adapter.chat).toBe('function')
   expect(typeof adapter.respond).toBe('function')
+  await adapter.chat(chatBody, chatCtx)
+
+  expect(fetchSpy).toHaveBeenCalledTimes(1)
+  expect(calledPath(fetchSpy)).toMatch(/\/messages$/)
+})
+
+test('a model path override moves the messages endpoint', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(
+    provider({
+      adapter: 'openai_compatible',
+      baseUrl: 'https://api.example/v1',
+      config: JSON.stringify({ messagesPath: '/provider/messages' }),
+    }),
+    'anthropic_messages',
+    { messagesPath: '/anthropic/v1/messages' },
+  )
+  await adapter.chat(chatBody, chatCtx)
+
+  // The model's override arrives resolved against the base URL's origin, the
+  // same rule chatCompletionsPath and responsesPath already follow — and it
+  // must win over the provider's own messagesPath, not merely over the default.
+  expect(calledPath(fetchSpy)).toBe('https://api.example/anthropic/v1/messages')
 })
 
 test('the gemini adapter ignores an anthropic_messages flavor, as it ignores the others', () => {
