@@ -3,6 +3,7 @@ import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { handleResponses } from '@/lib/gateway/responses-handler'
 import { createResponsesAdapter } from '@/lib/adapters/openai/responses'
+import { createAnthropicAdapter } from '@/lib/adapters/anthropic'
 import { withRespondViaChat } from '@/lib/adapters/wrappers'
 import type {
   ChatCompletion, ChatCompletionChunk, ProviderAdapter, ProviderRuntime,
@@ -41,6 +42,28 @@ function responseResult(text: string) {
       input_tokens: 1, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
       output_tokens: 1, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 2,
     },
+  }
+}
+
+/** A real Anthropic adapter over a fake SDK client, wrapped exactly as the
+ *  registry wraps it, so both ingresses exercise the real crossings. */
+function anthropicAdapter(name: string, create: unknown): ProviderAdapter {
+  const factory = vi.fn().mockReturnValue({ messages: { create } })
+  return withRespondViaChat(
+    createAnthropicAdapter(
+      { ...runtime(name), baseUrl: 'https://api.anthropic.com/v1' },
+      null,
+      factory as never,
+    ),
+    name,
+  )
+}
+
+function anthropicMessage(text: string) {
+  return {
+    id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5',
+    content: [{ type: 'text', text }], stop_reason: 'end_turn',
+    usage: { input_tokens: 3, output_tokens: 2 },
   }
 }
 
@@ -380,4 +403,98 @@ test('a chat request still reaches a responses-flavored target', async () => {
 
   expect(res.status).toBe(200)
   expect((await res.json()).object).toBe('chat.completion')
+})
+
+test('a Chat Completions client is served by an anthropic_messages model', async () => {
+  const { apiKey } = await seedTargets({
+    targets: [{ name: 'claude', adapter: 'openai_compatible', apiFlavor: 'anthropic_messages' }],
+  })
+  const create = vi.fn().mockResolvedValue(anthropicMessage('from anthropic'))
+  const deps = fakeAdapterByProvider({ claude: anthropicAdapter('claude', create) })
+
+  const res = await handleChatCompletions(chatRequest(body, apiKey), deps)
+
+  expect(res.status).toBe(200)
+  await expect(res.json()).resolves.toMatchObject({
+    choices: [{ message: { content: 'from anthropic' } }],
+  })
+  // The upstream saw a Messages request, not a Chat Completions one.
+  expect(create.mock.calls[0][0].messages).toEqual([
+    { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+  ])
+})
+
+test('a Responses client reaches the same model through the double crossing', async () => {
+  const { apiKey } = await seedTargets({
+    targets: [{ name: 'claude', adapter: 'openai_compatible', apiFlavor: 'anthropic_messages' }],
+  })
+  const create = vi.fn().mockResolvedValue(anthropicMessage('crossed twice'))
+  const deps = fakeAdapterByProvider({ claude: anthropicAdapter('claude', create) })
+
+  const res = await handleResponses(
+    responsesRequest({ model: 'house-model', input: 'hi' }, apiKey),
+    deps,
+  )
+
+  expect(res.status).toBe(200)
+  await expect(res.json()).resolves.toMatchObject({
+    status: 'completed',
+    output: [{ content: [{ text: 'crossed twice' }] }],
+  })
+})
+
+test("the model's thinking reaches a Responses client as a reasoning summary", async () => {
+  const { apiKey } = await seedTargets({
+    targets: [{ name: 'claude', adapter: 'openai_compatible', apiFlavor: 'anthropic_messages' }],
+  })
+  async function* events() {
+    yield {
+      type: 'message_start',
+      message: {
+        id: 'msg_1', model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 0 },
+      },
+    }
+    yield { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }
+    yield { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'weighing' } }
+    yield { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }
+    yield { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'answer' } }
+    yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } }
+  }
+  const create = vi.fn().mockResolvedValue(events())
+  const deps = fakeAdapterByProvider({ claude: anthropicAdapter('claude', create) })
+
+  const res = await handleResponses(
+    responsesRequest(
+      { model: 'house-model', input: 'hi', stream: true, reasoning: { effort: 'high' } },
+      apiKey,
+    ),
+    deps,
+  )
+
+  const text = await res.text()
+  const chunks = parseSseChunks(text)
+  const types = chunks.map((c) => (c as { type?: string }).type)
+  expect(types).toContain('response.reasoning_summary_text.delta')
+  expect(types).toContain('response.output_text.delta')
+  // The thinking the client asked for was actually requested upstream.
+  expect(create.mock.calls[0][0].thinking).toEqual({ type: 'adaptive', display: 'summarized' })
+})
+
+test('failover crosses flavors: an anthropic target fails, a chat target serves', async () => {
+  const { apiKey } = await seedTargets({
+    targets: [
+      { name: 'claude', adapter: 'openai_compatible', apiFlavor: 'anthropic_messages', priority: 1 },
+      { name: 'openai-fallback', apiFlavor: 'chat_completions', priority: 2 },
+    ],
+  })
+  const create = vi.fn().mockRejectedValue(apiError(503, 'overloaded'))
+  const deps = fakeAdapterByProvider({
+    claude: anthropicAdapter('claude', create),
+    'openai-fallback': { chat: async () => completion('openai-fallback') as never },
+  })
+
+  const res = await handleChatCompletions(chatRequest(body, apiKey), deps)
+
+  expect(res.status).toBe(200)
+  expect(res.headers.get('x-babellm-provider')).toBe('openai-fallback')
 })

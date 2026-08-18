@@ -119,6 +119,23 @@ test('the header describes the target that actually served', async () => {
   expect(res.headers.get('x-babellm-dropped-params')).toBeNull()
 })
 
+test('a pinned service tier is reported as dropped by an anthropic_messages model', async () => {
+  const { apiKey } = await seedTargets({
+    targets: [{
+      name: 'claude', adapter: 'openai_compatible',
+      apiFlavor: 'anthropic_messages', serviceTier: 'flex',
+    }],
+  })
+  const deps = fakeAdapterByProvider({ claude: { chat: async () => completion('claude') as never } })
+
+  const res = await handleChatCompletions(
+    chatRequest({ model: 'house-model', messages: [{ role: 'user', content: 'hi' }] }, apiKey),
+    deps,
+  )
+
+  expect(res.headers.get('x-babellm-dropped-params')?.split(',')).toContain('service_tier')
+})
+
 test('a streaming response carries the header too', async () => {
   const { apiKey } = await seedTargets({ targets: [{ name: 'gem', adapter: 'gemini' }] })
 

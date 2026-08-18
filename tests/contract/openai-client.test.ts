@@ -2,7 +2,9 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { handleResponses } from '@/lib/gateway/responses-handler'
-import type { ProviderAdapter } from '@/lib/adapters/types'
+import { createAnthropicAdapter } from '@/lib/adapters/anthropic'
+import { withRespondViaChat } from '@/lib/adapters/wrappers'
+import type { ProviderAdapter, ProviderRuntime } from '@/lib/adapters/types'
 import { seedGateway, seedTargets } from '../helpers/gateway'
 import { resetDb } from '../helpers/db'
 import fixture from '../fixtures/openai-tool-call-stream.json'
@@ -51,6 +53,21 @@ function gatewayClient(
     fetch: ((url: string, init?: RequestInit) =>
       handler(new Request(url, init), deps)) as unknown as typeof fetch,
   })
+}
+
+function runtime(name: string): ProviderRuntime {
+  return {
+    id: name, name, adapter: 'openai', baseUrl: 'https://api.anthropic.com/v1',
+    credentials: { apiKey: 'sk-test' }, config: {},
+  }
+}
+
+function anthropicMessage(text: string) {
+  return {
+    id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5',
+    content: [{ type: 'text', text }], stop_reason: 'end_turn',
+    usage: { input_tokens: 3, output_tokens: 2 },
+  }
 }
 
 function response(id: string) {
@@ -169,6 +186,26 @@ test('the SDK surfaces an upstream rate limit as RateLimitError', async () => {
       messages: [{ role: 'user', content: 'hi' }],
     }),
   ).rejects.toBeInstanceOf(OpenAI.RateLimitError)
+})
+
+test('the SDK parses a Chat Completions response from an anthropic_messages model', async () => {
+  const { apiKey } = await seedTargets({
+    targets: [{ name: 'claude', adapter: 'openai_compatible', apiFlavor: 'anthropic_messages' }],
+  })
+  const create = vi.fn().mockResolvedValue(anthropicMessage('from anthropic'))
+  const factory = vi.fn().mockReturnValue({ messages: { create } })
+  const adapter = withRespondViaChat(
+    createAnthropicAdapter(runtime('claude'), null, factory as never),
+    'claude',
+  )
+  const client = gatewayClient(apiKey, adapter)
+
+  const result = await client.chat.completions.create({
+    model: 'house-model',
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+
+  expect(result.choices[0].message.content).toBe('from anthropic')
 })
 
 test('the openai SDK can call responses.create against the gateway', async () => {
