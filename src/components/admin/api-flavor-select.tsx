@@ -3,10 +3,11 @@
 import { API_FLAVOR_LABELS as LABELS, API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
 
 /**
- * The flavor selector both target dialogs render.
+ * The flavor selector. Lives in components/admin because the catalog's gateway
+ * dialog is not the only screen that will ever need it.
  *
  * "(inherit)" submits an empty string, which the action turns back into NULL —
- * the value that makes the target follow its provider's setting.
+ * the value that makes a model follow its provider's setting.
  */
 export function ApiFlavorSelect({
   id,

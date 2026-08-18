@@ -9,12 +9,15 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
 import { PageHeader } from '@/components/admin/page-header'
-import { listPickerModels, targetWarnings, type TargetWarning } from '@/lib/admin/catalog'
+import {
+  listPickerModels, targetGatewayViews, targetWarnings, type TargetWarning,
+} from '@/lib/admin/catalog'
 import { targetBreakerViews, type TargetBreakerView } from '@/lib/admin/health'
 import { getVirtualModel } from '@/lib/admin/models'
 import { listProviders } from '@/lib/admin/providers'
 import { requireAdmin } from '@/lib/admin/session'
 import { resolveRoutingSettings } from '@/lib/routing-settings'
+import { API_FLAVOR_LABELS } from '@/lib/api-flavors'
 import { AddTargetDialog } from '../model-form'
 import { ModelSectionActions } from '../model-section-actions'
 import { TargetRowActions } from '../target-row-actions'
@@ -61,9 +64,10 @@ export default async function ModelDetailPage({
   const model = await getVirtualModel(id)
   if (!model) notFound()
 
-  const [providers, warnings, breakers, routingSettings] = await Promise.all([
+  const [providers, warnings, gatewayViews, breakers, routingSettings] = await Promise.all([
     listProviders(),
     targetWarnings(),
+    targetGatewayViews(),
     targetBreakerViews(model.targets),
     resolveRoutingSettings(),
   ])
@@ -153,9 +157,11 @@ export default async function ModelDetailPage({
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">
-                      {providers.find((provider) => provider.id === target.providerId)
-                        ?.apiFlavor ?? 'chat_completions'}
+                      {API_FLAVOR_LABELS[gatewayViews[target.id]?.flavor ?? 'chat_completions']}
                     </Badge>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      from {gatewayViews[target.id]?.source ?? 'provider'}
+                    </span>
                   </TableCell>
                   <TableCell>
                     <Badge variant={target.enabled ? 'default' : 'secondary'}>

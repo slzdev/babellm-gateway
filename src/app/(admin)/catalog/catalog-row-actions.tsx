@@ -10,7 +10,7 @@ import {
 import { ConfirmAction } from '@/components/admin/confirm-action'
 import type { CatalogListItem } from '@/lib/admin/catalog'
 import { deleteCatalogModelAction } from './actions'
-import { OverrideDialog, RouteToModelDialog } from './catalog-forms'
+import { GatewaySettingsDialog, OverrideDialog, RouteToModelDialog } from './catalog-forms'
 
 export function CatalogRowActions({
   item, virtualModels,
@@ -21,6 +21,7 @@ export function CatalogRowActions({
   const [overriding, setOverriding] = useState(false)
   const [routing, setRouting] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  const [gateway, setGateway] = useState(false)
 
   return (
     <>
@@ -32,6 +33,7 @@ export function CatalogRowActions({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-auto min-w-40">
           <DropdownMenuItem onClick={() => setOverriding(true)}>Edit overrides</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setGateway(true)}>Gateway settings</DropdownMenuItem>
           <DropdownMenuItem onClick={() => setRouting(true)}>
             Route to a virtual model
           </DropdownMenuItem>
@@ -43,6 +45,7 @@ export function CatalogRowActions({
       </DropdownMenu>
 
       <OverrideDialog item={item} open={overriding} onOpenChange={setOverriding} />
+      <GatewaySettingsDialog item={item} open={gateway} onOpenChange={setGateway} />
       <RouteToModelDialog
         item={item}
         virtualModels={virtualModels}

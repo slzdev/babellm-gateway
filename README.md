@@ -54,7 +54,7 @@ await client.responses.create({
   supported. A response id is passed through from the provider and carries no
   routing information, so there is nothing to route a retrieval or a
   background poll to.
-- Hosted tools (`web_search`, `file_search`, …) need a target whose API flavor
+- Hosted tools (`web_search`, `file_search`, …) need a model whose API flavor
   is `responses`. Against a Chat Completions target the request is **refused
   with a 400**, not silently answered without the tool — and a virtual model
   whose first target can't serve it does not fail over to a later target that
