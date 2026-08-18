@@ -78,6 +78,26 @@ function apiError(status: number, message = 'boom') {
   return new OpenAI.APIError(status, { message, code: 'x' }, message, undefined)
 }
 
+/**
+ * A chat-only adapter whose `chatStream` is under test control, rather than
+ * hard-failing if called — the counterpart to `chatOnlyRespondingVia` above,
+ * which only ever exercises `respond` (via `chat`).
+ */
+function chatOnlyStreamingVia(
+  providerName: string,
+  chatStream: () => AsyncIterable<ChatCompletionChunk>,
+): ProviderAdapter {
+  return withRespondViaChat(
+    {
+      async chat(): Promise<ChatCompletion> {
+        throw new Error(`chat not used in this test for ${providerName}`)
+      },
+      chatStream: chatStream as ProviderAdapter['chatStream'],
+    },
+    providerName,
+  )
+}
+
 beforeEach(async () => {
   process.env.ENCRYPTION_KEY = 'd'.repeat(64)
   await resetDb()
@@ -205,6 +225,47 @@ test('a responses stream that dies before its first chunk still fails over', asy
   expect(sseTerminated(await res.text())).toBe(true)
 })
 
+test('a Responses stream over a chat-only target fails over on a dead first chunk', async () => {
+  // Regression test: `fromCompletionStream` used to yield `response.created`
+  // before ever pulling from the upstream chat stream, so `startStream`
+  // resolved — and the HTTP response committed — without the provider having
+  // been contacted at all. A dead first target could not fail over; the
+  // client got a 200 followed by a mid-stream error instead of a rescue by
+  // the second target, exactly as the same-shaped chat-ingress test above
+  // (line 180) already pins for the other diagonal.
+  const { apiKey } = await seedTargets({
+    targets: [
+      { name: 'cc', priority: 0 },
+      { name: 'cc2', priority: 1 },
+    ],
+  })
+
+  const dying = async function* (): AsyncIterable<ChatCompletionChunk> {
+    throw apiError(503, 'down')
+  }
+  const rescued = async function* (): AsyncIterable<ChatCompletionChunk> {
+    yield {
+      id: 'up', object: 'chat.completion.chunk', created: 1, model: 'cc2-model',
+      choices: [{ index: 0, delta: { content: 'rescued' }, finish_reason: 'stop' }],
+    } as ChatCompletionChunk
+  }
+
+  const res = await handleResponses(
+    responsesRequest({ model: 'house-model', input: 'hi', stream: true }, apiKey),
+    fakeAdapterByProvider({
+      cc: chatOnlyStreamingVia('cc', dying),
+      cc2: chatOnlyStreamingVia('cc2', rescued),
+    }),
+  )
+
+  expect(res.status).toBe(200)
+  expect(res.headers.get('x-babellm-provider')).toBe('cc2')
+  const text = await res.text()
+  expect(text).toContain('event: response.created')
+  expect(text).toContain('event: response.completed')
+  expect(text).toContain('rescued')
+})
+
 test('a Responses request is served by a chat-only target', async () => {
   const { apiKey } = await seedTargets({ targets: [{ name: 'p1' }] })
   const chat = vi.fn().mockResolvedValue(completion('p1'))
@@ -285,8 +346,8 @@ test('a chat request still reaches a responses-flavored target', async () => {
   const res = await handleChatCompletions(
     chatRequest({ model: 'house-model', messages: [{ role: 'user', content: 'hi' }] }, apiKey),
     // A real responses-flavored adapter (createResponsesAdapter) implements
-    // `chat` natively via chat-to-responses.ts — `withChatViaResponses` is
-    // identity and has nothing to add here. That translation is covered at
+    // `chat` natively via chat-to-responses.ts — the registry returns it
+    // unwrapped and has nothing to add here. That translation is covered at
     // the adapter level (responses-chat.test.ts) and registry dispatch by
     // flavor at tests/lib/adapters/registry.test.ts; this only pins that the
     // chat ingress always calls `adapter.chat`, never `adapter.respond`,

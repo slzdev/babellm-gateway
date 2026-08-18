@@ -465,9 +465,15 @@ function echoedRequestFields(req: ResponsesRequest) {
  * truth.
  */
 export function fromCompletion(res: ChatCompletion, req: ResponsesRequest, id: string): ResponsesResult {
+  // Upstream JSON is untrusted: a provider returning `choices: []` must not
+  // crash this translation into a 500. The chat ingress never touches
+  // `choices[0]` (identity.ts's rewriteCompletion only overwrites `id` and
+  // `model`), so it would relay such a response as-is; there is no Responses
+  // equivalent of "relay" here, so this falls back to an empty, completed
+  // response instead.
   const choice = res.choices[0]
-  const message = choice.message as ChatMessageWithReasoning
-  const { status, incompleteDetails } = statusOf(choice.finish_reason)
+  const message = (choice?.message ?? {}) as ChatMessageWithReasoning
+  const { status, incompleteDetails } = statusOf(choice?.finish_reason ?? 'stop')
 
   return {
     id,
@@ -749,13 +755,14 @@ function* closeToolCall(entry: ToolCallEntry, state: StreamState, output: Output
  * to preserve, and the request whose fields get echoed onto every response
  * snapshot.
  *
- * Framing: `response.created` then `response.in_progress` fire before any
- * chunk is read, both describing an empty in-progress response — real
- * content only exists once the first chunk arrives. The terminal event fires
- * only after the chunk stream itself ends, not the moment a `finish_reason`
- * is seen, because a provider may still send a trailing usage-only chunk
- * (empty `choices`) after the one that carried `finish_reason` — the
- * "usage from the final chunk" test below depends on this.
+ * Framing: the first chunk is pulled from `chunks` before `response.created`
+ * and `response.in_progress` fire (see below), but both events still describe
+ * an empty in-progress response — real content only exists once that first
+ * chunk is processed by the loop. The terminal event fires only after the
+ * chunk stream itself ends, not the moment a `finish_reason` is seen, because
+ * a provider may still send a trailing usage-only chunk (empty `choices`)
+ * after the one that carried `finish_reason` — the "usage from the final
+ * chunk" test below depends on this.
  */
 export async function* fromCompletionStream(
   chunks: AsyncIterable<ChatCompletionChunk>,
@@ -769,6 +776,28 @@ export async function* fromCompletionStream(
   const output: OutputItem[] = []
   const createdAt = Math.floor(Date.now() / 1000)
 
+  // Pulled eagerly, before `response.created` is emitted, so that event means
+  // what it claims — the upstream connection exists. A chat adapter's stream
+  // is an `async *` generator, so merely constructing `chunks` contacts
+  // nothing; only the first `next()` does. Yielding `created`/`in_progress`
+  // first would let `startStream` (sse.ts) resolve — and the HTTP response
+  // commit — before the provider was ever asked, defeating the failover this
+  // gateway relies on for streams and letting `execute()` record a healthy
+  // circuit-breaker outcome for a request that never reached the provider.
+  const iterator = chunks[Symbol.asyncIterator]()
+  const first = await iterator.next()
+  const remaining: AsyncIterable<ChatCompletionChunk> = {
+    async *[Symbol.asyncIterator]() {
+      if (first.done) return
+      yield first.value
+      while (true) {
+        const next = await iterator.next()
+        if (next.done) return
+        yield next.value
+      }
+    },
+  }
+
   yield {
     type: 'response.created', sequence_number: state.sequence++,
     response: buildResponse(id, req, createdAt, 'in_progress', null, [], undefined),
@@ -778,7 +807,7 @@ export async function* fromCompletionStream(
     response: buildResponse(id, req, createdAt, 'in_progress', null, [], undefined),
   } as unknown as ResponseStreamEvent
 
-  for await (const rawChunk of chunks) {
+  for await (const rawChunk of remaining) {
     // Usage rides its own top-level field, independent of `choices` — the
     // real API's trailing usage-only chunk has an empty choices array, so
     // this check cannot live inside the `choice` guard below.
