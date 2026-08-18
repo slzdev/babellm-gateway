@@ -144,3 +144,48 @@ test('sequence numbers stay monotonic from zero across a refusal stream', async 
 
   expect(events.map((e) => e.sequence_number)).toEqual([...events.keys()])
 })
+
+/**
+ * A source whose `finally` records that it was closed. Cancelling a consumer
+ * mid-iteration is what releases an upstream connection, so these two tests
+ * are the only thing standing between a client disconnect and a leaked stream.
+ */
+function trackedSource(onClose: () => void) {
+  return (async function* () {
+    try {
+      yield chunk({ content: 'he' }) as never
+      yield chunk({ content: 'llo' }) as never
+    } finally {
+      onClose()
+    }
+  })()
+}
+
+test('cancelling mid-stream closes the upstream generator', async () => {
+  let closed = false
+  const events = fromCompletionStream(trackedSource(() => { closed = true }), req, 'resp_1')
+  const iterator = events[Symbol.asyncIterator]()
+
+  // Far enough in to be suspended inside the chunk loop.
+  await iterator.next()
+  await iterator.next()
+  await iterator.next()
+  await iterator.return?.()
+
+  expect(closed).toBe(true)
+})
+
+test('cancelling before the first chunk is processed still closes the upstream generator', async () => {
+  let closed = false
+  const events = fromCompletionStream(trackedSource(() => { closed = true }), req, 'resp_1')
+  const iterator = events[Symbol.asyncIterator]()
+
+  // Only `response.created` has been pulled, so the chunk loop has not begun —
+  // but the first chunk was already pulled eagerly, so the upstream is open and
+  // has to be closed anyway. This is the window sse.ts's cancel path can land
+  // in: startStream resolves on exactly this event.
+  await iterator.next()
+  await iterator.return?.()
+
+  expect(closed).toBe(true)
+})

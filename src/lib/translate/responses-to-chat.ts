@@ -769,6 +769,43 @@ export async function* fromCompletionStream(
   req: ResponsesRequest,
   id: string,
 ): AsyncIterable<ResponseStreamEvent> {
+  const iterator = chunks[Symbol.asyncIterator]()
+  const first = await iterator.next()
+
+  try {
+    yield* translateChunks(iterator, first, req, id)
+  } finally {
+    // Re-establishes the cleanup cascade that driving `iterator` by hand
+    // breaks. Iterating a source with `for await` closes it automatically when
+    // the consumer stops early, but pulling with explicit `next()` calls does
+    // not — so a client disconnect (sse.ts's cancel path, which calls
+    // `.return()` on this generator) would stop here and never reach the
+    // generator that owns the upstream connection.
+    //
+    // It sits around the delegation rather than inside `translateChunks`
+    // because the first chunk is pulled before that generator starts: a
+    // disconnect arriving between `response.created` and the first loop
+    // iteration would otherwise leave an already-started upstream unclosed.
+    try {
+      await iterator.return?.()
+    } catch {
+      // The client is already gone; a failed cleanup has no one to report to
+      // and must not displace whatever sent us into this finally.
+    }
+  }
+}
+
+/**
+ * The translation itself. Split from the exported entry point above only so
+ * that the eager first pull and its cleanup guarantee can wrap the whole of
+ * it, including the events emitted before the chunk loop begins.
+ */
+async function* translateChunks(
+  iterator: AsyncIterator<ChatCompletionChunk>,
+  first: IteratorResult<ChatCompletionChunk>,
+  req: ResponsesRequest,
+  id: string,
+): AsyncIterable<ResponseStreamEvent> {
   const state: StreamState = {
     sequence: 0, outputIndex: 0, reasoning: null, message: null,
     toolCalls: new Map(), finishReason: null, usage: null,
@@ -776,16 +813,15 @@ export async function* fromCompletionStream(
   const output: OutputItem[] = []
   const createdAt = Math.floor(Date.now() / 1000)
 
-  // Pulled eagerly, before `response.created` is emitted, so that event means
-  // what it claims — the upstream connection exists. A chat adapter's stream
-  // is an `async *` generator, so merely constructing `chunks` contacts
-  // nothing; only the first `next()` does. Yielding `created`/`in_progress`
-  // first would let `startStream` (sse.ts) resolve — and the HTTP response
-  // commit — before the provider was ever asked, defeating the failover this
-  // gateway relies on for streams and letting `execute()` record a healthy
-  // circuit-breaker outcome for a request that never reached the provider.
-  const iterator = chunks[Symbol.asyncIterator]()
-  const first = await iterator.next()
+  // `first` was pulled by the caller before `response.created` was emitted, so
+  // that event means what it claims — the upstream connection exists. A chat
+  // adapter's stream is an `async *` generator, so merely constructing it
+  // contacts nothing; only the first `next()` does. Yielding
+  // `created`/`in_progress` first would let `startStream` (sse.ts) resolve —
+  // and the HTTP response commit — before the provider was ever asked,
+  // defeating the failover this gateway relies on for streams and letting
+  // `execute()` record a healthy circuit-breaker outcome for a request that
+  // never reached the provider.
   const remaining: AsyncIterable<ChatCompletionChunk> = {
     async *[Symbol.asyncIterator]() {
       if (first.done) return
