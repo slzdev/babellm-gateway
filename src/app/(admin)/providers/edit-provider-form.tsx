@@ -91,9 +91,11 @@ export function EditProviderDialog({
             defaultValue={provider.timeoutMs ?? ''}
           />
           <p className="text-xs text-muted-foreground">
-            How long one attempt may take before the gateway gives up and tries the
-            next target. Blank uses {DEFAULT_TIMEOUT_MS} ms. Raise it for a provider
-            that serves long requests.
+            How long one attempt may take in total, not just to its first byte.
+            Reaching it before the first chunk means the gateway tries the next
+            target; after it, a stream already in flight is cut short instead.
+            Blank uses {DEFAULT_TIMEOUT_MS} ms. Raise it for a provider that
+            serves long requests.
           </p>
         </div>
 

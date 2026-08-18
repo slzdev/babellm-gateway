@@ -204,11 +204,11 @@ export async function updateProviderAction(
   try {
     const namespace = parseRegistryNamespace(String(formData.get('registryNamespace') ?? ''))
 
-    // registryNamespace and the three endpoint paths are the config keys this
-    // form edits. They are merged onto the stored config rather than replacing
-    // the object outright — {} is truthy, so passing it unconditionally would
-    // clobber keys no form exposes yet (timeoutMs, disableStreamUsage) that are
-    // still read on the request path.
+    // registryNamespace, timeoutMs and the three endpoint paths are the config
+    // keys this form edits. They are merged onto the stored config rather than
+    // replacing the object outright — {} is truthy, so passing it
+    // unconditionally would clobber keys no form exposes yet
+    // (disableStreamUsage) that are still read on the request path.
     const config = mergeProviderPaths(await getProviderConfig(id), pathInputFrom(formData))
     if (namespace) config.registryNamespace = namespace
     else delete config.registryNamespace

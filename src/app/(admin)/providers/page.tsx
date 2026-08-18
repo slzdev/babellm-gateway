@@ -88,6 +88,9 @@ export default async function ProvidersPage() {
                   {provider.apiFlavor === 'responses' ? (
                     <Badge variant="secondary" className="ml-2">responses</Badge>
                   ) : null}
+                  {provider.forceUpstreamStream ? (
+                    <Badge variant="secondary" className="ml-2">forced stream</Badge>
+                  ) : null}
                 </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">
                   {Object.entries(provider.maskedCredentials)

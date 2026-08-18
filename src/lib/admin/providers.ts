@@ -127,8 +127,8 @@ export async function listProviders(): Promise<ProviderListItem[]> {
 /**
  * Fetches a provider's config object as stored, so a caller can merge a
  * targeted key into it (e.g. `registryNamespace`) without clobbering other
- * keys — `timeoutMs`, `disableStreamUsage` — that aren't editable from any
- * current form but are still read on the request path.
+ * keys — `disableStreamUsage` — that aren't editable from any current form
+ * but are still read on the request path.
  */
 export async function getProviderConfig(id: string): Promise<Record<string, unknown>> {
   const [row] = await db.select().from(providers).where(eq(providers.id, id))

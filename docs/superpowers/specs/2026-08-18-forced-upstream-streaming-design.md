@@ -228,8 +228,13 @@ Top level: `id`, `model`, `created`, `system_fingerprint` and `service_tier`
 come from the first chunk; `object` is `'chat.completion'`; `usage` is
 whichever chunk carried one last, and `undefined` when none did —
 `chatStream` already asks for `stream_options.include_usage` unless the
-provider sets `disableStreamUsage`, and a provider that suppresses it simply
-logs no usage, exactly as it would have without this feature.
+provider sets `disableStreamUsage`. Accepted, but not free: on a provider that
+sets that flag, forcing *removes* usage from a request that had it. Unforced,
+a `stream: false` request reads usage off the non-streaming body, which never
+involved `stream_options` at all — so the request is served and logged with no
+tokens, no cost, and no contribution to the key's tpm or spend counters.
+Re-enabling `include_usage` here would defeat the flag, so the answer is not
+to force a provider that sets it; the README says so beside the feature.
 
 A stream that yields **zero** chunks throws rather than returning an empty
 completion, so the chain fails over. The throw is a plain `Error`;

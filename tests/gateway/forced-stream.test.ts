@@ -3,8 +3,9 @@ import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { providers } from '@/lib/db/schema'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
+import { handleResponses } from '@/lib/gateway/responses-handler'
 import { resetDb } from '../helpers/db'
-import { chatRequest, seedGateway, seedTargets } from '../helpers/gateway'
+import { chatRequest, responsesRequest, seedGateway, seedTargets } from '../helpers/gateway'
 
 const body = { model: 'house-model', messages: [{ role: 'user', content: 'hi' }] }
 
@@ -19,6 +20,23 @@ const completion = {
   choices: [{ index: 0, message: { role: 'assistant', content: 'hello' }, finish_reason: 'stop' }],
   usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
 }
+
+const responseBody = {
+  id: 'resp-up', object: 'response', created_at: 1, model: 'gpt-4o-mini', status: 'completed',
+  output: [{
+    type: 'message', id: 'msg-up', role: 'assistant', status: 'completed',
+    content: [{ type: 'output_text', text: 'hello', annotations: [] }],
+  }],
+  usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+}
+
+/** A Responses stream, which terminates in `response.completed` carrying the
+ *  whole response — not in chat-completion chunks. */
+const responseEvents = [
+  { type: 'response.created', response: { ...responseBody, status: 'in_progress', output: [] } },
+  { type: 'response.output_text.delta', item_id: 'msg-up', output_index: 0, delta: 'hello' },
+  { type: 'response.completed', response: responseBody },
+]
 
 function sseResponse(...events: unknown[]): Response {
   const payload = events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('') + 'data: [DONE]\n\n'
@@ -41,6 +59,14 @@ function sentBody(fetchSpy: ReturnType<typeof vi.fn>, n = 0): Record<string, unk
 async function force(providerId: string) {
   await db.update(providers)
     .set({ forceUpstreamStream: true })
+    .where(eq(providers.id, providerId))
+}
+
+/** Forced *and* Responses-native, so the Responses ingress reaches
+ *  withForcedResponseStream rather than crossing into chat shape first. */
+async function forceResponsesNative(providerId: string) {
+  await db.update(providers)
+    .set({ forceUpstreamStream: true, apiFlavor: 'responses' })
     .where(eq(providers.id, providerId))
 }
 
@@ -73,6 +99,29 @@ test('a stream:false client against a forced target gets one body while the upst
   const parsed = await response.json()
   expect(parsed.object).toBe('chat.completion')
   expect(parsed.choices[0].message.content).toBe('hello')
+  expect(parsed.model).toBe('house-model')
+})
+
+test('the same holds through the Responses ingress on a Responses-native target', async () => {
+  // The Chat ingress and the Responses ingress reach forcing through
+  // different wrappers — withForcedChatStream inside withRespondViaChat for
+  // the first, withForcedResponseStream for the second. Half the feature's
+  // scope lives on this path and nothing else drives it end to end.
+  const { apiKey, provider } = await seedGateway()
+  await forceResponsesNative(provider.id)
+  const fetchSpy = vi.fn().mockResolvedValue(sseResponse(...responseEvents))
+  vi.stubGlobal('fetch', fetchSpy)
+
+  const response = await handleResponses(
+    responsesRequest({ model: 'house-model', input: 'hi', stream: false }, apiKey),
+  )
+
+  expect(sentBody(fetchSpy).stream).toBe(true)
+  expect(response.headers.get('content-type')).toMatch(/application\/json/)
+  const parsed = await response.json()
+  expect(parsed.object).toBe('response')
+  expect(parsed.status).toBe('completed')
+  expect(parsed.output[0].content[0].text).toBe('hello')
   expect(parsed.model).toBe('house-model')
 })
 

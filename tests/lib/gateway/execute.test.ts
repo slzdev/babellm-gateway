@@ -5,6 +5,7 @@ import { ProviderError, RoutedError, UnsupportedOperationError } from '@/lib/gat
 import type { ProviderAdapter } from '@/lib/adapters/types'
 import type { Candidate } from '@/lib/gateway/resolve'
 import type { ProviderRow } from '@/lib/db/schema'
+import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS } from '@/lib/timeouts'
 
 function candidate(name: string): Candidate {
   return {
@@ -326,5 +327,37 @@ test('config.timeoutMs overrides the default', () => {
   attemptContext(target, 'req_1', new AbortController().signal)
 
   expect(timeoutSpy).toHaveBeenCalledWith(600_000)
+  timeoutSpy.mockRestore()
+})
+
+// config is a JSON blob an operator can edit in the database, past every
+// validation the form does. An unusable value must not become a timeout that
+// fires on the next tick and reports itself as a bare abort.
+test.each([
+  ['a string', '"soon"'],
+  ['zero', '0'],
+  ['a negative', '-1'],
+  ['a fraction', '1500.5'],
+  ['past the maximum', String(MAX_TIMEOUT_MS + 1)],
+  ['null', 'null'],
+])('a stored timeoutMs that is %s falls back to the default', (_label, raw) => {
+  const timeoutSpy = vi.spyOn(AbortSignal, 'timeout')
+  const target = candidate('oai')
+  target.provider = { ...target.provider, config: `{"timeoutMs": ${raw}}` }
+
+  attemptContext(target, 'req_1', new AbortController().signal)
+
+  expect(timeoutSpy).toHaveBeenCalledWith(DEFAULT_TIMEOUT_MS)
+  timeoutSpy.mockRestore()
+})
+
+test('the maximum itself is still honoured', () => {
+  const timeoutSpy = vi.spyOn(AbortSignal, 'timeout')
+  const target = candidate('oai')
+  target.provider = { ...target.provider, config: JSON.stringify({ timeoutMs: MAX_TIMEOUT_MS }) }
+
+  attemptContext(target, 'req_1', new AbortController().signal)
+
+  expect(timeoutSpy).toHaveBeenCalledWith(MAX_TIMEOUT_MS)
   timeoutSpy.mockRestore()
 })

@@ -1,7 +1,7 @@
 import 'server-only'
 import type { AttemptContext, ProviderAdapter, TargetSettings } from '@/lib/adapters/types'
 import type { ProviderRow } from '@/lib/db/schema'
-import { DEFAULT_TIMEOUT_MS } from '@/lib/timeouts'
+import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS } from '@/lib/timeouts'
 import {
   RoutedError,
   classifyProviderError,
@@ -43,18 +43,45 @@ export interface ExecuteDeps {
   ) => void
 }
 
+/**
+ * The provider's stored ceiling, or the default when what is stored is not a
+ * millisecond count AbortSignal.timeout can act on.
+ *
+ * The form validates through parseTimeoutMs and readTimeoutMs guards what it
+ * renders, but `config` is a JSON blob an operator can edit straight in the
+ * database — and this is the only reader on the request path. A stored `0` or
+ * a negative would abort every request to that provider on the next tick, and
+ * a string would abort them just as fast after WebIDL coerces it; either way
+ * the error that surfaces is an abort with nothing in it that names a
+ * timeout. Falling back is the only outcome an operator could diagnose.
+ */
+function resolveTimeoutMs(stored: unknown): number {
+  if (typeof stored !== 'number' || !Number.isInteger(stored)) return DEFAULT_TIMEOUT_MS
+  if (stored < 1 || stored > MAX_TIMEOUT_MS) return DEFAULT_TIMEOUT_MS
+  return stored
+}
+
 export function attemptContext(
   candidate: Candidate,
   requestId: string,
   clientSignal: AbortSignal,
 ): AttemptContext {
-  const config = JSON.parse(candidate.provider.config) as { timeoutMs?: number }
+  const config = JSON.parse(candidate.provider.config) as { timeoutMs?: unknown }
   return {
     upstreamModel: candidate.upstreamModel,
     requestId,
     signal: AbortSignal.any([
       clientSignal,
-      AbortSignal.timeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+      // Nothing cancels this timer when the attempt finishes early —
+      // AbortSignal.timeout hands back no clearable handle — so every attempt
+      // leaves one pending entry for the full ceiling. Invisible at the old
+      // hidden 120s, less so now that operators are invited to set values up
+      // to an hour: a busy provider then holds roughly rps × 3600 of them.
+      // Node's timers are cheap and unref'd, so this is a footprint question
+      // and not a correctness one; if it ever shows up as unexplained memory
+      // growth, the fix is an explicit AbortController plus a setTimeout the
+      // finally-block clears.
+      AbortSignal.timeout(resolveTimeoutMs(config.timeoutMs)),
     ]),
   }
 }

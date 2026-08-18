@@ -142,7 +142,17 @@ answers *"Streaming is required for operations that may take longer than 10
 minutes"* before generating anything. **Force upstream streaming** on the
 provider, or on one catalog model, makes the gateway ask for a stream and
 collapse it back into a single response. The client still sends
-`stream: false` and still gets one body; only the upstream leg changes.
+`stream: false` and still gets one body; only the upstream leg changes. The
+per-model setting is a three-way one — inherit the provider, force, or never
+force — so a single model can opt out of a provider that forces everything
+else.
+
+One caveat: a provider whose config sets `disableStreamUsage` sends no usage
+chunk on a stream, so forcing it means its non-streaming requests are served
+and logged with no tokens and no cost, and contribute nothing to a key's tpm
+or spend counters. Unforced, the same requests report usage from the
+non-streaming body. Don't force a provider you bill against unless it reports
+usage on a stream.
 
 | Provider type | Status |
 | --- | --- |
@@ -344,10 +354,16 @@ configured in the dashboard and stored in Postgres.
 > undecryptable.
 
 > [!WARNING]
-> One upstream attempt may take **30 seconds** before the gateway gives up and
-> fails over. Raise **Request timeout** on any provider that serves long
-> requests — a provider set to force upstream streaming in order to survive a
-> ten-minute request will still be cut off at thirty seconds otherwise.
+> One upstream attempt may take **30 seconds** in total — the ceiling covers
+> the whole response, not just the wait for its first byte. Up to the first
+> chunk, hitting it means the gateway gives up and fails over. Past that the
+> response is already committed, so there is nothing left to fail over to: a
+> streaming client's answer is cut short with a `stream_interrupted` error
+> event, which is the symptom to look for. Raise **Request timeout** on any
+> provider that serves long requests — a provider set to force upstream
+> streaming in order to survive a ten-minute request will still be cut off at
+> thirty seconds otherwise, and so will any answer a reasoning model streams
+> for longer than that.
 
 If you are upgrading a deployment that predates this, the previous ceiling was
 120 seconds: anything that relied on it needs an explicit timeout set.
