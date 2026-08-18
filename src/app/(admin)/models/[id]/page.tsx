@@ -152,9 +152,10 @@ export default async function ModelDetailPage({
                       : <span className="text-muted-foreground">—</span>}
                   </TableCell>
                   <TableCell>
-                    {target.apiFlavor
-                      ? <Badge variant="outline">{target.apiFlavor}</Badge>
-                      : <span className="text-muted-foreground">—</span>}
+                    <Badge variant="outline">
+                      {providers.find((provider) => provider.id === target.providerId)
+                        ?.apiFlavor ?? 'chat_completions'}
+                    </Badge>
                   </TableCell>
                   <TableCell>
                     <Badge variant={target.enabled ? 'default' : 'secondary'}>
@@ -167,10 +168,6 @@ export default async function ModelDetailPage({
                       target={target}
                       virtualModelId={model.id}
                       groups={groupsByProvider[target.providerId] ?? []}
-                      providerApiFlavor={
-                        providers.find((provider) => provider.id === target.providerId)?.apiFlavor
-                        ?? 'chat_completions'
-                      }
                       breakerState={breakers.get(target.id)?.state ?? 'closed'}
                       globalThreshold={routingSettings.threshold}
                       globalCooldown={routingSettings.cooldownSeconds}

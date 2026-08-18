@@ -57,13 +57,6 @@
       "when": 1786890426222,
       "tag": "0007_worthless_randall_flagg",
       "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1787000360842,
-      "tag": "0008_true_tomas",
-      "breakpoints": true
     }
   ]
 }

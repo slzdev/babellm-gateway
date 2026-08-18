@@ -23,8 +23,8 @@ export interface Candidate {
    * client's body untouched. */
   serviceTier: ServiceTier | null
   /** The protocol this target's endpoint speaks. Resolved rather than
-   *  nullable: NULL on the target means "inherit the provider", and the
-   *  routing loop must never have to know that. */
+   *  nullable: the routing loop must never have to work out where the
+   *  answer came from. */
   apiFlavor: ApiFlavor
   /**
    * Whether an open breaker may demote this candidate.
@@ -117,7 +117,7 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
       priority: target.priority,
       weight: target.weight,
       serviceTier: target.serviceTier,
-      apiFlavor: target.apiFlavor ?? provider.apiFlavor,
+      apiFlavor: provider.apiFlavor,
       breakable: true,
       breakerThreshold: target.breakerThreshold,
       breakerCooldownSeconds: target.breakerCooldownSeconds,

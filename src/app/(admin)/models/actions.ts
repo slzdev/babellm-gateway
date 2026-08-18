@@ -7,7 +7,6 @@ import {
   removeRouteTarget, setRouteTargetEnabled, updateRouteTarget, updateVirtualModel,
   type RoutingPolicy, type ServiceTier,
 } from '@/lib/admin/models'
-import type { ApiFlavor } from '@/lib/api-flavors'
 import { getHealthStore } from '@/lib/health'
 
 export interface ActionState {
@@ -45,17 +44,6 @@ function checkboxValue(value: FormDataEntryValue | null): boolean {
 function serviceTierValue(value: FormDataEntryValue | null): ServiceTier | null {
   const tier = String(value ?? '')
   return tier === '' ? null : (tier as ServiceTier)
-}
-
-/**
- * The flavor select submits an empty string for "(inherit)", which has to reach
- * the column as NULL — that is what makes the target follow its provider.
- * Anything non-empty goes through unvalidated on purpose: the admin layer owns
- * the enum check, so there is one place that can reject an unknown flavor.
- */
-function apiFlavorValue(value: FormDataEntryValue | null): ApiFlavor | null {
-  const flavor = String(value ?? '')
-  return flavor === '' ? null : (flavor as ApiFlavor)
 }
 
 /** A blank field means inherit, which is a null — not a 0, and not NaN. */
@@ -117,7 +105,6 @@ export async function addTargetAction(
       priority: Number(formData.get('priority') ?? 0),
       weight: Number(formData.get('weight') ?? 100),
       serviceTier: serviceTierValue(formData.get('serviceTier')),
-      apiFlavor: apiFlavorValue(formData.get('apiFlavor')),
       breakerThreshold: optionalInteger(formData.get('breakerThreshold')),
       breakerCooldownSeconds: optionalInteger(formData.get('breakerCooldownSeconds')),
     })
@@ -139,7 +126,6 @@ export async function updateTargetAction(
       priority: Number(formData.get('priority') ?? 0),
       weight: Number(formData.get('weight') ?? 100),
       serviceTier: serviceTierValue(formData.get('serviceTier')),
-      apiFlavor: apiFlavorValue(formData.get('apiFlavor')),
       breakerThreshold: optionalInteger(formData.get('breakerThreshold')),
       breakerCooldownSeconds: optionalInteger(formData.get('breakerCooldownSeconds')),
     })

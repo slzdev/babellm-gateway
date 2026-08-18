@@ -31,6 +31,7 @@ export async function seedGateway(options: SeedOptions = {}) {
     name: 'test-provider',
     adapter: options.adapter ?? 'openai',
     credentials: encryptJson(options.credentials ?? { apiKey: 'sk-upstream' }),
+    ...(options.apiFlavor ? { apiFlavor: options.apiFlavor } : {}),
   }).returning()
 
   const [model] = await db.insert(virtualModels).values({ name: virtualModel }).returning()
@@ -40,7 +41,6 @@ export async function seedGateway(options: SeedOptions = {}) {
     providerId: provider.id,
     upstreamModel,
     serviceTier: options.serviceTier ?? null,
-    apiFlavor: options.apiFlavor ?? null,
   }).returning()
 
   const generated = generateApiKey()
@@ -140,6 +140,7 @@ export async function seedTargets(options: SeedTargetsOptions) {
       name: spec.name,
       adapter: spec.adapter ?? 'openai',
       credentials: encryptJson({ apiKey: `sk-${spec.name}` }),
+      ...(spec.apiFlavor ? { apiFlavor: spec.apiFlavor } : {}),
     }).returning()
 
     const [target] = await db.insert(routeTargets).values({
@@ -149,7 +150,6 @@ export async function seedTargets(options: SeedTargetsOptions) {
       priority: spec.priority ?? 0,
       weight: spec.weight ?? 100,
       serviceTier: spec.serviceTier ?? null,
-      apiFlavor: spec.apiFlavor ?? null,
       enabled: spec.enabled ?? true,
     }).returning()
 

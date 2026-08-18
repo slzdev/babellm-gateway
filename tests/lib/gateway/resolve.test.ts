@@ -249,23 +249,13 @@ test('a direct provider/model address is never breakable', async () => {
   expect(candidates[0].breakerCooldownSeconds).toBeNull()
 })
 
-test('a target with no flavor inherits the provider', async () => {
+test('a target inherits its provider flavor', async () => {
   const { model, targets } = await seedTargets({
     targets: [{ name: 'p1' }],
   })
   await db.update(providers).set({ apiFlavor: 'responses' })
     .where(eq(providers.id, targets[0].provider.id))
 
-  const { candidates } = await resolveModel(model.name)
-
-  expect(candidates[0].apiFlavor).toBe('responses')
-})
-
-test('a target flavor overrides the provider', async () => {
-  const { model } = await seedTargets({
-    targets: [{ name: 'p1', apiFlavor: 'responses' }],
-  })
-  // The provider still says chat_completions; the target wins.
   const { candidates } = await resolveModel(model.name)
 
   expect(candidates[0].apiFlavor).toBe('responses')

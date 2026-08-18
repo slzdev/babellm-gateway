@@ -10,7 +10,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { ConfirmAction } from '@/components/admin/confirm-action'
 import type { PickerGroup } from '@/lib/admin/catalog'
-import type { ApiFlavor } from '@/lib/api-flavors'
 import type { BreakerState } from '@/lib/health'
 import type { ServiceTier } from '@/lib/service-tiers'
 import { removeTargetAction, resetTargetBreakerAction, toggleTargetAction } from './actions'
@@ -20,7 +19,6 @@ export function TargetRowActions({
   target,
   virtualModelId,
   groups,
-  providerApiFlavor,
   breakerState,
   globalThreshold,
   globalCooldown,
@@ -31,7 +29,6 @@ export function TargetRowActions({
     priority: number
     weight: number
     serviceTier: ServiceTier | null
-    apiFlavor: ApiFlavor | null
     enabled: boolean
     breakerThreshold: number | null
     breakerCooldownSeconds: number | null
@@ -39,9 +36,6 @@ export function TargetRowActions({
   /** Only for revalidation — every mutation has to refresh this model's page. */
   virtualModelId: string
   groups: PickerGroup[]
-  /** The provider's own flavor, passed through to the edit dialog's inherit
-   *  option. */
-  providerApiFlavor: ApiFlavor
   breakerState: BreakerState
   /** The global breaker settings, passed through to the edit dialog as
    *  placeholders for what a blank override field would inherit. */
@@ -110,7 +104,6 @@ export function TargetRowActions({
         target={target}
         virtualModelId={virtualModelId}
         groups={groups}
-        providerApiFlavor={providerApiFlavor}
         globalThreshold={globalThreshold}
         globalCooldown={globalCooldown}
         open={editing}

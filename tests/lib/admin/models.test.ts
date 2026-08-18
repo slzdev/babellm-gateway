@@ -7,7 +7,6 @@ import {
   addRouteTarget, createVirtualModel, deleteVirtualModel, getVirtualModel,
   listVirtualModels, removeRouteTarget, setRouteTargetEnabled, updateRouteTarget, updateVirtualModel,
 } from '@/lib/admin/models'
-import type { ApiFlavor } from '@/lib/api-flavors'
 import { resetDb } from '../../helpers/db'
 
 beforeEach(async () => {
@@ -302,27 +301,6 @@ test('editing another field leaves the service tier alone', async () => {
 
   const updated = await updateRouteTarget(target.id, { weight: 90 })
   expect(updated.serviceTier).toBe('scale')
-})
-
-test('rejects an unknown api flavor', async () => {
-  const p = await provider()
-  const model = await createVirtualModel({ name: 'house-model' })
-
-  await expect(addRouteTarget({
-    virtualModelId: model.id, providerId: p.id,
-    upstreamModel: 'gpt-5', apiFlavor: 'grpc' as ApiFlavor,
-  })).rejects.toThrow('"grpc" is not a supported API flavor.')
-})
-
-test('stores a null flavor as inherit', async () => {
-  const p = await provider()
-  const model = await createVirtualModel({ name: 'house-model' })
-
-  const target = await addRouteTarget({
-    virtualModelId: model.id, providerId: p.id, upstreamModel: 'gpt-5',
-  })
-
-  expect(target.apiFlavor).toBeNull()
 })
 
 async function target() {
