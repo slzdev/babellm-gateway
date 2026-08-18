@@ -438,12 +438,19 @@ The Responses half. Far simpler than Task 1 — every terminal event carries the
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/lib/adapters/collapse.test.ts` (and extend the import on line 2 to `import { collapseChatStream, collapseResponseStream } from '@/lib/adapters/collapse'`):
+Append the tests to `tests/lib/adapters/collapse.test.ts`. Three edits to the
+**top** of that file first — every `import` must stay in the file's import
+block, not in the appended tail, or `import/first` fails the lint gate:
+
+- extend the value import to
+  `import { collapseChatStream, collapseResponseStream } from '@/lib/adapters/collapse'`
+- extend the type import to
+  `import type { ChatCompletionChunk, ResponseStreamEvent } from '@/lib/adapters/types'`
+- add `import responsesToolCallStream from '../../fixtures/openai-responses-tool-call-stream.json'`
+
+Then append, with the `events` helper beside the existing `stream` helper:
 
 ```ts
-import type { ResponseStreamEvent } from '@/lib/adapters/types'
-import responsesToolCallStream from '../../fixtures/openai-responses-tool-call-stream.json'
-
 async function* events(list: unknown[]): AsyncIterable<ResponseStreamEvent> {
   for (const event of list) yield event as ResponseStreamEvent
 }
@@ -939,8 +946,10 @@ Collapses `createAdapter`'s four trailing positional arguments into one object, 
 Add to `tests/lib/adapters/registry.test.ts`. It already has `provider()`,
 `stubFetch()`, `calledPath()`, `chatCtx` and `chatBody`; reuse all of them.
 `provider()` builds a `ProviderRow` literal, so add `forceUpstreamStream: false`
-to its defaults (Task 4 added the column, and the literal is cast to
-`ProviderRow`, so a missing field would otherwise go unnoticed until runtime).
+to its defaults. This is **not optional and typecheck will not catch it**: the
+literal ends in `as ProviderRow`, so the cast swallows the missing field and it
+surfaces only as `undefined` at runtime — where it reads as falsy and quietly
+makes "does this force?" tests pass for the wrong reason.
 
 Add two helpers beside `stubFetch`:
 
@@ -1313,30 +1322,42 @@ test('a forced upstream that produces nothing fails over to the next target', as
   // The regression guard for the wrapper ever being moved outside execute():
   // draining inside chat() is what makes a mid-response upstream failure
   // pre-commit and therefore recoverable.
-  const { apiKey, provider } = await seedGateway()
-  await force(provider.id)
+  //
+  // TWO targets, not one. selectOrder() ends with
+  // `ordered.slice(0, maxAttempts)` — it caps the chain, it never repeats a
+  // candidate — so a single seeded target gets exactly one attempt and cannot
+  // demonstrate failover at all.
+  const { apiKey, targets } = await seedTargets({
+    targets: [{ name: 'forced' }, { name: 'plain' }],
+  })
+  await force(targets[0].provider.id)
+
   const fetchSpy = vi.fn()
-    // An upstream that opened a stream and said nothing: collapseChatStream
-    // throws, execute() classifies it retryable and tries again.
+    // Attempt 1, the forced target: an upstream that opened a stream and then
+    // said nothing. collapseChatStream throws, execute() classifies it
+    // retryable and moves to the next target.
     .mockResolvedValueOnce(new Response('data: [DONE]\n\n', {
       status: 200, headers: { 'content-type': 'text/event-stream' },
     }))
-    .mockResolvedValueOnce(sseResponse(chunk))
+    // Attempt 2, the unforced target: an ordinary non-streaming answer.
+    .mockResolvedValueOnce(jsonResponse(completion))
   vi.stubGlobal('fetch', fetchSpy)
 
   const response = await handleChatCompletions(chatRequest({ ...body, stream: false }, apiKey))
 
   expect(response.status).toBe(200)
-  expect(fetchSpy).toHaveBeenCalledTimes(2)
+  expect(response.headers.get('x-babellm-provider')).toBe('plain')
   expect((await response.json()).choices[0].message.content).toBe('hello')
+  // The first attempt asked for a stream, the second did not — which is the
+  // per-provider setting being applied per candidate rather than per request.
+  expect(sentBody(fetchSpy, 0).stream).toBe(true)
+  expect(sentBody(fetchSpy, 1).stream).toBe(false)
 })
 ```
 
-**Note on the last test:** it relies on `seedGateway`'s single target being
-retried, which `virtual_models.max_attempts` (default 3) allows. If the seeded
-model turns out to allow only one attempt, seed two targets with `seedTargets`
-instead and force only the first — the assertion to keep is that the client got
-200 after the forced attempt failed, not the exact number of fetch calls.
+Import `seedTargets` alongside `seedGateway` from `../helpers/gateway`. Both
+providers are `openai` with no base URL, so both attempts hit the same host and
+the two `mockResolvedValueOnce` calls line up with the two attempts in order.
 
 - [ ] **Step 8: Run the full suite**
 
