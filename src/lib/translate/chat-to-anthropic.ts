@@ -462,3 +462,104 @@ export async function* fromMessageStream(
     } as ChatCompletionChunk
   }
 }
+
+/**
+ * Chat Completions parameters the Messages API cannot express, plus the
+ * structural degradations above. Dropped rather than rejected, for the reason
+ * chat-to-gemini records: SDKs and frameworks routinely send these meaning
+ * nothing by them, and 400ing would make the gateway unusable against this
+ * flavor without per-client configuration.
+ *
+ * `service_tier` earns its place here even though nothing in the request body
+ * asked for it: bodyFor() injects it when a route target pins one, and an
+ * operator who pinned a tier needs the header to say it did not cross.
+ */
+const UNMAPPABLE = [
+  'presence_penalty',
+  'frequency_penalty',
+  'logit_bias',
+  'logprobs',
+  'top_logprobs',
+  'seed',
+  'response_format',
+  'service_tier',
+  'n',
+] as const
+
+/** Values that mean "the default", which is also what this API does.
+ *  Reporting them would put a line in the header on nearly every request. */
+const INERT: Record<string, unknown> = {
+  logprobs: false,
+  n: 1,
+}
+
+function isInert(name: string, value: unknown): boolean {
+  if (name in INERT && value === INERT[name]) return true
+  if (value === '') return true
+  if (Array.isArray(value) && value.length === 0) return true
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0
+  ) {
+    return true
+  }
+  return false
+}
+
+function hoistsSystemMessage(messages: ChatMessage[]): boolean {
+  const firstTurn = messages.findIndex((m) => m.role !== 'system' && m.role !== 'developer')
+  if (firstTurn === -1) return false
+  return messages.slice(firstTurn).some((m) => m.role === 'system' || m.role === 'developer')
+}
+
+export function droppedParams(req: ChatCompletionRequest): string[] {
+  const dropped: string[] = []
+
+  for (const name of UNMAPPABLE) {
+    const value = (req as Record<string, unknown>)[name]
+    if (value === undefined || value === null) continue
+    if (isInert(name, value)) continue
+    dropped.push(name)
+  }
+
+  if (hoistsSystemMessage(req.messages)) dropped.push('system_message_hoisted')
+
+  const callIds = new Set<string>()
+  for (const message of req.messages) {
+    for (const call of message.tool_calls ?? []) callIds.add(call.id)
+  }
+
+  if (req.messages.some((m) =>
+    (m.role === 'tool' || m.role === 'function')
+    && (!m.tool_call_id || !callIds.has(m.tool_call_id)))) {
+    dropped.push('unmatched_tool_call_id')
+  }
+
+  if (req.messages.some((m) =>
+    (m.tool_calls ?? []).some((call) => asObject(call.function.arguments) === null))) {
+    dropped.push('malformed_tool_arguments')
+  }
+
+  // Only a user turn's image_url survives — userBlocks is what reads it.
+  // Every other role's content passes through textOf, which keeps text and
+  // silently drops everything else, images included, so an image on a
+  // system, assistant or tool message is exactly as unsupported here as a
+  // video would be on any role.
+  if (req.messages.some((m) =>
+    Array.isArray(m.content)
+    && m.content.some((part) =>
+      part.type !== 'text' && !(m.role === 'user' && part.type === 'image_url')))) {
+    dropped.push('unsupported_content_part')
+  }
+
+  // A strict schema is a guarantee about the tool arguments the model
+  // produces, and toTools carries only name, description and schema — so the
+  // guarantee does not cross, and a client relying on it should hear about it.
+  if (req.tools?.some((tool) => tool.function.strict === true)) {
+    dropped.push('strict_tool_schema')
+  }
+
+  return dropped
+}
