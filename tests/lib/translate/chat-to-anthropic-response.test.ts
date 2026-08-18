@@ -63,6 +63,7 @@ test('stop reasons map onto finish reasons', () => {
   expect(reasonOf('stop_sequence')).toBe('stop')
   expect(reasonOf('pause_turn')).toBe('stop')
   expect(reasonOf('max_tokens')).toBe('length')
+  expect(reasonOf('model_context_window_exceeded')).toBe('length')
   expect(reasonOf('refusal')).toBe('content_filter')
 })
 
@@ -70,6 +71,15 @@ test('truncation outranks a tool call, so a cut-off call is not reported as comp
   const out = fromMessage(message({
     content: [{ type: 'tool_use', id: 't', name: 'f', input: {} }],
     stop_reason: 'max_tokens',
+  }), 'm')
+
+  expect(out.choices[0].finish_reason).toBe('length')
+})
+
+test('a context-window overflow outranks a tool call the same way max_tokens does', () => {
+  const out = fromMessage(message({
+    content: [{ type: 'tool_use', id: 't', name: 'f', input: {} }],
+    stop_reason: 'model_context_window_exceeded',
   }), 'm')
 
   expect(out.choices[0].finish_reason).toBe('length')

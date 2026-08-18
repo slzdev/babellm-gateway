@@ -245,13 +245,15 @@ type ToolCall = { id: string; type: 'function'; function: { name: string; argume
  * Truncation and refusal outrank a present tool call, for the reason
  * chat-to-gemini records: a call that finished on max_tokens may have
  * truncated arguments, and reporting `tool_calls` would hide that from the
- * client.
+ * client. `model_context_window_exceeded` is truncation too — the model ran
+ * out of context mid-response rather than finishing on its own — so it gets
+ * the same `length` priority over a present tool call as `max_tokens`.
  */
 function finishReasonFor(
   stopReason: string | null | undefined,
   hasToolCalls: boolean,
 ): 'stop' | 'length' | 'tool_calls' | 'content_filter' {
-  if (stopReason === 'max_tokens') return 'length'
+  if (stopReason === 'max_tokens' || stopReason === 'model_context_window_exceeded') return 'length'
   if (stopReason === 'refusal') return 'content_filter'
   if (hasToolCalls || stopReason === 'tool_use') return 'tool_calls'
   return 'stop'
