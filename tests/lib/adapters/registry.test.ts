@@ -241,3 +241,24 @@ test('gemini accepts model path overrides and ignores them', () => {
 
   expect(typeof adapter.chat).toBe('function')
 })
+
+test('an anthropic_messages model gets the Anthropic adapter, wrapped for respond', () => {
+  const adapter = createAdapter(
+    provider({ adapter: 'openai_compatible', baseUrl: 'https://api.example/v1' }),
+    'anthropic_messages',
+  )
+  expect(typeof adapter.chat).toBe('function')
+  expect(typeof adapter.respond).toBe('function')
+})
+
+test('the gemini adapter ignores an anthropic_messages flavor, as it ignores the others', () => {
+  const adapter = createAdapter(provider({ adapter: 'gemini' }), 'anthropic_messages')
+  expect(typeof adapter.chat).toBe('function')
+})
+
+test('an openai_compatible provider with no base URL is still refused', () => {
+  expect(() => createAdapter(
+    provider({ adapter: 'openai_compatible', baseUrl: null }),
+    'anthropic_messages',
+  )).toThrow(/no base URL/)
+})
