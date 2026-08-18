@@ -156,6 +156,11 @@ export function GatewaySettingsDialog({
           <p className="text-xs text-muted-foreground">{field.help}</p>
         </div>
       ))}
+
+      <p className="text-xs text-muted-foreground">
+        A path set here replaces everything after the provider&apos;s host, including any
+        prefix its base URL carries.
+      </p>
     </FormDialog>
   )
 }

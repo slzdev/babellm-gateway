@@ -139,9 +139,9 @@ correct: `modelsPath` stays provider-only, because listing models is a provider
 operation.
 
 Per-model paths are validated by the existing `parseProviderPath`, so the two
-shapes that fail silently are rejected here too — an absolute URL, which would
-be appended to the base URL rather than replacing it, and a query string, which
-the SDK owns separately. `paths.ts` exports the model-facing subset of
+shapes that fail silently are rejected here too — a full URL, which would move
+the provider to a host its base URL never named, and a query string, which the
+SDK owns separately. `paths.ts` exports the model-facing subset of
 `PATH_FIELDS` (`chatCompletionsPath`, `responsesPath`) so the catalog dialog
 renders from the same description the provider form does.
 

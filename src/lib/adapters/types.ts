@@ -29,10 +29,10 @@ export interface ProviderConfig {
   requestReasoningSummary?: boolean
   /**
    * Per-endpoint path overrides, for clones that hang the OpenAI shape off
-   * somewhere other than where the SDK looks for it. Each is joined onto the
-   * base URL the same way the default is, so the base URL keeps carrying
-   * whatever prefix (`/v1`) it carries today. Absent means the default —
-   * see DEFAULT_PATHS in ./openai/paths.
+   * somewhere other than where the SDK looks for it. Each names the whole path
+   * on the base URL's host, replacing whatever prefix (`/v1`) the base URL
+   * carries; only the default, meaning absent, is appended to the base URL as
+   * it stands — see DEFAULT_PATHS and resolveRequestPaths in ./openai/paths.
    */
   modelsPath?: string
   chatCompletionsPath?: string

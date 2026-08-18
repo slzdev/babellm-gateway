@@ -172,7 +172,7 @@ test('a model path override moves the chat completions endpoint', async () => {
   )
   await adapter.chat(chatBody, chatCtx)
 
-  expect(calledPath(fetchSpy)).toBe('https://api.example/v1/api/chat')
+  expect(calledPath(fetchSpy)).toBe('https://api.example/api/chat')
 })
 
 test('a model path override moves the responses endpoint', async () => {
@@ -184,7 +184,7 @@ test('a model path override moves the responses endpoint', async () => {
   )
   await adapter.chat(chatBody, chatCtx)
 
-  expect(calledPath(fetchSpy)).toBe('https://api.example/v1/api/v2/responses')
+  expect(calledPath(fetchSpy)).toBe('https://api.example/api/v2/responses')
 })
 
 test('a model that names no path leaves the provider config alone', async () => {
@@ -202,7 +202,7 @@ test('a model that names no path leaves the provider config alone', async () => 
 
   // null is "this model says nothing", which must not erase the provider's
   // value — the distinction the nullable columns exist to preserve.
-  expect(calledPath(fetchSpy)).toBe('https://api.example/v1/provider/chat')
+  expect(calledPath(fetchSpy)).toBe('https://api.example/provider/chat')
 })
 
 test('a model cannot move the models listing path', async () => {
@@ -227,7 +227,7 @@ test('a model cannot move the models listing path', async () => {
   )
   await adapter.listModels!({ signal: new AbortController().signal })
 
-  expect(calledPath(fetchSpy)).toBe('https://api.example/v1/api/models')
+  expect(calledPath(fetchSpy)).toBe('https://api.example/api/models')
 })
 
 test('gemini accepts model path overrides and ignores them', () => {

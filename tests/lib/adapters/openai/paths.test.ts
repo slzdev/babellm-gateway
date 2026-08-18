@@ -5,6 +5,7 @@ import {
   mergeProviderPaths,
   parseProviderPath,
   resolveProviderPaths,
+  resolveRequestPaths,
 } from '@/lib/adapters/openai/paths'
 
 describe('parseProviderPath', () => {
@@ -29,8 +30,8 @@ describe('parseProviderPath', () => {
     expect(parseProviderPath('//models')).toBe('/models')
   })
 
-  test('rejects an absolute URL, because paths are joined onto the base URL', () => {
-    expect(() => parseProviderPath('https://api.x.ai/v1/models')).toThrow(/base URL/i)
+  test('rejects a full URL, because the host is the base URL\'s to name', () => {
+    expect(() => parseProviderPath('https://api.x.ai/v1/models')).toThrow(/full URL/i)
   })
 
   test('rejects a query string, which the SDK sends separately', () => {
@@ -87,6 +88,77 @@ describe('resolveProviderPaths', () => {
   })
 })
 
+describe('resolveRequestPaths', () => {
+  const base = 'https://example.com/gwt/v1'
+
+  test('leaves an unconfigured endpoint relative, so the base URL keeps its prefix', () => {
+    expect(resolveRequestPaths({}, base)).toEqual({
+      models: '/models',
+      chatCompletions: '/chat/completions',
+      responses: '/responses',
+    })
+  })
+
+  test('resolves a custom path against the base URL\'s origin, dropping its prefix', () => {
+    expect(resolveRequestPaths(
+      { chatCompletionsPath: '/openai/v1/chat/completions' },
+      base,
+    ).chatCompletions).toBe('https://example.com/openai/v1/chat/completions')
+  })
+
+  test('makes only the endpoints that were configured absolute', () => {
+    expect(resolveRequestPaths({ responsesPath: '/openai/v1/responses' }, base)).toEqual({
+      models: '/models',
+      chatCompletions: '/chat/completions',
+      responses: 'https://example.com/openai/v1/responses',
+    })
+  })
+
+  test('applies to the models path too', () => {
+    expect(resolveRequestPaths({ modelsPath: '/openai/v1/models' }, base).models)
+      .toBe('https://example.com/openai/v1/models')
+  })
+
+  test('keeps the scheme and port the base URL names', () => {
+    expect(resolveRequestPaths({ modelsPath: '/api/models' }, 'http://localhost:11434/v1').models)
+      .toBe('http://localhost:11434/api/models')
+  })
+
+  test('is unaffected by a trailing slash or a bare origin', () => {
+    expect(resolveRequestPaths({ modelsPath: '/api/models' }, 'https://example.com/v1/').models)
+      .toBe('https://example.com/api/models')
+    expect(resolveRequestPaths({ modelsPath: '/api/models' }, 'https://example.com').models)
+      .toBe('https://example.com/api/models')
+  })
+
+  test('normalises before resolving, so a stored path missing its slash still works', () => {
+    expect(resolveRequestPaths({ modelsPath: 'api/models/' }, base).models)
+      .toBe('https://example.com/api/models')
+  })
+
+  test('an explicitly typed default path is still absolute — blank is how you inherit', () => {
+    expect(resolveRequestPaths({ chatCompletionsPath: '/chat/completions' }, base).chatCompletions)
+      .toBe('https://example.com/chat/completions')
+  })
+
+  test('falls back to the relative path when there is no base URL to resolve against', () => {
+    // No base URL means the SDK's own default, which already carries /v1.
+    expect(resolveRequestPaths({ modelsPath: '/api/models' }, null).models).toBe('/api/models')
+    expect(resolveRequestPaths({ modelsPath: '/api/models' }, '  ').models).toBe('/api/models')
+  })
+
+  test('falls back to the relative path rather than throwing on an unparseable base URL', () => {
+    expect(resolveRequestPaths({ modelsPath: '/api/models' }, 'not a url').models)
+      .toBe('/api/models')
+  })
+
+  test('leaves an unusable stored value on the relative default', () => {
+    expect(resolveRequestPaths({ modelsPath: 42 as never }, base).models).toBe('/models')
+    expect(resolveRequestPaths({ responsesPath: 'https://x/y' }, base).responses)
+      .toBe('/responses')
+  })
+})
+
 describe('PATH_FIELDS', () => {
   test('describes each endpoint once, keyed by the config key it writes', () => {
     expect(PATH_FIELDS.map((f) => f.name)).toEqual([
@@ -139,6 +211,6 @@ describe('mergeProviderPaths', () => {
 
   test('rejects an invalid submission instead of storing it', () => {
     expect(() => mergeProviderPaths({}, { modelsPath: 'https://api.x.ai/v1/models' }))
-      .toThrow(/base URL/i)
+      .toThrow(/full URL/i)
   })
 })

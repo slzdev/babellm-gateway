@@ -1,10 +1,13 @@
 import type { ProviderConfig } from '../types'
 
 /**
- * What the OpenAI SDK appends to `baseURL` for each endpoint. Overrides are
- * joined onto the base URL exactly the same way, so a provider whose base URL
- * is `https://api.x.ai/v1` and whose models path is `/api/models` is asked for
- * `https://api.x.ai/v1/api/models` — the base URL keeps carrying the `/v1`.
+ * What the OpenAI SDK appends to `baseURL` for each endpoint. These are the
+ * only paths that are ever joined onto the base URL: an override is read as
+ * absolute on the base URL's host instead, so a provider whose base URL is
+ * `https://example.com/gwt/v1` and whose chat completions path is
+ * `/openai/v1/chat/completions` is asked for
+ * `https://example.com/openai/v1/chat/completions` — the `/gwt/v1` is
+ * replaced, not carried. See resolveRequestPaths.
  */
 export const DEFAULT_PATHS = {
   models: '/models',
@@ -105,10 +108,10 @@ export function mergeProviderPaths(
  * placeholder shows the default precisely so an empty box reads that way.
  *
  * The rejected shapes are the two that would fail silently rather than loudly:
- * an absolute URL is appended to the base URL rather than replacing it, which
- * builds nonsense like `https://api.x.ai/v1https://…`, and a query string is
- * something the SDK owns separately, so one written here would be escaped into
- * the path segment instead of being sent as a parameter.
+ * a full URL would let a form move a provider to another host, which is what
+ * the base URL is for and where its credentials would then be sent, and a
+ * query string is something the SDK owns separately, so one written here would
+ * be escaped into the path segment instead of being sent as a parameter.
  */
 export function parseProviderPath(raw: string): string | null {
   const value = raw.trim()
@@ -116,7 +119,7 @@ export function parseProviderPath(raw: string): string | null {
 
   if (value.includes('://')) {
     throw new Error(
-      `"${value}" is not a valid path: it is joined onto the provider's base URL, so give a path like "/chat/completions" rather than a full URL.`,
+      `"${value}" is not a valid path: it is served from the provider's own host, so give a path like "/chat/completions" rather than a full URL.`,
     )
   }
   if (value.includes('?')) {
@@ -127,7 +130,7 @@ export function parseProviderPath(raw: string): string | null {
 
   // Dropping empty segments normalises a trailing slash and a doubled leading
   // one in the same pass — `//models` would otherwise read as a
-  // protocol-relative URL once joined onto the base URL.
+  // protocol-relative URL, and resolve against a host of its own.
   const normalized = `/${value.split('/').filter(Boolean).join('/')}`
   if (normalized === '/') {
     throw new Error(`"${value}" is not a valid path: it names no endpoint.`)
@@ -137,26 +140,88 @@ export function parseProviderPath(raw: string): string | null {
 }
 
 /**
- * The effective path for each endpoint. Anything unusable in the stored config
- * falls back to the default instead of throwing: these values are validated on
- * the way in, so a bad one here means hand-edited or pre-validation data, and
- * serving that provider on the standard endpoint beats failing every request
- * to it.
+ * The path configured for each endpoint, as a path — what the dashboard shows
+ * and what a model's placeholder inherits. Anything unusable in the stored
+ * config falls back to the default instead of throwing: these values are
+ * validated on the way in, so a bad one here means hand-edited or
+ * pre-validation data, and serving that provider on the standard endpoint
+ * beats failing every request to it.
+ *
+ * Use resolveRequestPaths, not this, to build a request.
  */
 export function resolveProviderPaths(config: ProviderConfig): ProviderPaths {
+  return {
+    models: resolveOne(config, 'models').path,
+    chatCompletions: resolveOne(config, 'chatCompletions').path,
+    responses: resolveOne(config, 'responses').path,
+  }
+}
+
+/**
+ * What to hand the SDK as its per-request `path`, which it uses verbatim when
+ * it is a full URL and appends to `baseURL` otherwise. That difference is the
+ * mechanism behind the two rules this encodes:
+ *
+ * - An endpoint nobody configured stays a relative path, so the base URL keeps
+ *   carrying its own prefix and `https://api.x.ai/v1` still means
+ *   `https://api.x.ai/v1/chat/completions`.
+ * - A configured one is resolved against the base URL's origin, so it names the
+ *   whole path: a gateway reachable at `https://example.com/gwt/v1` that serves
+ *   the OpenAI shape from `/openai/v1/chat/completions` is asked for exactly
+ *   that, not for `/gwt/v1/openai/v1/chat/completions`.
+ *
+ * The host always comes from the base URL — an override cannot move a provider
+ * elsewhere, which is why parseProviderPath refuses a full URL.
+ *
+ * A provider with no base URL, or one that cannot be parsed, keeps the relative
+ * path: there is no origin to resolve against, and the SDK joining it onto its
+ * own default beats sending nothing.
+ */
+export function resolveRequestPaths(
+  config: ProviderConfig,
+  baseUrl: string | null | undefined,
+): ProviderPaths {
+  const origin = parseOrigin(baseUrl)
+
   const resolve = (key: keyof ProviderPaths): string => {
-    const stored = config[CONFIG_KEYS[key]]
-    if (typeof stored !== 'string') return DEFAULT_PATHS[key]
-    try {
-      return parseProviderPath(stored) ?? DEFAULT_PATHS[key]
-    } catch {
-      return DEFAULT_PATHS[key]
-    }
+    const { path, custom } = resolveOne(config, key)
+    return custom && origin ? new URL(path, origin).toString() : path
   }
 
   return {
     models: resolve('models'),
     chatCompletions: resolve('chatCompletions'),
     responses: resolve('responses'),
+  }
+}
+
+/**
+ * `custom` is what separates "the admin typed this" from "nothing was
+ * configured", which is the only thing that decides whether the base URL's
+ * prefix survives. A stored value that is unusable counts as neither — it
+ * falls back to the default, and the default is never absolute.
+ */
+function resolveOne(
+  config: ProviderConfig,
+  key: keyof ProviderPaths,
+): { path: string; custom: boolean } {
+  const fallback = { path: DEFAULT_PATHS[key], custom: false }
+  const stored = config[CONFIG_KEYS[key]]
+  if (typeof stored !== 'string') return fallback
+
+  try {
+    const parsed = parseProviderPath(stored)
+    return parsed ? { path: parsed, custom: true } : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function parseOrigin(baseUrl: string | null | undefined): string | null {
+  if (!baseUrl?.trim()) return null
+  try {
+    return new URL(baseUrl).origin
+  } catch {
+    return null
   }
 }

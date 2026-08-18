@@ -9,7 +9,7 @@ import type {
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { toProviderError } from './errors'
-import { resolveProviderPaths } from './paths'
+import { resolveRequestPaths } from './paths'
 
 // Re-exported because tests and the registry import the factory type from the
 // adapter module rather than reaching past it.
@@ -23,7 +23,7 @@ export function createOpenAIAdapter(
   createClient?: OpenAIClientFactory,
 ): ChatOnlyAdapter {
   const client = createOpenAIClient(runtime, createClient)
-  const paths = resolveProviderPaths(runtime.config)
+  const paths = resolveRequestPaths(runtime.config, runtime.baseUrl)
 
   function upstreamParams(req: ChatCompletionRequest, ctx: AttemptContext) {
     return { ...req, model: ctx.upstreamModel }

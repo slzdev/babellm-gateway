@@ -14,7 +14,7 @@ import type {
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { toProviderError } from './errors'
-import { resolveProviderPaths } from './paths'
+import { resolveRequestPaths } from './paths'
 
 // The symmetric misconfiguration to the Chat Completions hint below: a
 // provider set to `responses` that in fact only speaks Chat Completions. The
@@ -35,7 +35,7 @@ export function createResponsesAdapter(
   createClient?: OpenAIClientFactory,
 ): ProviderAdapter {
   const client = createOpenAIClient(runtime, createClient)
-  const paths = resolveProviderPaths(runtime.config)
+  const paths = resolveRequestPaths(runtime.config, runtime.baseUrl)
 
   return {
     async chat(req, ctx): Promise<ChatCompletion> {
