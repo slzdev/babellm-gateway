@@ -1,7 +1,9 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleResponses } from '@/lib/gateway/responses-handler'
-import { responsesRequest, fakeAdapterByProvider, seedTargets } from '../helpers/gateway'
+import {
+  responsesRequest, fakeAdapterByProvider, seedGateway, seedTargets,
+} from '../helpers/gateway'
 import { resetDb } from '../helpers/db'
 
 function response(id: string) {
@@ -74,16 +76,23 @@ test('fails over to a second Responses target', async () => {
   expect(res.headers.get('x-babellm-provider')).toBe('p2')
 })
 
-test('answers 501 when the target cannot serve the Responses shape', async () => {
-  // Until Phase 4 a chat-only target has no respond method at all.
-  const { apiKey } = await seedTargets({ targets: [{ name: 'p1' }] })
+test('answers 501 when the provider adapter itself is not implemented', async () => {
+  // Since Task 14, every adapter respond()/respondStream() is required and a
+  // chat-only target serves a Responses request through withRespondViaChat —
+  // see mixed-flavor.test.ts. The only remaining "cannot serve" case is an
+  // adapter type the registry has no constructor for at all. Exercised with
+  // the real registry (no deps override), matching the equivalent bedrock
+  // regression test in chat.test.ts.
+  const { apiKey } = await seedGateway({
+    adapter: 'bedrock',
+    credentials: { region: 'us-east-1', useInstanceRole: true },
+  })
 
-  const res = await handleResponses(
-    responsesRequest({ model: 'house-model', input: 'hi' }, apiKey),
-    fakeAdapterByProvider({ p1: {} }),
-  )
+  const res = await handleResponses(responsesRequest({ model: 'house-model', input: 'hi' }, apiKey))
+  const json = await res.json()
 
   expect(res.status).toBe(501)
+  expect(json.error.code).toBe('unsupported_operation')
 })
 
 test('streams named events and never sends [DONE]', async () => {

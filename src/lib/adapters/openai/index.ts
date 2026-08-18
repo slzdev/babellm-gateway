@@ -4,7 +4,7 @@ import type {
   AttemptContext,
   ChatCompletion,
   ChatCompletionChunk,
-  ProviderAdapter,
+  ChatOnlyAdapter,
   ProviderRuntime,
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
@@ -21,7 +21,7 @@ const FLAVOR_HINT =
 export function createOpenAIAdapter(
   runtime: ProviderRuntime,
   createClient?: OpenAIClientFactory,
-): ProviderAdapter {
+): ChatOnlyAdapter {
   const client = createOpenAIClient(runtime, createClient)
   const paths = resolveProviderPaths(runtime.config)
 

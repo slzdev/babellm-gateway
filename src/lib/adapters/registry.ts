@@ -6,6 +6,7 @@ import { createGeminiAdapter } from './gemini'
 import { createOpenAIAdapter } from './openai'
 import { createResponsesAdapter } from './openai/responses'
 import type { ProviderAdapter, ProviderConfig, ProviderRuntime } from './types'
+import { withChatViaResponses, withRespondViaChat } from './wrappers'
 
 export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
   return {
@@ -36,8 +37,10 @@ export function createAdapter(
       return openAIShaped(runtime, flavor)
     case 'gemini':
       // Gemini speaks neither OpenAI dialect natively, so flavor says nothing
-      // about it: the adapter translates from Chat Completions either way.
-      return createGeminiAdapter(runtime)
+      // about it: the adapter translates from Chat Completions either way,
+      // and gets `respond`/`respondStream` from the same wrapper any
+      // chat-only adapter does.
+      return withRespondViaChat(createGeminiAdapter(runtime), runtime.name)
     case 'bedrock':
       throw new UnsupportedOperationError(
         `The "${runtime.adapter}" adapter is not available yet.`,
@@ -47,6 +50,6 @@ export function createAdapter(
 
 function openAIShaped(runtime: ProviderRuntime, flavor: ApiFlavor): ProviderAdapter {
   return flavor === 'responses'
-    ? createResponsesAdapter(runtime)
-    : createOpenAIAdapter(runtime)
+    ? withChatViaResponses(createResponsesAdapter(runtime))
+    : withRespondViaChat(createOpenAIAdapter(runtime), runtime.name)
 }

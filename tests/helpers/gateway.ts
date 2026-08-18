@@ -85,6 +85,12 @@ export function fakeAdapterDeps(adapter: Partial<ProviderAdapter>) {
       async *chatStream() {
         throw new Error('chatStream not stubbed')
       },
+      async respond() {
+        throw new Error('respond not stubbed')
+      },
+      async *respondStream() {
+        throw new Error('respondStream not stubbed')
+      },
       ...adapter,
     }) as ProviderAdapter,
   }
@@ -175,6 +181,12 @@ export function fakeAdapterByProvider(
       },
       async *chatStream() {
         throw new Error(`chatStream not stubbed for ${provider.name}`)
+      },
+      async respond() {
+        throw new Error(`respond not stubbed for ${provider.name}`)
+      },
+      async *respondStream() {
+        throw new Error(`respondStream not stubbed for ${provider.name}`)
       },
       ...(byName[provider.name] ?? {}),
     }) as ProviderAdapter,

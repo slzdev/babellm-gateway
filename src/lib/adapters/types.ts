@@ -83,11 +83,22 @@ export interface ProviderAdapter {
    * sync reports `unsupported` rather than failing.
    */
   listModels?(ctx: ListModelsContext): Promise<DiscoveredModel[]>
-  /** Optional until Phase 4: an adapter without it answers a Responses
-   *  request with 501 unsupported_operation rather than a missing method. */
-  respond?(req: ResponsesRequest, ctx: AttemptContext): Promise<ResponsesResult>
-  respondStream?(
+  /**
+   * Every adapter must be able to serve a Responses request: either
+   * natively, or through `withRespondViaChat` (see adapters/wrappers.ts),
+   * which every chat-only adapter is wrapped in at construction time.
+   */
+  respond(req: ResponsesRequest, ctx: AttemptContext): Promise<ResponsesResult>
+  respondStream(
     req: ResponsesRequest,
     ctx: AttemptContext,
   ): AsyncIterable<ResponseStreamEvent>
 }
+
+/**
+ * What `createOpenAIAdapter` and `createGeminiAdapter` build: chat-native,
+ * with no opinion about the Responses API. Each is upgraded to a full
+ * `ProviderAdapter` by `withRespondViaChat` in registry.ts, which is the only
+ * place that is allowed to know these two methods are missing.
+ */
+export type ChatOnlyAdapter = Omit<ProviderAdapter, 'respond' | 'respondStream'>

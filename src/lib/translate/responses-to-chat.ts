@@ -83,10 +83,10 @@ export function droppedParams(req: ResponsesRequest): string[] {
   // Distinct from `user`, which maps directly below — safety_identifier has
   // no Chat Completions counterpart of its own.
   if (!isEmpty(req.safety_identifier)) dropped.add('safety_identifier')
-  // Both name server-stored state; this gateway never creates any (`store` is
-  // pinned false on the chat-to-responses path), so neither can be honored.
-  if (!isEmpty(req.previous_response_id)) dropped.add('previous_response_id')
-  if (!isEmpty(req.conversation)) dropped.add('conversation')
+  // previous_response_id and conversation are not reported here:
+  // assertServiceable rejects both outright before this ever runs, so
+  // reporting them as merely "dropped" would misrepresent a hard refusal
+  // as a lossy-but-served request.
   if (req.reasoning && !isEmpty(req.reasoning.summary)) dropped.add('reasoning.summary')
 
   if (req.tool_choice && typeof req.tool_choice === 'object') {
