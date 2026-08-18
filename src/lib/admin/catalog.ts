@@ -17,11 +17,13 @@ import type {
 import { API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
 import { parseProviderPath, resolveProviderPaths } from '@/lib/adapters/openai/paths'
 import type { ProviderConfig } from '@/lib/adapters/types'
+import type { AdapterType } from '@/lib/adapters/credentials'
 
 export interface CatalogListItem {
   id: string
   providerId: string
   providerName: string
+  providerAdapter: AdapterType
   modelId: string
   canonicalKey: string | null
   origin: 'discovered' | 'manual'
@@ -62,6 +64,7 @@ function toNumber(value: string | null): number | null {
 function toItem(
   row: CatalogModelRow,
   providerName: string,
+  providerAdapter: AdapterType,
   providerApiFlavor: ApiFlavor,
   providerPaths: { chatCompletionsPath: string; responsesPath: string },
   routeTargetCount: number,
@@ -70,6 +73,7 @@ function toItem(
     id: row.id,
     providerId: row.providerId,
     providerName,
+    providerAdapter,
     modelId: row.modelId,
     canonicalKey: row.canonicalKey,
     origin: row.origin,
@@ -106,6 +110,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
     .select({
       model: catalogModels,
       providerName: providers.name,
+      providerAdapter: providers.adapter,
       providerApiFlavor: providers.apiFlavor,
       providerConfig: providers.config,
     })
@@ -120,7 +125,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
   return rows
     .filter(({ model }) => !search || model.modelId.toLowerCase().includes(search))
     .map(({
-      model, providerName, providerApiFlavor, providerConfig,
+      model, providerName, providerAdapter, providerApiFlavor, providerConfig,
     }) => {
       const { chatCompletions, responses } = resolveProviderPaths(
         JSON.parse(providerConfig) as ProviderConfig,
@@ -128,6 +133,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
       return toItem(
         model,
         providerName,
+        providerAdapter,
         providerApiFlavor,
         { chatCompletionsPath: chatCompletions, responsesPath: responses },
         targets.filter(

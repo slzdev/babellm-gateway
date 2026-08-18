@@ -34,7 +34,13 @@ Delete migration `0008_true_tomas`: its `.sql`, its snapshot
 `drizzle/meta/0008_snapshot.json`, and its entry in `drizzle/meta/_journal.json`.
 The column never reached `main`, so there is nothing to revert and no
 compatibility window to keep. Any flavor pinned on a target in a development
-database is discarded; it is re-set on the model instead.
+database is discarded; it is re-set on the model instead. Deleting the
+migration rather than writing a `down` for it also means a development
+database that already applied `0008_true_tomas` keeps an orphan
+`route_targets.api_flavor` column that nothing reads afterward — Drizzle
+selects the columns it has declared, not whatever the live table happens to
+carry, and `db:generate` diffs snapshots rather than the database — while a
+fresh database never gets the column at all.
 
 The new `0008` adds three nullable columns to `catalog_models`:
 
@@ -172,9 +178,11 @@ state.
 **Added — virtual model detail.** With the target selector gone, the flavor
 would otherwise be invisible on the screen where routing is configured. The
 target table shows it read-only, derived by a new `targetGatewayViews()` in
-`lib/admin/catalog.ts` — a sibling of `targetWarnings()`, built from the same
-three queries it already runs — returning `{ flavor, source: 'model' | 'provider' }`
-per target id and rendering as `Responses · from model`.
+`lib/admin/catalog.ts` — a deliberate sibling of `targetWarnings()`, not a
+share: it repeats the same three reads rather than factoring them out, because
+sharing them would mean refactoring `targetWarnings()` itself, a separate
+change this one does not make. It returns `{ flavor, source: 'model' | 'provider' }`
+per target id and renders as `Responses · from model`.
 
 **Corrected.** Four pieces of copy name a setting this change deletes, and all
 four are rewritten to point at the model's flavor, then the provider's:
@@ -228,7 +236,7 @@ New coverage:
 | `tests/lib/adapters/registry.test.ts` | A per-model path reaches the OpenAI client; a null override leaves the provider's path intact; the models path is never overridden; Gemini ignores overrides entirely. |
 | `paths` validation | An absolute URL and a query string are rejected per model, with the same messages the provider form gives. |
 | `tests/lib/admin/catalog.test.ts` | `setModelGateway` writes all three, clears each back to NULL on blank, rejects a bad flavor and a bad path, and leaves `override` and every merged column untouched. `targetGatewayViews` reports the source correctly for catalogued, uncatalogued, and provider-default targets. |
-| `schema.test.ts` | The three new columns exist and default to NULL; `route_targets` has no `api_flavor`. |
+| `schema.test.ts` | The three new columns exist and default to NULL. |
 
 Tests run against the disposable Postgres on 5434 per `AGENTS.md`.
 

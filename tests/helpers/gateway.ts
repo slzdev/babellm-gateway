@@ -10,7 +10,6 @@ export interface SeedOptions {
   virtualModel?: string
   upstreamModel?: string
   serviceTier?: ServiceTier | null
-  apiFlavor?: ApiFlavor | null
   adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
   credentials?: Record<string, unknown>
   /** Limits on the seeded API key. Absent means an unlimited key, which is
@@ -41,17 +40,6 @@ export async function seedGateway(options: SeedOptions = {}) {
     upstreamModel,
     serviceTier: options.serviceTier ?? null,
   }).returning()
-
-  // Only when the option is given, so a test that says nothing about flavor
-  // keeps running against an uncatalogued target — which is what pins the
-  // fallback to the provider's setting.
-  if (options.apiFlavor) {
-    await db.insert(catalogModels).values({
-      providerId: provider.id,
-      modelId: upstreamModel,
-      apiFlavor: options.apiFlavor,
-    })
-  }
 
   const generated = generateApiKey()
   const [key] = await db.insert(apiKeys).values({

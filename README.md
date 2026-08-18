@@ -113,7 +113,7 @@ flowchart LR
 
 Clients can speak either Chat Completions or Responses. Every OpenAI-shaped
 provider is called on one of those two APIs, whichever its `api_flavor` says —
-set per provider and overridable per route target, so one virtual model can
+set per provider and overridable per catalog model, so one virtual model can
 mix a `chat_completions` target with a `responses` one. Anything behind the
 gateway that speaks neither — Gemini's `generateContent` — is translated in
 both directions, and so is any request that crosses ingress and provider

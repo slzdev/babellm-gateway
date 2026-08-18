@@ -33,7 +33,9 @@ export function CatalogRowActions({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-auto min-w-40">
           <DropdownMenuItem onClick={() => setOverriding(true)}>Edit overrides</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setGateway(true)}>Gateway settings</DropdownMenuItem>
+          {item.providerAdapter === 'openai' || item.providerAdapter === 'openai_compatible' ? (
+            <DropdownMenuItem onClick={() => setGateway(true)}>Gateway settings</DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem onClick={() => setRouting(true)}>
             Route to a virtual model
           </DropdownMenuItem>

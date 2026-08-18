@@ -249,9 +249,15 @@ test('a direct provider/model address is never breakable', async () => {
   expect(candidates[0].breakerCooldownSeconds).toBeNull()
 })
 
-test('a target inherits its provider flavor', async () => {
+test('a catalogued target with no flavor of its own inherits the provider', async () => {
+  // The catalog row exists (unlike the "outside the catalog" test below) but
+  // leaves api_flavor NULL, so this pins the NULL-on-a-real-row arm rather
+  // than the no-row-at-all one.
   const { model, targets } = await seedTargets({
     targets: [{ name: 'p1' }],
+  })
+  await db.insert(catalogModels).values({
+    providerId: targets[0].provider.id, modelId: 'p1-model',
   })
   await db.update(providers).set({ apiFlavor: 'responses' })
     .where(eq(providers.id, targets[0].provider.id))

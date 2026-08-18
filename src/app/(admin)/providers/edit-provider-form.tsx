@@ -65,7 +65,9 @@ export function EditProviderDialog({
             </select>
             <p className="text-xs text-muted-foreground">
               Choose Responses if this endpoint returns 404 on
-              {' '}<code>/v1/chat/completions</code>.
+              {' '}<code>/v1/chat/completions</code>. This is the default for
+              every model on the provider — override it per model on the
+              Catalog page.
             </p>
           </div>
         ) : null}

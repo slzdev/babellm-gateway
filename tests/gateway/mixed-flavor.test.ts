@@ -317,6 +317,29 @@ test('a Responses request reaches a gemini target through the same wrapper', asy
   expect(dropped).toContain('parallel_tool_calls')
 })
 
+test('a gemini target pinned to responses flavor still reports what Gemini drops', async () => {
+  // Regression test: droppedFor used to check the flavor short-circuit before
+  // the Gemini branch, so a candidate whose model pins api_flavor: 'responses'
+  // reported nothing here, even though the Gemini adapter translates and drops
+  // regardless of flavor (see the reordering above, mirroring chatIngress).
+  const { apiKey } = await seedTargets({
+    targets: [{ name: 'gem', adapter: 'gemini', apiFlavor: 'responses' }],
+  })
+
+  const res = await handleResponses(
+    responsesRequest(
+      { model: 'house-model', input: 'hi', parallel_tool_calls: false },
+      apiKey,
+    ),
+    fakeAdapterByProvider({
+      gem: chatOnlyRespondingVia('gem', vi.fn().mockResolvedValue(completion('gem'))),
+    }),
+  )
+
+  expect(res.status).toBe(200)
+  expect(res.headers.get('x-babellm-dropped-params')).toBe('parallel_tool_calls')
+})
+
 test('a hosted tool against a chat-only target is a 400 that does not fail over', async () => {
   const { apiKey } = await seedTargets({
     targets: [{ name: 'p1' }, { name: 'p2', apiFlavor: 'responses' }],

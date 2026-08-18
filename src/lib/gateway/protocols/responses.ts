@@ -73,14 +73,18 @@ export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, Respon
   modelOf: (req) => req.model,
   isStream: (req) => req.stream === true,
   droppedFor: (candidate, req) => {
+    // Gemini's own adapter translates regardless of target flavor — it has no
+    // native Responses endpoint to be "native" on — so it must be checked
+    // before the flavor short-circuit below, mirroring chatIngress.droppedFor.
+    // Checking flavor first would report nothing for a Gemini candidate pinned
+    // to `responses`, even though it still drops what Gemini cannot express.
+    if (candidate.provider.adapter === 'gemini') {
+      return [...droppedParams(req), ...geminiDroppedParams(toChatRequest(req))]
+    }
     // A Responses-native target expresses everything it is sent; only the
-    // crossing path loses anything, and a Gemini target then loses more on top.
+    // crossing path loses anything.
     if (candidate.apiFlavor === 'responses') return []
-    const chat = toChatRequest(req)
-    return [
-      ...droppedParams(req),
-      ...(candidate.provider.adapter === 'gemini' ? geminiDroppedParams(chat) : []),
-    ]
+    return droppedParams(req)
   },
   run: (adapter, ctx, req) => adapter.respond(req, ctx),
   runStream: (adapter, ctx, req) => adapter.respondStream(req, ctx),

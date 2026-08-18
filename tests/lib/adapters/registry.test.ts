@@ -158,7 +158,7 @@ test('an explicit flavor overrides the provider column', async () => {
   const adapter = createAdapter(provider({ apiFlavor: 'chat_completions' }), 'responses')
   await adapter.chat(chatBody, chatCtx)
 
-  // The per-target override arrives as an argument, so a target may reach the
+  // The model's override arrives as an argument, so a model may reach the
   // Responses endpoint of a provider whose default is Chat Completions.
   expect(calledPath(fetchSpy)).toMatch(/\/responses$/)
 })
