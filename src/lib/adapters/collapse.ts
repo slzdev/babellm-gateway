@@ -1,4 +1,4 @@
-import type { ChatCompletion, ChatCompletionChunk } from './types'
+import type { ChatCompletion, ChatCompletionChunk, ResponsesResult, ResponseStreamEvent } from './types'
 
 /**
  * Turns a chunk stream back into the single body the same request would have
@@ -201,4 +201,30 @@ export async function collapseChatStream(
       .map(finishChoice),
     ...(usage ? { usage } : {}),
   } as ChatCompletion
+}
+
+/**
+ * Every event that ends a Responses stream carries the complete `Response`
+ * object, so unlike the chat collapser this one reconstructs nothing: it
+ * waits for a terminal event and hands back exactly what the provider sent.
+ * Hosted-tool output, reasoning items and encrypted content therefore survive
+ * a forced stream untouched.
+ */
+const TERMINAL_EVENTS = new Set([
+  'response.completed', 'response.incomplete', 'response.failed',
+])
+
+export async function collapseResponseStream(
+  events: AsyncIterable<ResponseStreamEvent>,
+): Promise<ResponsesResult> {
+  for await (const event of events) {
+    // `response.failed` returns rather than throws: a non-streaming
+    // responses.create answers 200 with status "failed" and an `error` field,
+    // and a forced request must be indistinguishable from an unforced one.
+    if (TERMINAL_EVENTS.has(event.type) && 'response' in event) {
+      return event.response as ResponsesResult
+    }
+  }
+
+  throw new Error('The upstream stream ended without a terminal response event.')
 }

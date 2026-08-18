@@ -1,10 +1,15 @@
 import { expect, test } from 'vitest'
-import { collapseChatStream } from '@/lib/adapters/collapse'
-import type { ChatCompletionChunk } from '@/lib/adapters/types'
+import { collapseChatStream, collapseResponseStream } from '@/lib/adapters/collapse'
+import type { ChatCompletionChunk, ResponseStreamEvent } from '@/lib/adapters/types'
 import toolCallStream from '../../fixtures/openai-tool-call-stream.json'
+import responsesToolCallStream from '../../fixtures/openai-responses-tool-call-stream.json'
 
 async function* stream(chunks: unknown[]): AsyncIterable<ChatCompletionChunk> {
   for (const chunk of chunks) yield chunk as ChatCompletionChunk
+}
+
+async function* events(list: unknown[]): AsyncIterable<ResponseStreamEvent> {
+  for (const event of list) yield event as ResponseStreamEvent
 }
 
 /** The shape every OpenAI-compatible chunk shares, so a test only has to
@@ -157,4 +162,45 @@ test('propagates an error thrown mid-stream', async () => {
   }
 
   await expect(collapseChatStream(failing())).rejects.toThrow('upstream exploded')
+})
+
+test('returns the response carried by response.completed, verbatim', async () => {
+  const result = await collapseResponseStream(events(responsesToolCallStream))
+
+  const terminal = responsesToolCallStream.at(-1) as { type: string; response: unknown }
+  expect(terminal.type).toBe('response.completed')
+  expect(result).toEqual(terminal.response)
+})
+
+test('returns rather than throws on response.failed', async () => {
+  // A real non-streaming responses.create answers HTTP 200 with
+  // status: "failed", so the collapsed path must be indistinguishable.
+  const failed = { id: 'resp_1', object: 'response', status: 'failed', error: { message: 'nope' } }
+  const result = await collapseResponseStream(events([
+    { type: 'response.created', response: { id: 'resp_1', status: 'in_progress' } },
+    { type: 'response.failed', response: failed },
+  ]))
+
+  expect(result).toEqual(failed)
+})
+
+test('returns the response carried by response.incomplete', async () => {
+  const incomplete = { id: 'resp_2', object: 'response', status: 'incomplete' }
+  const result = await collapseResponseStream(events([
+    { type: 'response.created', response: { id: 'resp_2', status: 'in_progress' } },
+    { type: 'response.incomplete', response: incomplete },
+  ]))
+
+  expect(result).toEqual(incomplete)
+})
+
+test('a stream that ends with no terminal event throws', async () => {
+  await expect(collapseResponseStream(events([
+    { type: 'response.created', response: { id: 'resp_3', status: 'in_progress' } },
+    { type: 'response.output_text.delta', delta: 'hi' },
+  ]))).rejects.toThrow(/ended without a terminal/i)
+})
+
+test('an empty responses stream throws', async () => {
+  await expect(collapseResponseStream(events([]))).rejects.toThrow(/ended without a terminal/i)
 })
