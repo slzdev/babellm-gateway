@@ -176,11 +176,22 @@ target table shows it read-only, derived by a new `targetGatewayViews()` in
 three queries it already runs — returning `{ flavor, source: 'model' | 'provider' }`
 per target id and rendering as `Responses · from model`.
 
-**Corrected.** `FLAVOR_HINT` in `adapters/openai/index.ts` tells operators to
-set the route target's API flavor when an endpoint answers only the Responses
-API. It is rewritten to point at the model's setting, then the provider's.
-`README.md:57` says hosted tools need "a target whose API flavor" is Responses;
-it becomes a model whose flavor is Responses.
+**Corrected.** Four pieces of copy name a setting this change deletes, and all
+four are rewritten to point at the model's flavor, then the provider's:
+
+- `FLAVOR_HINT` in `adapters/openai/index.ts` — shown when an endpoint answers
+  only the Responses API.
+- `FLAVOR_HINT` in `adapters/openai/responses.ts` — its symmetric counterpart,
+  shown when an endpoint answers only Chat Completions.
+- Two 400 refusals in `assertServiceable` (`translate/responses-to-chat.ts`),
+  raised when a client asks a Chat Completions provider for a hosted tool or
+  for conversation state. These reach an API consumer rather than an operator,
+  so they name the setting without naming the screen it lives on.
+- `README.md:57`, which says hosted tools need "a target whose API flavor" is
+  Responses; it becomes a model whose flavor is Responses.
+
+The last three were found by the verification grep rather than by the design
+pass, which is what that grep exists for.
 
 ## 5. Testing
 
@@ -188,9 +199,13 @@ Test-driven throughout, and in two passes: the deletions land first so the suite
 is green with the target column gone, then each new behaviour is written as a
 failing test before the code that satisfies it.
 
-Deletions — the target-flavor cases in `tests/lib/gateway/resolve.test.ts`,
-`tests/lib/admin/models.test.ts`, `tests/lib/gateway/execute.test.ts`, and
-`tests/lib/db/schema.test.ts`.
+Deletions — the target-flavor cases in `tests/lib/gateway/resolve.test.ts` and
+`tests/lib/admin/models.test.ts`. The `Candidate` factories in
+`tests/lib/gateway/execute.test.ts` and `tests/lib/gateway/select.test.ts` keep
+their `apiFlavor` (the field survives on `Candidate`, only resolved differently)
+and gain `pathOverrides: null`. `tests/lib/db/schema.test.ts` turns out to hold
+no target-flavor assertion at all, so nothing is deleted there — it only gains
+the new catalog-column tests.
 
 **Helper change.** `apiFlavor` on `SeedOptions` and `TargetSpec` in
 `tests/helpers/gateway.ts` keeps its name and its call signature, but changes
