@@ -78,8 +78,15 @@ export const responsesRequestSchema = z.looseObject({
   safety_identifier: z.string().optional(),
   // Rejected rather than dropped: a queued response would be unretrievable,
   // because GET /v1/responses/{id} is deliberately out of scope. Refusing at
-  // parse time keeps it out of every path, not just the translated one.
-  background: z.literal(false).nullable().optional(),
+  // parse time keeps it out of every path, not just the translated one. The
+  // refine (rather than a bare z.literal(false)) carries that reason into the
+  // client-facing error instead of leaving it in a comment the client cannot
+  // read — parseWith prefixes the field path itself, so the message here does
+  // not repeat "background:".
+  background: z.boolean().nullable().optional().refine(
+    (value) => value !== true,
+    { message: 'true is not supported: this gateway does not serve GET /v1/responses/{id}, so a queued response would be unretrievable.' },
+  ),
   service_tier: z.string().nullable().optional(),
   user: z.string().optional(),
 })

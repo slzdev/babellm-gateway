@@ -47,6 +47,9 @@ test('rejects background because the retrieval endpoints do not exist', () => {
   // be unretrievable, since GET /v1/responses/{id} is out of scope.
   const result = responsesRequestSchema.safeParse({ model: 'm', input: 'hi', background: true })
   expect(result.success).toBe(false)
+  // The reason is client-facing, not left in a source comment the client
+  // cannot read.
+  expect(result.error?.issues[0]?.message).toContain('GET /v1/responses/{id}')
 })
 
 test('allows background: false', () => {
