@@ -261,16 +261,71 @@ test('a target inherits its provider flavor', async () => {
   expect(candidates[0].apiFlavor).toBe('responses')
 })
 
-test('a direct provider/model address inherits the provider flavor', async () => {
-  // No route_targets row stands behind a direct address, so there is nothing
-  // that could have overridden the provider's setting.
+test('a model flavor overrides the provider for a route target', async () => {
+  // The provider still says chat_completions; the model it points at wins.
+  const { model } = await seedTargets({
+    targets: [{ name: 'p1', apiFlavor: 'responses' }],
+  })
+
+  const { candidates } = await resolveModel(model.name)
+
+  expect(candidates[0].apiFlavor).toBe('responses')
+})
+
+test('a target naming a model outside the catalog inherits the provider', async () => {
+  // upstream_model is free text, so this is a real arrangement, not a broken
+  // one — and it must keep routing rather than drop out of the chain.
+  const { model, targets } = await seedTargets({ targets: [{ name: 'p1' }] })
+  await db.update(providers).set({ apiFlavor: 'responses' })
+    .where(eq(providers.id, targets[0].provider.id))
+
+  const { candidates } = await resolveModel(model.name)
+
+  expect(candidates).toHaveLength(1)
+  expect(candidates[0].apiFlavor).toBe('responses')
+})
+
+test('a direct provider/model address takes the model flavor', async () => {
+  const [provider] = await db.insert(providers).values({
+    name: 'openai', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
+  }).returning()
+  await db.insert(catalogModels).values({
+    providerId: provider.id, modelId: 'gpt-5', apiFlavor: 'responses',
+  })
+
+  const { candidates } = await resolveModel('openai/gpt-5')
+
+  expect(candidates[0].apiFlavor).toBe('responses')
+})
+
+test('a direct address on a model with no flavor inherits the provider', async () => {
   const [provider] = await db.insert(providers).values({
     name: 'openai', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
     apiFlavor: 'responses',
   }).returning()
   await db.insert(catalogModels).values({ providerId: provider.id, modelId: 'gpt-5' })
 
-  const { candidates } = await resolveModel(`${provider.name}/gpt-5`)
+  const { candidates } = await resolveModel('openai/gpt-5')
 
   expect(candidates[0].apiFlavor).toBe('responses')
+})
+
+test('one provider can serve a chat model and a responses model', async () => {
+  const [model] = await db.insert(virtualModels).values({ name: 'house-model' }).returning()
+  const [provider] = await db.insert(providers).values({
+    name: 'p1', adapter: 'openai', credentials: encryptJson({ apiKey: 'sk-p1' }),
+  }).returning()
+
+  await db.insert(catalogModels).values([
+    { providerId: provider.id, modelId: 'cc-model' },
+    { providerId: provider.id, modelId: 'resp-model', apiFlavor: 'responses' },
+  ])
+  await db.insert(routeTargets).values([
+    { virtualModelId: model.id, providerId: provider.id, upstreamModel: 'cc-model', priority: 0 },
+    { virtualModelId: model.id, providerId: provider.id, upstreamModel: 'resp-model', priority: 1 },
+  ])
+
+  const { candidates } = await resolveModel('house-model')
+
+  expect(candidates.map((c) => c.apiFlavor)).toEqual(['chat_completions', 'responses'])
 })

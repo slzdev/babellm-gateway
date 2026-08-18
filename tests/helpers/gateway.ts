@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { apiKeys, providers, routeTargets, virtualModels } from '@/lib/db/schema'
+import { apiKeys, catalogModels, providers, routeTargets, virtualModels } from '@/lib/db/schema'
 import { encryptJson } from '@/lib/crypto'
 import { generateApiKey } from '@/lib/gateway/auth'
 import type { ServiceTier } from '@/lib/admin/models'
@@ -31,7 +31,6 @@ export async function seedGateway(options: SeedOptions = {}) {
     name: 'test-provider',
     adapter: options.adapter ?? 'openai',
     credentials: encryptJson(options.credentials ?? { apiKey: 'sk-upstream' }),
-    ...(options.apiFlavor ? { apiFlavor: options.apiFlavor } : {}),
   }).returning()
 
   const [model] = await db.insert(virtualModels).values({ name: virtualModel }).returning()
@@ -42,6 +41,17 @@ export async function seedGateway(options: SeedOptions = {}) {
     upstreamModel,
     serviceTier: options.serviceTier ?? null,
   }).returning()
+
+  // Only when the option is given, so a test that says nothing about flavor
+  // keeps running against an uncatalogued target — which is what pins the
+  // fallback to the provider's setting.
+  if (options.apiFlavor) {
+    await db.insert(catalogModels).values({
+      providerId: provider.id,
+      modelId: upstreamModel,
+      apiFlavor: options.apiFlavor,
+    })
+  }
 
   const generated = generateApiKey()
   const [key] = await db.insert(apiKeys).values({
@@ -103,7 +113,11 @@ export interface TargetSpec {
   weight?: number
   enabled?: boolean
   serviceTier?: ServiceTier | null
+  /** Written onto the target's catalog_models row, not the provider or the
+   *  target: the model is what owns the flavor. */
   apiFlavor?: ApiFlavor | null
+  chatCompletionsPath?: string | null
+  responsesPath?: string | null
   adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
 }
 
@@ -140,7 +154,6 @@ export async function seedTargets(options: SeedTargetsOptions) {
       name: spec.name,
       adapter: spec.adapter ?? 'openai',
       credentials: encryptJson({ apiKey: `sk-${spec.name}` }),
-      ...(spec.apiFlavor ? { apiFlavor: spec.apiFlavor } : {}),
     }).returning()
 
     const [target] = await db.insert(routeTargets).values({
@@ -152,6 +165,16 @@ export async function seedTargets(options: SeedTargetsOptions) {
       serviceTier: spec.serviceTier ?? null,
       enabled: spec.enabled ?? true,
     }).returning()
+
+    if (spec.apiFlavor || spec.chatCompletionsPath || spec.responsesPath) {
+      await db.insert(catalogModels).values({
+        providerId: provider.id,
+        modelId: `${spec.name}-model`,
+        apiFlavor: spec.apiFlavor ?? null,
+        chatCompletionsPath: spec.chatCompletionsPath ?? null,
+        responsesPath: spec.responsesPath ?? null,
+      })
+    }
 
     targets.push({ provider, target })
   }

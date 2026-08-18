@@ -87,9 +87,19 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
   if (!model) return null
 
   const rows = await db
-    .select({ target: routeTargets, provider: providers })
+    .select({ target: routeTargets, provider: providers, catalog: catalogModels })
     .from(routeTargets)
     .innerJoin(providers, eq(routeTargets.providerId, providers.id))
+    // Left, not inner: upstream_model is free text, so a target may name a
+    // model the catalog has never seen. That target keeps routing on the
+    // provider's settings rather than dropping out of the chain.
+    .leftJoin(
+      catalogModels,
+      and(
+        eq(catalogModels.providerId, routeTargets.providerId),
+        eq(catalogModels.modelId, routeTargets.upstreamModel),
+      ),
+    )
     .where(
       and(
         eq(routeTargets.virtualModelId, model.id),
@@ -110,14 +120,14 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
 
   return {
     model,
-    candidates: rows.map(({ target, provider }) => ({
+    candidates: rows.map(({ target, provider, catalog }) => ({
       targetId: target.id,
       provider,
       upstreamModel: target.upstreamModel,
       priority: target.priority,
       weight: target.weight,
       serviceTier: target.serviceTier,
-      apiFlavor: provider.apiFlavor,
+      apiFlavor: catalog?.apiFlavor ?? provider.apiFlavor,
       breakable: true,
       breakerThreshold: target.breakerThreshold,
       breakerCooldownSeconds: target.breakerCooldownSeconds,
@@ -171,10 +181,10 @@ async function resolveDirect(
       priority: 0,
       weight: 100,
       // No route_targets row stands behind a direct address, so there is
-      // nothing that could have configured a service tier, overridden the
-      // provider's flavor, or set up a circuit breaker for it.
+      // nothing that could have configured a service tier or set up a circuit
+      // breaker for it. The flavor comes from the catalog row itself.
       serviceTier: null,
-      apiFlavor: row.provider.apiFlavor,
+      apiFlavor: row.catalog.apiFlavor ?? row.provider.apiFlavor,
       breakable: false,
       breakerThreshold: null,
       breakerCooldownSeconds: null,
