@@ -173,3 +173,37 @@ test('route targets carry nullable breaker overrides', async () => {
   expect(updated.breakerThreshold).toBe(0)
   expect(updated.breakerCooldownSeconds).toBe(5)
 })
+
+test('anthropic_messages is a settable api_flavor on a model', async () => {
+  const [provider] = await db.insert(providers).values({
+    name: 'anthropic-test',
+    adapter: 'openai_compatible',
+    baseUrl: 'https://api.anthropic.com/v1',
+    credentials: encryptJson({ apiKey: 'sk-test' }),
+  }).returning()
+
+  const [model] = await db.insert(catalogModels).values({
+    providerId: provider.id,
+    modelId: 'claude-opus-5',
+    apiFlavor: 'anthropic_messages',
+    messagesPath: '/anthropic/v1/messages',
+  }).returning()
+
+  expect(model.apiFlavor).toBe('anthropic_messages')
+  expect(model.messagesPath).toBe('/anthropic/v1/messages')
+})
+
+test('a model that names no messages path inherits by storing null', async () => {
+  const [provider] = await db.insert(providers).values({
+    name: 'inherits',
+    adapter: 'openai',
+    credentials: encryptJson({ apiKey: 'sk-test' }),
+  }).returning()
+
+  const [model] = await db.insert(catalogModels).values({
+    providerId: provider.id,
+    modelId: 'gpt-5',
+  }).returning()
+
+  expect(model.messagesPath).toBeNull()
+})

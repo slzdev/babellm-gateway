@@ -7,7 +7,7 @@
  * The schema's pgEnum is built from this array, so the column and the selector
  * cannot drift.
  */
-export const API_FLAVORS = ['chat_completions', 'responses'] as const
+export const API_FLAVORS = ['chat_completions', 'responses', 'anthropic_messages'] as const
 
 export type ApiFlavor = (typeof API_FLAVORS)[number]
 
@@ -17,4 +17,5 @@ export type ApiFlavor = (typeof API_FLAVORS)[number]
 export const API_FLAVOR_LABELS: Record<ApiFlavor, string> = {
   chat_completions: 'Chat Completions',
   responses: 'Responses',
+  anthropic_messages: 'Anthropic Messages',
 }

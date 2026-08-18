@@ -152,10 +152,11 @@ export const catalogModels = pgTable(
     // decide whether a request can be served at all. sync() and merge() never
     // touch them, so a re-sync cannot undo an operator's decision and a model
     // that goes missing keeps its settings for when it comes back.
-    // NULL means "inherit the provider" in all three.
+    // NULL means "inherit the provider" in all four.
     apiFlavor: apiFlavorEnum('api_flavor'),
     chatCompletionsPath: text('chat_completions_path'),
     responsesPath: text('responses_path'),
+    messagesPath: text('messages_path'),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
