@@ -209,7 +209,7 @@ New coverage:
 | Area | What it pins |
 |---|---|
 | `resolve.test.ts` | Model flavor beats the provider's for a direct address and for a route target; a target whose upstream model has no catalog row falls back to the provider; a catalogued model on a disabled provider still answers 503. |
-| `tests/gateway/mixed-flavor.test.ts` | Unchanged at the call sites, but now proving the two flavors in one failover chain come from two models. One added case: two targets on the *same* provider whose models differ in flavor — the arrangement that was impossible before. |
+| `tests/gateway/mixed-flavor.test.ts` | Unchanged at the call sites, but now proving the two flavors in one failover chain come from two models. The arrangement that was impossible before — two targets on the *same* provider whose models differ in flavor — is pinned in `resolve.test.ts` instead, because this file drives the handlers through `fakeAdapterByProvider`, which is keyed by provider name and cannot tell two models on one provider apart. |
 | `tests/lib/adapters/registry.test.ts` | A per-model path reaches the OpenAI client; a null override leaves the provider's path intact; the models path is never overridden; Gemini ignores overrides entirely. |
 | `paths` validation | An absolute URL and a query string are rejected per model, with the same messages the provider form gives. |
 | `tests/lib/admin/catalog.test.ts` | `setModelGateway` writes all three, clears each back to NULL on blank, rejects a bad flavor and a bad path, and leaves `override` and every merged column untouched. `targetGatewayViews` reports the source correctly for catalogued, uncatalogued, and provider-default targets. |
