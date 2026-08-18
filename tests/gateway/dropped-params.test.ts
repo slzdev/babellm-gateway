@@ -57,6 +57,25 @@ test('a gemini target reports nothing for a request it can express fully', async
   expect(res.headers.get('x-babellm-dropped-params')).toBeNull()
 })
 
+test('a responses-flavored target reports what chat-to-responses cannot express', async () => {
+  // Regression test: droppedFor's flavor branch used to be Gemini-only, so a
+  // chat request served through chat-to-responses.ts (n, stop, logit_bias,
+  // ... — see chat-to-responses.ts's own UNMAPPABLE list) reported nothing,
+  // even though the translation silently drops those fields.
+  const { apiKey } = await seedTargets({ targets: [{ name: 'resp', apiFlavor: 'responses' }] })
+
+  const res = await handleChatCompletions(
+    chatRequest(
+      { model: 'house-model', messages: [{ role: 'user', content: 'hi' }], n: 3 },
+      apiKey,
+    ),
+    fakeAdapterByProvider({ resp: { chat: vi.fn().mockResolvedValue(completion('resp')) } }),
+  )
+
+  expect(res.status).toBe(200)
+  expect(res.headers.get('x-babellm-dropped-params')).toBe('n')
+})
+
 test('an openai target reports nothing, because it forwards the request as sent', async () => {
   const { apiKey } = await seedTargets({ targets: [{ name: 'cc' }] })
 

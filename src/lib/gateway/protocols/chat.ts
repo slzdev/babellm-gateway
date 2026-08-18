@@ -1,6 +1,7 @@
 import type { ChatCompletion, ChatCompletionChunk } from '@/lib/adapters/types'
 import { chatCompletionRequestSchema, type ChatCompletionRequest } from '@/lib/schemas/chat'
 import { droppedParams as geminiDroppedParams } from '@/lib/translate/chat-to-gemini'
+import { droppedParams as responsesDroppedParams } from '@/lib/translate/chat-to-responses'
 import type { ClassifiedError } from '../errors'
 import { parseWith, type Ingress } from '../handler'
 import { newCompletionId, rewriteChunk, rewriteCompletion } from '../identity'
@@ -58,10 +59,14 @@ export const chatIngress: Ingress<ChatCompletionRequest, ChatCompletion, ChatCom
   parse: (raw) => parseWith(chatCompletionRequestSchema, raw),
   modelOf: (req) => req.model,
   isStream: (req) => req.stream === true,
-  // Only Gemini translates today: the OpenAI-shaped adapters forward the
-  // request as sent, so there is nothing they can fail to express.
+  // Gemini's own adapter translates regardless of target flavor; a
+  // `responses`-flavored target translates too, through chat-to-responses.ts,
+  // no matter which adapter serves it. Any other target forwards the request
+  // as sent, so there is nothing it can fail to express.
   droppedFor: (candidate, req) =>
-    candidate.provider.adapter === 'gemini' ? geminiDroppedParams(req) : [],
+    candidate.provider.adapter === 'gemini' ? geminiDroppedParams(req)
+      : candidate.apiFlavor === 'responses' ? responsesDroppedParams(req)
+      : [],
   run: (adapter, ctx, req) => adapter.chat(req, ctx),
   runStream: (adapter, ctx, req) => adapter.chatStream(req, ctx),
   finish: (res, identity) => rewriteCompletion(res, identity),
