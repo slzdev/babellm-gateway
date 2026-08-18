@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk'
-import type { ChatCompletion, ProviderConfig } from '@/lib/adapters/types'
+import type { ChatCompletion, ChatCompletionChunk, ProviderConfig } from '@/lib/adapters/types'
 import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
 
 /** What Anthropic requires when neither the client nor the catalog states a
@@ -329,4 +329,120 @@ export function fromMessage(msg: Anthropic.Message, model: string): ChatCompleti
     }],
     ...(msg.usage ? { usage: toUsage(msg.usage) } : {}),
   } as ChatCompletion
+}
+
+/**
+ * Anthropic streams semantic events over content blocks, which is closer to
+ * the Responses stream than to Gemini's whole-response chunks. The state kept
+ * here is small: which content-block index is which tool call (a Chat
+ * Completions client indexes tool calls among themselves, while Anthropic
+ * indexes every block), and whether the role has been announced.
+ *
+ * `n > 1` needs no bookkeeping at all — the Messages API has no equivalent, so
+ * there is only ever choice 0.
+ */
+export async function* fromMessageStream(
+  events: AsyncIterable<Anthropic.RawMessageStreamEvent>,
+  req: ChatCompletionRequest,
+  model: string,
+): AsyncIterable<ChatCompletionChunk> {
+  const toolIndexes = new Map<number, number>()
+  const created = Math.floor(Date.now() / 1000)
+  let id = ''
+  let responseModel = model
+  let roleSent = false
+  let toolCount = 0
+  let sawToolUse = false
+  const usage: AnthropicUsage = {}
+
+  // Anthropic always reports usage, so include_usage needs no upstream
+  // parameter — only an opt-out honoured here.
+  const includeUsage = req.stream_options?.include_usage !== false
+
+  function chunk(
+    delta: Record<string, unknown>,
+    reason: string | null = null,
+  ): ChatCompletionChunk {
+    // The role rides the first chunk carrying real content rather than the
+    // first chunk of any kind, so the eager first-chunk pull in startStream
+    // keeps meaning "the upstream produced something".
+    const withRole = roleSent ? delta : { role: 'assistant', ...delta }
+    roleSent = true
+    return {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: responseModel,
+      choices: [{ index: 0, delta: withRole, finish_reason: reason }],
+    } as ChatCompletionChunk
+  }
+
+  for await (const event of events) {
+    switch (event.type) {
+      case 'message_start': {
+        id = event.message.id ?? ''
+        responseModel = event.message.model ?? model
+        Object.assign(usage, event.message.usage ?? {})
+        break
+      }
+
+      case 'content_block_start': {
+        const block = event.content_block
+        if (block.type !== 'tool_use') break
+        sawToolUse = true
+        const index = toolCount++
+        toolIndexes.set(event.index, index)
+        yield chunk({
+          tool_calls: [{
+            index, id: block.id, type: 'function',
+            function: { name: block.name, arguments: '' },
+          }],
+        })
+        break
+      }
+
+      case 'content_block_delta': {
+        const delta = event.delta as { type: string; text?: string; thinking?: string; partial_json?: string }
+        if (delta.type === 'text_delta' && delta.text) {
+          yield chunk({ content: delta.text })
+        } else if (delta.type === 'thinking_delta' && delta.thinking) {
+          yield chunk({ reasoning_content: delta.thinking })
+        } else if (delta.type === 'input_json_delta') {
+          const index = toolIndexes.get(event.index)
+          if (index !== undefined) {
+            yield chunk({
+              tool_calls: [{ index, function: { arguments: delta.partial_json ?? '' } }],
+            })
+          }
+        }
+        // signature_delta is replay state the model verifies on a later turn,
+        // not content the client ever renders.
+        break
+      }
+
+      case 'message_delta': {
+        Object.assign(usage, event.usage ?? {})
+        const stop = (event.delta as { stop_reason?: string | null }).stop_reason
+        if (stop) yield chunk({}, finishReasonFor(stop, sawToolUse))
+        break
+      }
+
+      // message_stop and ping carry nothing a Chat Completions client needs:
+      // the finish reason arrived on message_delta, and [DONE] is the
+      // protocol's own terminator, written by the SSE layer.
+      default:
+        break
+    }
+  }
+
+  if (includeUsage) {
+    yield {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: responseModel,
+      choices: [],
+      usage: toUsage(usage),
+    } as ChatCompletionChunk
+  }
 }
