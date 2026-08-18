@@ -171,13 +171,10 @@ async function resolveDirect(
       priority: 0,
       weight: 100,
       // No route_targets row stands behind a direct address, so there is
-      // nothing that could have configured a tier for it.
+      // nothing that could have configured a service tier, overridden the
+      // provider's flavor, or set up a circuit breaker for it.
       serviceTier: null,
-      // No route_targets row stands behind a direct address, so there is
-      // nothing that could have overridden the provider's flavor.
       apiFlavor: row.provider.apiFlavor,
-      // No route_targets row stands behind a direct address, so there is
-      // nothing to break and nothing that could have configured a breaker.
       breakable: false,
       breakerThreshold: null,
       breakerCooldownSeconds: null,
