@@ -283,6 +283,20 @@ test('a refusal becomes a refusal content part on the message', () => {
   }])
 })
 
+test('an empty choices array does not crash the translation', () => {
+  // Upstream JSON is untrusted: a provider returning `choices: []` used to
+  // make `res.choices[0]` undefined and crash on `.message`, turning a
+  // relayable oddity into a 500 on this ingress only.
+  const res = fromCompletion(
+    { id: 'chatcmpl-1', object: 'chat.completion', created: 1, model: 'up-model', choices: [] } as never,
+    req,
+    'resp_1',
+  )
+
+  expect(res.status).toBe('completed')
+  expect(res.output).toEqual([])
+})
+
 test('usage is restated in the Responses spelling', () => {
   const res = fromCompletion(completion({ content: 'hi' }), req, 'resp_1')
 
