@@ -117,7 +117,7 @@ test('a 404 from a Responses provider carries the flavor hint', async () => {
 
   await expect(adapter.chat(body, ctx)).rejects.toMatchObject({
     status: 404,
-    message: expect.stringContaining('chat_completions'),
+    message: expect.stringContaining('Chat Completions API'),
   })
 })
 

@@ -112,18 +112,34 @@ flowchart LR
 ```
 
 Clients can speak either Chat Completions or Responses. Every OpenAI-shaped
-provider is called on one of those two APIs, whichever its `api_flavor` says —
-set per provider and overridable per catalog model, so one virtual model can
-mix a `chat_completions` target with a `responses` one. Anything behind the
-gateway that speaks neither — Gemini's `generateContent` — is translated in
-both directions, and so is any request that crosses ingress and provider
-flavor (a Responses request served by a Chat Completions target, or vice
-versa).
+provider is called on one of three APIs, whichever its `api_flavor` says —
+Chat Completions, Responses, or Anthropic Messages — set per provider and
+overridable per catalog model, so one virtual model can mix a
+`chat_completions` target with a `responses` one, or either with an
+`anthropic_messages` one. Anything behind the gateway that speaks none of the
+three — Gemini's `generateContent` — is translated in both directions, and so
+is any request that crosses ingress and provider flavor (a Responses request
+served by a Chat Completions target, a Chat Completions request served by an
+Anthropic Messages target, and so on).
+
+An `anthropic_messages` model is called on `/v1/messages` — the path is
+configurable per provider and per model, like the other flavors'. There is no
+client-facing `/v1/messages` endpoint: clients keep speaking Chat Completions
+or Responses, and the gateway translates both ways, crossing twice for a
+Responses request (Responses → Chat Completions → Messages) by reusing the
+same wrapper that already crosses Responses into Chat Completions. What a
+request loses in translation is named in `x-babellm-dropped-params`, same as
+for the other flavors. `temperature` and `top_p` are the exception — they're
+forwarded verbatim rather than dropped, because the gateway can't know which
+model generation an upstream serves and dropping them would silently change
+sampling for the many Anthropic-compatible clones that still honor them. The
+cost is that Anthropic models released after Claude Opus 4.6 reject any
+non-default value of either with a 400 — from the endpoint, not the gateway.
 
 | Provider type | Status |
 | --- | --- |
-| `openai` | ✅ Chat Completions and Responses flavors |
-| `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped — Chat Completions and Responses flavors |
+| `openai` | ✅ Chat Completions, Responses, and Anthropic Messages flavors |
+| `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped — Chat Completions, Responses, and Anthropic Messages flavors |
 | `gemini` | ✅ Native `@google/genai`, including thinking and media by URL |
 | `bedrock` | 🚧 Configurable, not yet served |
 

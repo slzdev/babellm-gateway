@@ -16,7 +16,7 @@ import { resolveRequestPaths } from '../paths'
 export type { OpenAIClientFactory }
 
 const FLAVOR_HINT =
-  'If this endpoint only implements the Responses API, set the model\'s API flavor to "responses" on the Catalog page — or the provider\'s, if every model should follow it.'
+  'If this endpoint implements the Responses API or the Anthropic Messages API instead, set the model\'s API flavor accordingly on the Catalog page — or the provider\'s, if every model should follow it.'
 
 export function createOpenAIAdapter(
   runtime: ProviderRuntime,

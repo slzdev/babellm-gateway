@@ -17,11 +17,11 @@ import { toProviderError } from './errors'
 import { resolveRequestPaths } from '../paths'
 
 // The symmetric misconfiguration to the Chat Completions hint below: a
-// provider set to `responses` that in fact only speaks Chat Completions. The
-// dashboard makes this exactly as reachable as the reverse mistake, so it
-// gets the same treatment.
+// provider set to `responses` that in fact speaks Chat Completions or
+// Anthropic Messages instead. The dashboard makes this exactly as reachable
+// as the reverse mistake, so it gets the same treatment.
 const FLAVOR_HINT =
-  'If this endpoint only implements the Chat Completions API, set the model\'s API flavor to "chat_completions" on the Catalog page — or the provider\'s, if every model should follow it.'
+  'If this endpoint implements the Chat Completions API or the Anthropic Messages API instead, set the model\'s API flavor accordingly on the Catalog page — or the provider\'s, if every model should follow it.'
 
 /**
  * A provider that serves /v1/responses but not /v1/chat/completions. It holds
