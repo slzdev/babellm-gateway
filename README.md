@@ -134,7 +134,8 @@ forwarded verbatim rather than dropped, because the gateway can't know which
 model generation an upstream serves and dropping them would silently change
 sampling for the many Anthropic-compatible clones that still honor them. The
 cost is that Anthropic models released after Claude Opus 4.6 reject any
-non-default value of either with a 400 — from the endpoint, not the gateway.
+non-default value of either with a 400 — from the endpoint, not the gateway,
+as the SDK's own `@deprecated` notes on `temperature` and `top_p` document.
 
 | Provider type | Status |
 | --- | --- |
