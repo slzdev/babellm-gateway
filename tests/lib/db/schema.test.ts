@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { apiKeys, providers, routeTargets, users, virtualModels } from '@/lib/db/schema'
+import { apiKeys, catalogModels, providers, routeTargets, users, virtualModels } from '@/lib/db/schema'
 import { encryptJson, decryptJson } from '@/lib/crypto'
 import { resetDb } from '../../helpers/db'
 
@@ -100,16 +100,55 @@ test('deleting a user leaves its keys with a null user_id', async () => {
   expect(key.userId).toBeNull()
 })
 
-// api_flavor is retired: nothing reads or writes it, and it survives only so a
-// deployment still running the previous release keeps a column it inserts
-// into. This asserts it is still there with its default — the guard against a
-// generated migration quietly dropping it before that release is gone.
-test('the retired api_flavor column still exists and defaults', async () => {
+test('a provider defaults to the chat_completions flavor', async () => {
   const [row] = await db.insert(providers).values({
     name: 'legacy', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
   }).returning()
 
   expect(row.apiFlavor).toBe('chat_completions')
+})
+
+test('a provider can be stored with the responses flavor', async () => {
+  const [row] = await db.insert(providers).values({
+    name: 'resp', adapter: 'openai_compatible', baseUrl: 'https://api.example/v1',
+    credentials: encryptJson({ apiKey: 'a' }), apiFlavor: 'responses',
+  }).returning()
+
+  expect(row.apiFlavor).toBe('responses')
+})
+
+test('a catalog model inherits its provider flavor and paths by default', async () => {
+  const [p] = await db.insert(providers).values({
+    name: 'catalog-defaults', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
+  }).returning()
+
+  const [row] = await db.insert(catalogModels).values({
+    providerId: p.id, modelId: 'gpt-5',
+  }).returning()
+
+  // NULL, not 'chat_completions': a model that was never configured must stay
+  // distinguishable from one deliberately pinned to the provider's default.
+  expect(row.apiFlavor).toBeNull()
+  expect(row.chatCompletionsPath).toBeNull()
+  expect(row.responsesPath).toBeNull()
+})
+
+test('a catalog model can pin its own flavor and paths', async () => {
+  const [p] = await db.insert(providers).values({
+    name: 'catalog-pinned', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
+  }).returning()
+
+  const [row] = await db.insert(catalogModels).values({
+    providerId: p.id,
+    modelId: 'o5-pro',
+    apiFlavor: 'responses',
+    chatCompletionsPath: '/api/chat',
+    responsesPath: '/api/responses',
+  }).returning()
+
+  expect(row.apiFlavor).toBe('responses')
+  expect(row.chatCompletionsPath).toBe('/api/chat')
+  expect(row.responsesPath).toBe('/api/responses')
 })
 
 test('route targets carry nullable breaker overrides', async () => {
@@ -133,4 +172,38 @@ test('route targets carry nullable breaker overrides', async () => {
   // 0 is a real value — "never open this target" — not an absent one.
   expect(updated.breakerThreshold).toBe(0)
   expect(updated.breakerCooldownSeconds).toBe(5)
+})
+
+test('anthropic_messages is a settable api_flavor on a model', async () => {
+  const [provider] = await db.insert(providers).values({
+    name: 'anthropic-test',
+    adapter: 'openai_compatible',
+    baseUrl: 'https://api.anthropic.com/v1',
+    credentials: encryptJson({ apiKey: 'sk-test' }),
+  }).returning()
+
+  const [model] = await db.insert(catalogModels).values({
+    providerId: provider.id,
+    modelId: 'claude-opus-5',
+    apiFlavor: 'anthropic_messages',
+    messagesPath: '/anthropic/v1/messages',
+  }).returning()
+
+  expect(model.apiFlavor).toBe('anthropic_messages')
+  expect(model.messagesPath).toBe('/anthropic/v1/messages')
+})
+
+test('a model that names no messages path inherits by storing null', async () => {
+  const [provider] = await db.insert(providers).values({
+    name: 'inherits',
+    adapter: 'openai',
+    credentials: encryptJson({ apiKey: 'sk-test' }),
+  }).returning()
+
+  const [model] = await db.insert(catalogModels).values({
+    providerId: provider.id,
+    modelId: 'gpt-5',
+  }).returning()
+
+  expect(model.messagesPath).toBeNull()
 })

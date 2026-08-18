@@ -3,6 +3,7 @@ import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { createGeminiAdapter } from '@/lib/adapters/gemini'
 import { resolveProviderRuntime } from '@/lib/adapters/registry'
+import { withRespondViaChat } from '@/lib/adapters/wrappers'
 import type { ProviderRow } from '@/lib/db/schema'
 import { seedGateway } from '../helpers/gateway'
 import { resetDb } from '../helpers/db'
@@ -56,7 +57,10 @@ function gatewayClient(apiKey: string, responses: unknown[]) {
 
   const deps = {
     createAdapter: (provider: ProviderRow) =>
-      createGeminiAdapter(resolveProviderRuntime(provider), () => fakeGenAI as never),
+      withRespondViaChat(
+        createGeminiAdapter(resolveProviderRuntime(provider), () => fakeGenAI as never),
+        provider.name,
+      ),
   }
 
   const client = new OpenAI({

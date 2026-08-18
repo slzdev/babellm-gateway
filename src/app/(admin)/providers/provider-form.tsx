@@ -10,6 +10,7 @@ import { AdvancedPathsFields } from './advanced-paths-fields'
 import { CredentialField } from './provider-fields'
 import { RegistryNamespaceField } from './registry-namespace-field'
 import type { AdapterType } from '@/lib/adapters/credentials'
+import { API_FLAVOR_LABELS, API_FLAVORS } from '@/lib/api-flavors'
 
 const ADAPTERS: AdapterType[] = ['openai', 'openai_compatible', 'gemini', 'bedrock']
 
@@ -45,6 +46,28 @@ export function CreateProviderDialog() {
             ))}
           </select>
         </div>
+
+        {adapter === 'openai' || adapter === 'openai_compatible' ? (
+          <div className="space-y-2">
+            <Label htmlFor="apiFlavor">API flavor</Label>
+            <select
+              id="apiFlavor"
+              name="apiFlavor"
+              defaultValue="chat_completions"
+              className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+            >
+              {API_FLAVORS.map((flavor) => (
+                <option key={flavor} value={flavor}>{API_FLAVOR_LABELS[flavor]}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Choose Responses if this endpoint returns 404 on
+              {' '}<code>/v1/chat/completions</code>. This is the default for
+              every model on the provider — override it per model on the
+              Catalog page.
+            </p>
+          </div>
+        ) : null}
 
         <RegistryNamespaceField id="registryNamespace" adapter={adapter} />
       </div>

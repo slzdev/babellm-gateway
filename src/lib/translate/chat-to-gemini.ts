@@ -598,7 +598,7 @@ export async function* fromGenerateContentStream(
     reason: string | null = null,
   ): ChatCompletionChunk {
     // The role rides the first chunk carrying real content rather than the
-    // first chunk of any kind, so the eager first-chunk pull in startChatStream
+    // first chunk of any kind, so the eager first-chunk pull in startStream
     // keeps meaning "the upstream produced something" — which is what makes
     // failover and ttftMs measure what they claim to.
     const withRole = rolesSent.has(index) ? delta : { role: 'assistant', ...delta }

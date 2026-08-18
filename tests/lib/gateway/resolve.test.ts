@@ -5,6 +5,7 @@ import { catalogModels, providers, routeTargets, virtualModels } from '@/lib/db/
 import { resolveModel } from '@/lib/gateway/resolve'
 import { encryptJson } from '@/lib/crypto'
 import { resetDb } from '../../helpers/db'
+import { seedTargets } from '../../helpers/gateway'
 
 beforeEach(async () => {
   process.env.ENCRYPTION_KEY = 'c'.repeat(64)
@@ -246,4 +247,145 @@ test('a direct provider/model address is never breakable', async () => {
   expect(candidates[0].breakable).toBe(false)
   expect(candidates[0].breakerThreshold).toBeNull()
   expect(candidates[0].breakerCooldownSeconds).toBeNull()
+})
+
+test('a catalogued target with no flavor of its own inherits the provider', async () => {
+  // The catalog row exists (unlike the "outside the catalog" test below) but
+  // leaves api_flavor NULL, so this pins the NULL-on-a-real-row arm rather
+  // than the no-row-at-all one.
+  const { model, targets } = await seedTargets({
+    targets: [{ name: 'p1' }],
+  })
+  await db.insert(catalogModels).values({
+    providerId: targets[0].provider.id, modelId: 'p1-model',
+  })
+  await db.update(providers).set({ apiFlavor: 'responses' })
+    .where(eq(providers.id, targets[0].provider.id))
+
+  const { candidates } = await resolveModel(model.name)
+
+  expect(candidates[0].apiFlavor).toBe('responses')
+})
+
+test('a model flavor overrides the provider for a route target', async () => {
+  // The provider still says chat_completions; the model it points at wins.
+  const { model } = await seedTargets({
+    targets: [{ name: 'p1', apiFlavor: 'responses' }],
+  })
+
+  const { candidates } = await resolveModel(model.name)
+
+  expect(candidates[0].apiFlavor).toBe('responses')
+})
+
+test('a target naming a model outside the catalog inherits the provider', async () => {
+  // upstream_model is free text, so this is a real arrangement, not a broken
+  // one — and it must keep routing rather than drop out of the chain.
+  const { model, targets } = await seedTargets({ targets: [{ name: 'p1' }] })
+  await db.update(providers).set({ apiFlavor: 'responses' })
+    .where(eq(providers.id, targets[0].provider.id))
+
+  const { candidates } = await resolveModel(model.name)
+
+  expect(candidates).toHaveLength(1)
+  expect(candidates[0].apiFlavor).toBe('responses')
+})
+
+test('a direct provider/model address takes the model flavor', async () => {
+  const [provider] = await db.insert(providers).values({
+    name: 'openai', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
+  }).returning()
+  await db.insert(catalogModels).values({
+    providerId: provider.id, modelId: 'gpt-5', apiFlavor: 'responses',
+  })
+
+  const { candidates } = await resolveModel('openai/gpt-5')
+
+  expect(candidates[0].apiFlavor).toBe('responses')
+})
+
+test('a direct address on a model with no flavor inherits the provider', async () => {
+  const [provider] = await db.insert(providers).values({
+    name: 'openai', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
+    apiFlavor: 'responses',
+  }).returning()
+  await db.insert(catalogModels).values({ providerId: provider.id, modelId: 'gpt-5' })
+
+  const { candidates } = await resolveModel('openai/gpt-5')
+
+  expect(candidates[0].apiFlavor).toBe('responses')
+})
+
+test('one provider can serve a chat model and a responses model', async () => {
+  const [model] = await db.insert(virtualModels).values({ name: 'house-model' }).returning()
+  const [provider] = await db.insert(providers).values({
+    name: 'p1', adapter: 'openai', credentials: encryptJson({ apiKey: 'sk-p1' }),
+  }).returning()
+
+  await db.insert(catalogModels).values([
+    { providerId: provider.id, modelId: 'cc-model' },
+    { providerId: provider.id, modelId: 'resp-model', apiFlavor: 'responses' },
+  ])
+  await db.insert(routeTargets).values([
+    { virtualModelId: model.id, providerId: provider.id, upstreamModel: 'cc-model', priority: 0 },
+    { virtualModelId: model.id, providerId: provider.id, upstreamModel: 'resp-model', priority: 1 },
+  ])
+
+  const { candidates } = await resolveModel('house-model')
+
+  expect(candidates.map((c) => c.apiFlavor)).toEqual(['chat_completions', 'responses'])
+})
+
+test('a candidate carries the model path overrides', async () => {
+  const { model } = await seedTargets({
+    targets: [{ name: 'p1', responsesPath: '/api/v2/responses' }],
+  })
+
+  const { candidates } = await resolveModel(model.name)
+
+  expect(candidates[0].pathOverrides).toEqual({
+    chatCompletionsPath: null,
+    responsesPath: '/api/v2/responses',
+    messagesPath: null,
+  })
+})
+
+test('a target outside the catalog carries no path overrides', async () => {
+  const { model } = await seedTargets({ targets: [{ name: 'p1' }] })
+
+  const { candidates } = await resolveModel(model.name)
+
+  expect(candidates[0].pathOverrides).toBeNull()
+})
+
+test('a direct address carries the model ceiling and its messages path', async () => {
+  const [provider] = await db.insert(providers).values({
+    name: 'anthropic-test',
+    adapter: 'openai_compatible',
+    baseUrl: 'https://api.anthropic.com/v1',
+    credentials: encryptJson({ apiKey: 'sk-test' }),
+  }).returning()
+  await db.insert(catalogModels).values({
+    providerId: provider.id,
+    modelId: 'claude-opus-5',
+    apiFlavor: 'anthropic_messages',
+    maxOutputTokens: 64000,
+    messagesPath: '/anthropic/v1/messages',
+  })
+
+  const { candidates } = await resolveModel('anthropic-test/claude-opus-5')
+  expect(candidates[0].apiFlavor).toBe('anthropic_messages')
+  expect(candidates[0].maxOutputTokens).toBe(64000)
+  expect(candidates[0].pathOverrides?.messagesPath).toBe('/anthropic/v1/messages')
+})
+
+test('a target naming an uncatalogued model has no ceiling and no overrides', async () => {
+  const { fast, model } = await seed()
+  await db.insert(routeTargets).values({
+    virtualModelId: model.id, providerId: fast.id, upstreamModel: 'never-catalogued',
+  })
+
+  const { candidates } = await resolveModel('house-model')
+  expect(candidates[0].maxOutputTokens).toBeNull()
+  expect(candidates[0].pathOverrides).toBeNull()
 })

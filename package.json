@@ -21,6 +21,7 @@
     "seed:refresh": "node scripts/refresh-seed.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
     "@base-ui/react": "1.7.0",
     "@google/genai": "2.17.0",
     "class-variance-authority": "0.7.1",

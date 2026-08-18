@@ -1,8 +1,9 @@
 import { db } from '@/lib/db'
-import { apiKeys, providers, routeTargets, virtualModels } from '@/lib/db/schema'
+import { apiKeys, catalogModels, providers, routeTargets, virtualModels } from '@/lib/db/schema'
 import { encryptJson } from '@/lib/crypto'
 import { generateApiKey } from '@/lib/gateway/auth'
 import type { ServiceTier } from '@/lib/admin/models'
+import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ProviderAdapter } from '@/lib/adapters/types'
 
 export interface SeedOptions {
@@ -62,6 +63,17 @@ export function chatRequest(body: unknown, apiKey: string | null) {
   })
 }
 
+export function responsesRequest(body: unknown, apiKey: string | null) {
+  return new Request('http://gateway.test/v1/responses', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+}
+
 export function fakeAdapterDeps(adapter: Partial<ProviderAdapter>) {
   return {
     createAdapter: () => ({
@@ -70,6 +82,12 @@ export function fakeAdapterDeps(adapter: Partial<ProviderAdapter>) {
       },
       async *chatStream() {
         throw new Error('chatStream not stubbed')
+      },
+      async respond() {
+        throw new Error('respond not stubbed')
+      },
+      async *respondStream() {
+        throw new Error('respondStream not stubbed')
       },
       ...adapter,
     }) as ProviderAdapter,
@@ -83,6 +101,12 @@ export interface TargetSpec {
   weight?: number
   enabled?: boolean
   serviceTier?: ServiceTier | null
+  /** Written onto the target's catalog_models row, not the provider or the
+   *  target: the model is what owns the flavor. */
+  apiFlavor?: ApiFlavor | null
+  chatCompletionsPath?: string | null
+  responsesPath?: string | null
+  messagesPath?: string | null
   adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
 }
 
@@ -131,6 +155,17 @@ export async function seedTargets(options: SeedTargetsOptions) {
       enabled: spec.enabled ?? true,
     }).returning()
 
+    if (spec.apiFlavor || spec.chatCompletionsPath || spec.responsesPath || spec.messagesPath) {
+      await db.insert(catalogModels).values({
+        providerId: provider.id,
+        modelId: `${spec.name}-model`,
+        apiFlavor: spec.apiFlavor ?? null,
+        chatCompletionsPath: spec.chatCompletionsPath ?? null,
+        responsesPath: spec.responsesPath ?? null,
+        messagesPath: spec.messagesPath ?? null,
+      })
+    }
+
     targets.push({ provider, target })
   }
 
@@ -159,6 +194,12 @@ export function fakeAdapterByProvider(
       },
       async *chatStream() {
         throw new Error(`chatStream not stubbed for ${provider.name}`)
+      },
+      async respond() {
+        throw new Error(`respond not stubbed for ${provider.name}`)
+      },
+      async *respondStream() {
+        throw new Error(`respondStream not stubbed for ${provider.name}`)
       },
       ...(byName[provider.name] ?? {}),
     }) as ProviderAdapter,

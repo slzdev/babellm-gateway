@@ -1,15 +1,19 @@
 import { beforeEach, expect, test, vi } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { providers, routeTargets, virtualModels } from '@/lib/db/schema'
+import {
+  catalogModels, providers, routeTargets, virtualModels,
+} from '@/lib/db/schema'
 import { encryptJson } from '@/lib/crypto'
 import type { DiscoveredModel, ProviderAdapter } from '@/lib/adapters/types'
 import { syncProvider } from '@/lib/catalog/sync'
 import type { RegistryLoad } from '@/lib/catalog/registry'
+import type { ApiFlavor } from '@/lib/api-flavors'
 import {
   addManualModel, clearOverrideField, deleteCatalogModel, listCatalog,
-  listPickerModels, setOverride, targetWarnings,
+  listPickerModels, setModelGateway, setOverride, targetGatewayViews, targetWarnings,
 } from '@/lib/admin/catalog'
-import { addRouteTarget } from '@/lib/admin/models'
+import { addRouteTarget, createVirtualModel } from '@/lib/admin/models'
 import { resetDb } from '../../helpers/db'
 
 beforeEach(async () => {
@@ -237,4 +241,151 @@ test('routing from a catalog row reuses addRouteTarget', async () => {
   // The catalog now reports the reference, which drives the "still routed" badge.
   const [after] = await listCatalog()
   expect(after.routeTargetCount).toBe(1)
+})
+
+test('gateway settings are stored on the model and leave the layers alone', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [before] = await listCatalog()
+  await setOverride(before.id, { contextWindow: 999 })
+
+  await setModelGateway(before.id, {
+    apiFlavor: 'responses',
+    chatCompletionsPath: '/api/chat',
+    responsesPath: '/api/v2/responses',
+  })
+
+  const [item] = await listCatalog()
+  expect(item.apiFlavor).toBe('responses')
+  expect(item.chatCompletionsPath).toBe('/api/chat')
+  expect(item.responsesPath).toBe('/api/v2/responses')
+  // These are not layer fields: the override and the value merged from it
+  // must come through untouched.
+  expect(item.override.contextWindow).toBe(999)
+  expect(item.contextWindow).toBe(999)
+})
+
+test('a blank path clears the override back to the provider default', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [before] = await listCatalog()
+  await setModelGateway(before.id, { responsesPath: '/api/v2/responses' })
+
+  await setModelGateway(before.id, { responsesPath: '' })
+
+  const [item] = await listCatalog()
+  expect(item.responsesPath).toBeNull()
+})
+
+test('an empty flavor clears back to inheriting the provider', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [before] = await listCatalog()
+  await setModelGateway(before.id, { apiFlavor: 'responses' })
+
+  await setModelGateway(before.id, { apiFlavor: null })
+
+  const [item] = await listCatalog()
+  expect(item.apiFlavor).toBeNull()
+})
+
+test('an unknown flavor is refused', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [item] = await listCatalog()
+
+  await expect(
+    setModelGateway(item.id, { apiFlavor: 'grpc' as ApiFlavor }),
+  ).rejects.toThrow('"grpc" is not a supported API flavor.')
+})
+
+test('a path that is really a URL is refused', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [item] = await listCatalog()
+
+  await expect(
+    setModelGateway(item.id, { responsesPath: 'https://api.example/v1/responses' }),
+  ).rejects.toThrow(/not a valid path/)
+})
+
+test('the list carries what a blank field would inherit', async () => {
+  const provider = await makeProvider('paths-p')
+  await db.update(providers)
+    .set({ apiFlavor: 'responses', config: JSON.stringify({ responsesPath: '/p/responses' }) })
+    .where(eq(providers.id, provider.id))
+  await db.insert(catalogModels).values({ providerId: provider.id, modelId: 'gpt-5' })
+
+  const [item] = await listCatalog({ search: 'gpt-5' })
+
+  expect(item.providerApiFlavor).toBe('responses')
+  expect(item.providerPaths.responsesPath).toBe('/p/responses')
+  expect(item.providerPaths.chatCompletionsPath).toBe('/chat/completions')
+})
+
+test('a target reports the flavor its model pins', async () => {
+  const provider = await makeProvider('gw-p')
+  await db.insert(catalogModels).values({
+    providerId: provider.id, modelId: 'o5-pro', apiFlavor: 'responses',
+  })
+  const model = await createVirtualModel({ name: 'house-model' })
+  const target = await addRouteTarget({
+    virtualModelId: model.id, providerId: provider.id, upstreamModel: 'o5-pro',
+  })
+
+  const views = await targetGatewayViews()
+
+  expect(views[target.id]).toEqual({ flavor: 'responses', source: 'model' })
+})
+
+test('a target whose model pins nothing reports the provider as the source', async () => {
+  const provider = await makeProvider('gw-q')
+  await db.update(providers).set({ apiFlavor: 'responses' })
+    .where(eq(providers.id, provider.id))
+  const model = await createVirtualModel({ name: 'house-model' })
+  const target = await addRouteTarget({
+    virtualModelId: model.id, providerId: provider.id, upstreamModel: 'not-catalogued',
+  })
+
+  const views = await targetGatewayViews()
+
+  expect(views[target.id]).toEqual({ flavor: 'responses', source: 'provider' })
+})
+
+test('the Anthropic flavor and a messages path are stored on the model', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [before] = await listCatalog()
+
+  await setModelGateway(before.id, {
+    apiFlavor: 'anthropic_messages',
+    messagesPath: 'anthropic/v1/messages/',
+  })
+
+  const [item] = await listCatalog()
+  expect(item.apiFlavor).toBe('anthropic_messages')
+  // parseProviderPath normalizes the missing leading slash and the trailing one.
+  expect(item.messagesPath).toBe('/anthropic/v1/messages')
+})
+
+test('a blank messages path clears back to inheriting the provider', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [before] = await listCatalog()
+  await setModelGateway(before.id, { messagesPath: '/m' })
+
+  await setModelGateway(before.id, { messagesPath: '' })
+
+  const [item] = await listCatalog()
+  expect(item.messagesPath).toBeNull()
+})
+
+test('a full URL in the messages path is refused rather than saved', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [before] = await listCatalog()
+
+  await expect(setModelGateway(before.id, { messagesPath: 'https://elsewhere.test/v1/messages' }))
+    .rejects.toThrow(/not a valid path/)
+
+  const [item] = await listCatalog()
+  expect(item.messagesPath).toBeNull()
+})
+
+test('the list item reports the provider messages path as the inherited placeholder', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [item] = await listCatalog()
+  expect(item.providerPaths.messagesPath).toBe('/messages')
 })

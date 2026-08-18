@@ -5,6 +5,8 @@ import {
   catalogModels, providers, routeTargets, virtualModels,
   type ProviderRow,
 } from '@/lib/db/schema'
+import type { ModelPathOverrides } from '@/lib/adapters/types'
+import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ServiceTier } from '@/lib/service-tiers'
 import { GatewayError } from './errors'
 import type { SelectableModel } from './select'
@@ -21,6 +23,17 @@ export interface Candidate {
   /** The tier this target pins `service_tier` to, or null to forward the
    * client's body untouched. */
   serviceTier: ServiceTier | null
+  /** The protocol this target's endpoint speaks. Resolved rather than
+   *  nullable: the routing loop must never have to work out where the
+   *  answer came from. */
+  apiFlavor: ApiFlavor
+  /** The paths this model is served on, or null when it names none. Only the
+   *  OpenAI-shaped adapters read them. */
+  pathOverrides: ModelPathOverrides | null
+  /** The model's catalogued output ceiling, or null when the catalog has
+   *  none. Read only by the Anthropic adapter, whose dialect requires
+   *  `max_tokens` to be stated even when the client sent none. */
+  maxOutputTokens: number | null
   /**
    * Whether an open breaker may demote this candidate.
    *
@@ -40,6 +53,23 @@ export interface ResolvedModel {
   // synthesize one without inventing a whole virtual_models row.
   model: SelectableModel
   candidates: Candidate[]
+}
+
+/** Null rather than an empty object when there is no row, so a candidate that
+ *  could not have overrides is distinguishable from one that has none set. */
+function modelPaths(
+  catalog: {
+    chatCompletionsPath: string | null
+    responsesPath: string | null
+    messagesPath: string | null
+  } | null,
+): ModelPathOverrides | null {
+  if (!catalog) return null
+  return {
+    chatCompletionsPath: catalog.chatCompletionsPath,
+    responsesPath: catalog.responsesPath,
+    messagesPath: catalog.messagesPath,
+  }
 }
 
 function modelNotFound(name: string): GatewayError {
@@ -82,9 +112,19 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
   if (!model) return null
 
   const rows = await db
-    .select({ target: routeTargets, provider: providers })
+    .select({ target: routeTargets, provider: providers, catalog: catalogModels })
     .from(routeTargets)
     .innerJoin(providers, eq(routeTargets.providerId, providers.id))
+    // Left, not inner: upstream_model is free text, so a target may name a
+    // model the catalog has never seen. That target keeps routing on the
+    // provider's settings rather than dropping out of the chain.
+    .leftJoin(
+      catalogModels,
+      and(
+        eq(catalogModels.providerId, routeTargets.providerId),
+        eq(catalogModels.modelId, routeTargets.upstreamModel),
+      ),
+    )
     .where(
       and(
         eq(routeTargets.virtualModelId, model.id),
@@ -105,13 +145,16 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
 
   return {
     model,
-    candidates: rows.map(({ target, provider }) => ({
+    candidates: rows.map(({ target, provider, catalog }) => ({
       targetId: target.id,
       provider,
       upstreamModel: target.upstreamModel,
       priority: target.priority,
       weight: target.weight,
       serviceTier: target.serviceTier,
+      apiFlavor: catalog?.apiFlavor ?? provider.apiFlavor,
+      pathOverrides: modelPaths(catalog),
+      maxOutputTokens: catalog?.maxOutputTokens ?? null,
       breakable: true,
       breakerThreshold: target.breakerThreshold,
       breakerCooldownSeconds: target.breakerCooldownSeconds,
@@ -165,10 +208,12 @@ async function resolveDirect(
       priority: 0,
       weight: 100,
       // No route_targets row stands behind a direct address, so there is
-      // nothing that could have configured a tier for it.
+      // nothing that could have configured a service tier or set up a circuit
+      // breaker for it. The flavor comes from the catalog row itself.
       serviceTier: null,
-      // No route_targets row stands behind a direct address, so there is
-      // nothing to break and nothing that could have configured a breaker.
+      apiFlavor: row.catalog.apiFlavor ?? row.provider.apiFlavor,
+      pathOverrides: modelPaths(row.catalog),
+      maxOutputTokens: row.catalog.maxOutputTokens,
       breakable: false,
       breakerThreshold: null,
       breakerCooldownSeconds: null,

@@ -14,6 +14,9 @@ function candidate(name: string): Candidate {
     priority: 0,
     weight: 100,
     serviceTier: null,
+    apiFlavor: 'chat_completions',
+    pathOverrides: null,
+    maxOutputTokens: null,
     breakable: true,
     breakerThreshold: null,
     breakerCooldownSeconds: null,
@@ -269,4 +272,16 @@ test('an unbreakable candidate is never recorded', async () => {
   await execute([direct], 'req_1', live, { ...deps, recordHealth }, async () => 'body')
 
   expect(calls).toEqual([])
+})
+
+test('execute passes the candidate ceiling to the adapter factory', async () => {
+  const createAdapter = vi.fn().mockReturnValue(stubAdapter)
+  const run = vi.fn().mockResolvedValue('body')
+  const chain = [{ ...candidate('a'), maxOutputTokens: 64000 }]
+
+  await execute(chain, 'req_1', live, { createAdapter }, run)
+
+  expect(createAdapter).toHaveBeenCalledWith(
+    expect.anything(), 'chat_completions', null, 64000,
+  )
 })

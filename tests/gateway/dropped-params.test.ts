@@ -57,6 +57,25 @@ test('a gemini target reports nothing for a request it can express fully', async
   expect(res.headers.get('x-babellm-dropped-params')).toBeNull()
 })
 
+test('a responses-flavored target reports what chat-to-responses cannot express', async () => {
+  // Regression test: droppedFor's flavor branch used to be Gemini-only, so a
+  // chat request served through chat-to-responses.ts (n, stop, logit_bias,
+  // ... — see chat-to-responses.ts's own UNMAPPABLE list) reported nothing,
+  // even though the translation silently drops those fields.
+  const { apiKey } = await seedTargets({ targets: [{ name: 'resp', apiFlavor: 'responses' }] })
+
+  const res = await handleChatCompletions(
+    chatRequest(
+      { model: 'house-model', messages: [{ role: 'user', content: 'hi' }], n: 3 },
+      apiKey,
+    ),
+    fakeAdapterByProvider({ resp: { chat: vi.fn().mockResolvedValue(completion('resp')) } }),
+  )
+
+  expect(res.status).toBe(200)
+  expect(res.headers.get('x-babellm-dropped-params')).toBe('n')
+})
+
 test('an openai target reports nothing, because it forwards the request as sent', async () => {
   const { apiKey } = await seedTargets({ targets: [{ name: 'cc' }] })
 
@@ -98,6 +117,23 @@ test('the header describes the target that actually served', async () => {
 
   expect(res.headers.get('x-babellm-provider')).toBe('cc')
   expect(res.headers.get('x-babellm-dropped-params')).toBeNull()
+})
+
+test('a pinned service tier is reported as dropped by an anthropic_messages model', async () => {
+  const { apiKey } = await seedTargets({
+    targets: [{
+      name: 'claude', adapter: 'openai_compatible',
+      apiFlavor: 'anthropic_messages', serviceTier: 'flex',
+    }],
+  })
+  const deps = fakeAdapterByProvider({ claude: { chat: async () => completion('claude') as never } })
+
+  const res = await handleChatCompletions(
+    chatRequest({ model: 'house-model', messages: [{ role: 'user', content: 'hi' }] }, apiKey),
+    deps,
+  )
+
+  expect(res.headers.get('x-babellm-dropped-params')?.split(',')).toContain('service_tier')
 })
 
 test('a streaming response carries the header too', async () => {

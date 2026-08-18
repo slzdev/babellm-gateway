@@ -2,6 +2,7 @@ import {
   bigint, boolean, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, unique,
   uniqueIndex, uuid, varchar,
 } from 'drizzle-orm/pg-core'
+import { API_FLAVORS } from '@/lib/api-flavors'
 import { SERVICE_TIERS } from '@/lib/service-tiers'
 
 export const adapterEnum = pgEnum('adapter', [
@@ -22,7 +23,7 @@ export const modelKindEnum = pgEnum('model_kind', [
 
 export const syncStatusEnum = pgEnum('sync_status', ['ok', 'failed', 'unsupported'])
 
-export const apiFlavorEnum = pgEnum('api_flavor', ['chat_completions', 'responses'])
+export const apiFlavorEnum = pgEnum('api_flavor', API_FLAVORS)
 
 export const serviceTierEnum = pgEnum('service_tier', SERVICE_TIERS)
 
@@ -33,11 +34,9 @@ export const providers = pgTable('providers', {
   baseUrl: text('base_url'),
   credentials: text('credentials').notNull(),
   config: text('config').notNull().default('{}'),
-  // Dead: the gateway speaks Chat Completions to every OpenAI-shaped provider
-  // and nothing reads this column any more. Kept declared — with the enum
-  // above — only so drizzle does not generate a DROP that a deployment still
-  // running the previous release would break on. Delete both in a later
-  // migration, once no live deployment predates that removal.
+  // Which upstream protocol this provider speaks. A column rather than a
+  // `config` key because it decides whether a request can be served at all,
+  // which is the same class of fact as `adapter` and `base_url`.
   apiFlavor: apiFlavorEnum('api_flavor').notNull().default('chat_completions'),
   enabled: boolean('enabled').notNull().default(true),
   lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
@@ -147,6 +146,17 @@ export const catalogModels = pgTable(
     supportsStreaming: boolean('supports_streaming'),
     modalities: jsonb('modalities').$type<{ input: string[]; output: string[] } | null>(),
     sources: jsonb('sources').$type<Record<string, string>>().notNull().default({}),
+
+    // How the gateway reaches this model, as opposed to what the model is.
+    // Columns rather than layers, for the reason on providers.apiFlavor: these
+    // decide whether a request can be served at all. sync() and merge() never
+    // touch them, so a re-sync cannot undo an operator's decision and a model
+    // that goes missing keeps its settings for when it comes back.
+    // NULL means "inherit the provider" in all four.
+    apiFlavor: apiFlavorEnum('api_flavor'),
+    chatCompletionsPath: text('chat_completions_path'),
+    responsesPath: text('responses_path'),
+    messagesPath: text('messages_path'),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

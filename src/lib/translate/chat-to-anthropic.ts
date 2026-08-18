@@ -1,0 +1,565 @@
+import type Anthropic from '@anthropic-ai/sdk'
+import type { ChatCompletion, ChatCompletionChunk, ProviderConfig } from '@/lib/adapters/types'
+import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
+
+/** What Anthropic requires when neither the client nor the catalog states a
+ *  ceiling. Deliberately modest: the fix for a model that needs more is its
+ *  catalog entry, not a larger constant every model would inherit. */
+const DEFAULT_MAX_TOKENS = 4096
+
+/** OpenAI's effort vocabulary where it differs from Anthropic's. Anything
+ *  absent here is forwarded verbatim, so a value either scale adds is
+ *  validated upstream instead of being silently remapped here — the same
+ *  decision the schema makes by typing reasoning_effort as a free string. */
+const EFFORT_ALIASES: Record<string, string> = { minimal: 'low' }
+
+function textOf(content: ChatMessage['content']): string {
+  if (typeof content === 'string') return content
+  if (!content) return ''
+  return content
+    .filter((part) => part.type === 'text')
+    .map((part) => (part as { text: string }).text)
+    .join('')
+}
+
+/** A JSON object, or null for anything else — an array and a bare scalar
+ *  included. Mirrors chat-to-gemini's helper of the same name. */
+function asObject(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+  } catch {
+    // Reported by droppedParams rather than thrown.
+  }
+  return null
+}
+
+/**
+ * Splits a data URL into the two fields a base64 image source needs. Returns
+ * null for anything that is not one, so an ordinary http url falls through to
+ * the by-reference form Anthropic also accepts — no fetching, which is what
+ * keeps this module pure.
+ */
+function dataUrl(url: string): { mediaType: string; data: string } | null {
+  // `[\s\S]*` rather than a dotAll `.*`: the project's target predates ES2018,
+  // where the `s` flag was added, and base64 data has no newlines to worry
+  // about matching regardless.
+  const match = /^data:([^;,]+);base64,([\s\S]*)$/.exec(url)
+  return match ? { mediaType: match[1], data: match[2] } : null
+}
+
+function imageBlock(url: string): Anthropic.ImageBlockParam {
+  const inline = dataUrl(url)
+  return inline
+    ? {
+        type: 'image',
+        source: {
+          type: 'base64',
+          // The SDK's media_type is a closed union of the four types Anthropic
+          // actually accepts; a data url's own claim is an arbitrary string, so
+          // it is cast rather than narrowed. Anthropic rejects an unsupported
+          // value itself — this module's job is to carry the client's claim
+          // through unchanged, not to pre-validate it.
+          media_type: inline.mediaType as Anthropic.Base64ImageSource['media_type'],
+          data: inline.data,
+        },
+      }
+    : { type: 'image', source: { type: 'url', url } }
+}
+
+function userBlocks(content: ChatMessage['content']): Anthropic.ContentBlockParam[] {
+  if (typeof content === 'string') {
+    return content.length > 0 ? [{ type: 'text', text: content }] : []
+  }
+  if (!content) return []
+
+  const blocks: Anthropic.ContentBlockParam[] = []
+  for (const part of content) {
+    if (part.type === 'text') {
+      const { text } = part as { text: string }
+      if (text.length > 0) blocks.push({ type: 'text', text })
+      continue
+    }
+    if (part.type === 'image_url') {
+      const url = (part as { image_url?: { url?: unknown } }).image_url?.url
+      if (typeof url === 'string' && url.length > 0) blocks.push(imageBlock(url))
+      continue
+    }
+    // Video and every other part type has no Messages equivalent.
+    // droppedParams reports it; throwing here would contradict the
+    // compatibility decision this module is built on.
+  }
+  return blocks
+}
+
+export function toMessages(
+  messages: ChatMessage[],
+): { messages: Anthropic.MessageParam[]; system: string } {
+  const out: Anthropic.MessageParam[] = []
+  const system: string[] = []
+
+  for (const message of messages) {
+    if (message.role === 'system' || message.role === 'developer') {
+      // Hoisted rather than carried as a user turn: `system` is where the
+      // Messages API keeps operator authority, and demoting the text to the
+      // untrusted channel is the failure mode. droppedParams reports the
+      // reorder when one happened.
+      const text = textOf(message.content)
+      if (text.length > 0) system.push(text)
+      continue
+    }
+
+    if (message.role === 'tool' || message.role === 'function') {
+      const id = message.tool_call_id
+      const text = textOf(message.content)
+      // No id means nothing for a tool_result to correlate to. Carried as
+      // plain user text instead of a dangling reference, exactly as the
+      // Gemini translator does with an uncorrelatable function response.
+      out.push(id
+        ? { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] }
+        : { role: 'user', content: [{ type: 'text', text: `[tool result] ${text}` }] })
+      continue
+    }
+
+    if (message.role === 'assistant') {
+      const blocks: Anthropic.ContentBlockParam[] = []
+      const text = textOf(message.content)
+      if (text.length > 0) blocks.push({ type: 'text', text })
+      for (const call of message.tool_calls ?? []) {
+        // The client's id travels back out unchanged, or a tool loop breaks
+        // silently on its second turn.
+        blocks.push({
+          type: 'tool_use',
+          id: call.id,
+          name: call.function.name,
+          input: asObject(call.function.arguments) ?? {},
+        })
+      }
+      if (blocks.length > 0) out.push({ role: 'assistant', content: blocks })
+      continue
+    }
+
+    const blocks = userBlocks(message.content)
+    if (blocks.length > 0) out.push({ role: 'user', content: blocks })
+  }
+
+  return { messages: out, system: system.join('\n\n') }
+}
+
+function toTools(
+  tools: NonNullable<ChatCompletionRequest['tools']>,
+): Anthropic.Tool[] {
+  return tools.map((tool) => ({
+    name: tool.function.name,
+    ...(tool.function.description ? { description: tool.function.description } : {}),
+    input_schema: (tool.function.parameters ?? { type: 'object' }) as Anthropic.Tool['input_schema'],
+  }))
+}
+
+function toToolChoice(
+  choice: ChatCompletionRequest['tool_choice'],
+  parallel: boolean | undefined,
+): Anthropic.ToolChoice | undefined {
+  // `disable_parallel_tool_use` has no home of its own — it rides the tool
+  // choice — so an explicit `parallel_tool_calls: false` has to synthesize a
+  // choice the client never sent.
+  const disable = parallel === false ? { disable_parallel_tool_use: true } : {}
+  if (choice === undefined) {
+    return parallel === false ? { type: 'auto', ...disable } : undefined
+  }
+  if (choice === 'none') return { type: 'none' }
+  if (choice === 'required') return { type: 'any', ...disable }
+  if (choice === 'auto') return { type: 'auto', ...disable }
+  return { type: 'tool', name: choice.function.name, ...disable }
+}
+
+function toStopSequences(stop: ChatCompletionRequest['stop']): string[] | undefined {
+  if (stop == null) return undefined
+  const list = (Array.isArray(stop) ? stop : [stop]).filter((value) => value.length > 0)
+  return list.length > 0 ? list : undefined
+}
+
+export function toMessagesRequest(
+  req: ChatCompletionRequest,
+  upstreamModel: string,
+  config: ProviderConfig = {},
+  maxOutputTokens: number | null = null,
+): Anthropic.MessageCreateParams {
+  const { messages, system } = toMessages(req.messages)
+  const stopSequences = toStopSequences(req.stop)
+  const toolChoice = toToolChoice(req.tool_choice, req.parallel_tool_calls)
+
+  // `none` is a client saying it does not want thinking, which is expressed
+  // by sending no thinking configuration at all rather than by an effort
+  // level Anthropic has no name for.
+  const effort = req.reasoning_effort && req.reasoning_effort !== 'none'
+    ? EFFORT_ALIASES[req.reasoning_effort] ?? req.reasoning_effort
+    : undefined
+  // Asking a model that does not reason for thoughts is an upstream error and
+  // the gateway cannot tell which kind of model it is addressing, so thinking
+  // is requested only when the client's own request proves it expects it, or
+  // an admin has said so for this provider — the same opt-in the Responses
+  // flavor defines, honoured here so one provider setting means one thing
+  // across adapters.
+  const wantsThinking = effort !== undefined
+    || (config.requestReasoningSummary === true && req.reasoning_effort !== 'none')
+
+  return {
+    model: upstreamModel,
+    // Required by this API and optional in Chat Completions, so a client that
+    // sent nothing still needs a number: the model's catalogued ceiling if it
+    // has one, and a floor of last resort if it does not.
+    max_tokens: req.max_completion_tokens ?? req.max_tokens ?? maxOutputTokens ?? DEFAULT_MAX_TOKENS,
+    messages,
+    ...(system ? { system } : {}),
+    ...(req.temperature == null ? {} : { temperature: req.temperature }),
+    ...(req.top_p == null ? {} : { top_p: req.top_p }),
+    ...(stopSequences ? { stop_sequences: stopSequences } : {}),
+    ...(req.tools?.length ? { tools: toTools(req.tools) } : {}),
+    ...(toolChoice ? { tool_choice: toolChoice } : {}),
+    ...(req.user ? { metadata: { user_id: req.user } } : {}),
+    ...(wantsThinking
+      ? {
+          // `display` is not decoration: the current models default to
+          // `omitted`, which streams thinking blocks whose text is empty. A
+          // gateway that left it out would relay silence.
+          thinking: { type: 'adaptive', display: 'summarized' },
+          ...(effort ? { output_config: { effort } } : {}),
+        }
+      : {}),
+    // Cast for the same reason chat-to-responses.ts casts its result: this
+    // object is assembled from optional spreads, and `adaptive` thinking and
+    // `output_config` are recent enough that pinning them to the SDK's
+    // current type would break the build on a version bump either way.
+  } as Anthropic.MessageCreateParams
+}
+
+type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } }
+
+/**
+ * Shared with the stream translator, which derives the same reason from the
+ * stop_reason carried on message_delta.
+ *
+ * Truncation and refusal outrank a present tool call, for the reason
+ * chat-to-gemini records: a call that finished on max_tokens may have
+ * truncated arguments, and reporting `tool_calls` would hide that from the
+ * client. `model_context_window_exceeded` is truncation too — the model ran
+ * out of context mid-response rather than finishing on its own — so it gets
+ * the same `length` priority over a present tool call as `max_tokens`.
+ */
+function finishReasonFor(
+  stopReason: string | null | undefined,
+  hasToolCalls: boolean,
+): 'stop' | 'length' | 'tool_calls' | 'content_filter' {
+  if (stopReason === 'max_tokens' || stopReason === 'model_context_window_exceeded') return 'length'
+  if (stopReason === 'refusal') return 'content_filter'
+  if (hasToolCalls || stopReason === 'tool_use') return 'tool_calls'
+  return 'stop'
+}
+
+interface AnthropicUsage {
+  input_tokens?: number | null
+  output_tokens?: number | null
+  cache_read_input_tokens?: number | null
+  cache_creation_input_tokens?: number | null
+}
+
+/**
+ * Cache tokens are input tokens that were read from or written to the cache,
+ * reported beside `input_tokens` rather than inside it. Leaving them out would
+ * under-report prompt tokens on every cached request, and cost is computed
+ * from these.
+ *
+ * There is no reasoning-token equivalent: Anthropic bills thinking inside
+ * output_tokens and reports no separate count, so completion_tokens_details is
+ * omitted rather than filled with a number nothing measured.
+ */
+function toUsage(usage: AnthropicUsage) {
+  const cached = usage.cache_read_input_tokens ?? 0
+  const promptTokens = (usage.input_tokens ?? 0) + cached + (usage.cache_creation_input_tokens ?? 0)
+  const completionTokens = usage.output_tokens ?? 0
+
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: promptTokens + completionTokens,
+    ...(cached > 0 ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
+  }
+}
+
+export function fromMessage(msg: Anthropic.Message, model: string): ChatCompletion {
+  let content = ''
+  let reasoning = ''
+  const toolCalls: ToolCall[] = []
+
+  for (const block of msg.content ?? []) {
+    if (block.type === 'text') content += block.text
+    else if (block.type === 'thinking') reasoning += block.thinking
+    else if (block.type === 'tool_use') {
+      toolCalls.push({
+        id: block.id,
+        type: 'function',
+        function: { name: block.name, arguments: JSON.stringify(block.input ?? {}) },
+      })
+    }
+    // redacted_thinking carries no readable text — it is an opaque blob the
+    // model can replay to itself — so there is nothing to surface.
+  }
+
+  return {
+    id: msg.id,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: msg.model ?? model,
+    choices: [{
+      index: 0,
+      message: {
+        role: 'assistant',
+        content: content.length > 0 ? content : null,
+        // Non-standard, and deliberately so: it is the convention DeepSeek,
+        // vLLM and OpenRouter already use, and the field responses-to-chat.ts
+        // reads when this crossing is followed by a second one.
+        ...(reasoning.length > 0 ? { reasoning_content: reasoning } : {}),
+        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+      },
+      finish_reason: finishReasonFor(msg.stop_reason, toolCalls.length > 0),
+      logprobs: null,
+    }],
+    ...(msg.usage ? { usage: toUsage(msg.usage) } : {}),
+  } as ChatCompletion
+}
+
+/**
+ * Merges only the usage fields an event actually reported into the running
+ * accumulator. `MessageDeltaUsage` types every field as `number | null`, and a
+ * `message_delta` that has nothing new to say about, say, `input_tokens` can
+ * carry it as an explicit `null` rather than omitting it — a plain
+ * `Object.assign` would let that null erase the real count `message_start`
+ * already established, under-reporting cost silently. Skipping null and
+ * undefined keeps whichever event last reported a real number in charge of
+ * that field.
+ */
+function mergeUsage(into: AnthropicUsage, from: Partial<AnthropicUsage> | undefined): void {
+  for (const [key, value] of Object.entries(from ?? {})) {
+    if (value != null) (into as Record<string, number>)[key] = value
+  }
+}
+
+/**
+ * Anthropic streams semantic events over content blocks, which is closer to
+ * the Responses stream than to Gemini's whole-response chunks. The state kept
+ * here is small: which content-block index is which tool call (a Chat
+ * Completions client indexes tool calls among themselves, while Anthropic
+ * indexes every block), and whether the role has been announced.
+ *
+ * `n > 1` needs no bookkeeping at all — the Messages API has no equivalent, so
+ * there is only ever choice 0.
+ */
+export async function* fromMessageStream(
+  events: AsyncIterable<Anthropic.RawMessageStreamEvent>,
+  req: ChatCompletionRequest,
+  model: string,
+): AsyncIterable<ChatCompletionChunk> {
+  const toolIndexes = new Map<number, number>()
+  const created = Math.floor(Date.now() / 1000)
+  let id = ''
+  let responseModel = model
+  let roleSent = false
+  let toolCount = 0
+  let sawToolUse = false
+  const usage: AnthropicUsage = {}
+
+  // Anthropic always reports usage, so include_usage needs no upstream
+  // parameter — only an opt-out honoured here.
+  const includeUsage = req.stream_options?.include_usage !== false
+
+  function chunk(
+    delta: Record<string, unknown>,
+    reason: string | null = null,
+  ): ChatCompletionChunk {
+    // The role rides the first chunk carrying real content rather than the
+    // first chunk of any kind, so the eager first-chunk pull in startStream
+    // keeps meaning "the upstream produced something".
+    const withRole = roleSent ? delta : { role: 'assistant', ...delta }
+    roleSent = true
+    return {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: responseModel,
+      choices: [{ index: 0, delta: withRole, finish_reason: reason }],
+    } as ChatCompletionChunk
+  }
+
+  for await (const event of events) {
+    switch (event.type) {
+      case 'message_start': {
+        id = event.message.id ?? ''
+        responseModel = event.message.model ?? model
+        mergeUsage(usage, event.message.usage)
+        break
+      }
+
+      case 'content_block_start': {
+        const block = event.content_block
+        if (block.type !== 'tool_use') break
+        sawToolUse = true
+        const index = toolCount++
+        toolIndexes.set(event.index, index)
+        yield chunk({
+          tool_calls: [{
+            index, id: block.id, type: 'function',
+            function: { name: block.name, arguments: '' },
+          }],
+        })
+        break
+      }
+
+      case 'content_block_delta': {
+        const delta = event.delta as { type: string; text?: string; thinking?: string; partial_json?: string }
+        if (delta.type === 'text_delta' && delta.text) {
+          yield chunk({ content: delta.text })
+        } else if (delta.type === 'thinking_delta' && delta.thinking) {
+          yield chunk({ reasoning_content: delta.thinking })
+        } else if (delta.type === 'input_json_delta') {
+          const index = toolIndexes.get(event.index)
+          if (index !== undefined) {
+            yield chunk({
+              tool_calls: [{ index, function: { arguments: delta.partial_json ?? '' } }],
+            })
+          }
+        }
+        // signature_delta is replay state the model verifies on a later turn,
+        // not content the client ever renders.
+        break
+      }
+
+      case 'message_delta': {
+        mergeUsage(usage, event.usage)
+        const stop = (event.delta as { stop_reason?: string | null }).stop_reason
+        if (stop) yield chunk({}, finishReasonFor(stop, sawToolUse))
+        break
+      }
+
+      // message_stop and ping carry nothing a Chat Completions client needs:
+      // the finish reason arrived on message_delta, and [DONE] is the
+      // protocol's own terminator, written by the SSE layer.
+      default:
+        break
+    }
+  }
+
+  if (includeUsage) {
+    yield {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: responseModel,
+      choices: [],
+      usage: toUsage(usage),
+    } as ChatCompletionChunk
+  }
+}
+
+/**
+ * Chat Completions parameters the Messages API cannot express, plus the
+ * structural degradations above. Dropped rather than rejected, for the reason
+ * chat-to-gemini records: SDKs and frameworks routinely send these meaning
+ * nothing by them, and 400ing would make the gateway unusable against this
+ * flavor without per-client configuration.
+ *
+ * `service_tier` earns its place here even though nothing in the request body
+ * asked for it: bodyFor() injects it when a route target pins one, and an
+ * operator who pinned a tier needs the header to say it did not cross.
+ */
+const UNMAPPABLE = [
+  'presence_penalty',
+  'frequency_penalty',
+  'logit_bias',
+  'logprobs',
+  'top_logprobs',
+  'seed',
+  'response_format',
+  'service_tier',
+  'n',
+] as const
+
+/** Values that mean "the default", which is also what this API does.
+ *  Reporting them would put a line in the header on nearly every request. */
+const INERT: Record<string, unknown> = {
+  logprobs: false,
+  n: 1,
+}
+
+function isInert(name: string, value: unknown): boolean {
+  if (name in INERT && value === INERT[name]) return true
+  if (value === '') return true
+  if (Array.isArray(value) && value.length === 0) return true
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0
+  ) {
+    return true
+  }
+  return false
+}
+
+function hoistsSystemMessage(messages: ChatMessage[]): boolean {
+  const firstTurn = messages.findIndex((m) => m.role !== 'system' && m.role !== 'developer')
+  if (firstTurn === -1) return false
+  return messages.slice(firstTurn).some((m) => m.role === 'system' || m.role === 'developer')
+}
+
+export function droppedParams(req: ChatCompletionRequest): string[] {
+  const dropped: string[] = []
+
+  for (const name of UNMAPPABLE) {
+    const value = (req as Record<string, unknown>)[name]
+    if (value === undefined || value === null) continue
+    if (isInert(name, value)) continue
+    dropped.push(name)
+  }
+
+  if (hoistsSystemMessage(req.messages)) dropped.push('system_message_hoisted')
+
+  const callIds = new Set<string>()
+  for (const message of req.messages) {
+    for (const call of message.tool_calls ?? []) callIds.add(call.id)
+  }
+
+  if (req.messages.some((m) =>
+    (m.role === 'tool' || m.role === 'function')
+    && (!m.tool_call_id || !callIds.has(m.tool_call_id)))) {
+    dropped.push('unmatched_tool_call_id')
+  }
+
+  if (req.messages.some((m) =>
+    (m.tool_calls ?? []).some((call) => asObject(call.function.arguments) === null))) {
+    dropped.push('malformed_tool_arguments')
+  }
+
+  // Only a user turn's image_url survives — userBlocks is what reads it.
+  // Every other role's content passes through textOf, which keeps text and
+  // silently drops everything else, images included, so an image on a
+  // system, assistant or tool message is exactly as unsupported here as a
+  // video would be on any role.
+  if (req.messages.some((m) =>
+    Array.isArray(m.content)
+    && m.content.some((part) =>
+      part.type !== 'text' && !(m.role === 'user' && part.type === 'image_url')))) {
+    dropped.push('unsupported_content_part')
+  }
+
+  // A strict schema is a guarantee about the tool arguments the model
+  // produces, and toTools carries only name, description and schema — so the
+  // guarantee does not cross, and a client relying on it should hear about it.
+  if (req.tools?.some((tool) => tool.function.strict === true)) {
+    dropped.push('strict_tool_schema')
+  }
+
+  return dropped
+}

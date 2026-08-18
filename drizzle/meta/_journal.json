@@ -57,6 +57,20 @@
       "when": 1786890426222,
       "tag": "0007_worthless_randall_flagg",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787046303024,
+      "tag": "0008_true_makkari",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787054676375,
+      "tag": "0009_spooky_ted_forrester",
+      "breakpoints": true
     }
   ]
 }

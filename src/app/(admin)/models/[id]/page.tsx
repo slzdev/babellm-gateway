@@ -9,12 +9,15 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
 import { PageHeader } from '@/components/admin/page-header'
-import { listPickerModels, targetWarnings, type TargetWarning } from '@/lib/admin/catalog'
+import {
+  listPickerModels, targetGatewayViews, targetWarnings, type TargetWarning,
+} from '@/lib/admin/catalog'
 import { targetBreakerViews, type TargetBreakerView } from '@/lib/admin/health'
 import { getVirtualModel } from '@/lib/admin/models'
 import { listProviders } from '@/lib/admin/providers'
 import { requireAdmin } from '@/lib/admin/session'
 import { resolveRoutingSettings } from '@/lib/routing-settings'
+import { API_FLAVOR_LABELS } from '@/lib/api-flavors'
 import { AddTargetDialog } from '../model-form'
 import { ModelSectionActions } from '../model-section-actions'
 import { TargetRowActions } from '../target-row-actions'
@@ -61,9 +64,10 @@ export default async function ModelDetailPage({
   const model = await getVirtualModel(id)
   if (!model) notFound()
 
-  const [providers, warnings, breakers, routingSettings] = await Promise.all([
+  const [providers, warnings, gatewayViews, breakers, routingSettings] = await Promise.all([
     listProviders(),
     targetWarnings(),
+    targetGatewayViews(),
     targetBreakerViews(model.targets),
     resolveRoutingSettings(),
   ])
@@ -130,6 +134,7 @@ export default async function ModelDetailPage({
                 <TableHead className="text-right">Priority</TableHead>
                 <TableHead className="text-right">Weight</TableHead>
                 <TableHead>Service tier</TableHead>
+                <TableHead>API flavor</TableHead>
                 <TableHead>Enabled</TableHead>
                 <TableHead>Health</TableHead>
                 <TableHead className="w-0"><span className="sr-only">Actions</span></TableHead>
@@ -151,6 +156,14 @@ export default async function ModelDetailPage({
                       : <span className="text-muted-foreground">—</span>}
                   </TableCell>
                   <TableCell>
+                    <Badge variant="outline">
+                      {API_FLAVOR_LABELS[gatewayViews[target.id]?.flavor ?? 'chat_completions']}
+                    </Badge>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      from {gatewayViews[target.id]?.source ?? 'provider'}
+                    </span>
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={target.enabled ? 'default' : 'secondary'}>
                       {target.enabled ? 'enabled' : 'disabled'}
                     </Badge>
@@ -170,7 +183,7 @@ export default async function ModelDetailPage({
               ))}
               {model.targets.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
                     No targets — requests to this model will fail with 503.
                   </TableCell>
                 </TableRow>

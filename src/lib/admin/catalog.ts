@@ -14,11 +14,16 @@ import { effectiveColumns } from '@/lib/catalog/sync'
 import type {
   CatalogFields, FieldSources, Modalities, ModelKind,
 } from '@/lib/catalog/types'
+import { API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
+import { parseProviderPath, resolveProviderPaths } from '@/lib/adapters/paths'
+import type { ProviderConfig } from '@/lib/adapters/types'
+import type { AdapterType } from '@/lib/adapters/credentials'
 
 export interface CatalogListItem {
   id: string
   providerId: string
   providerName: string
+  providerAdapter: AdapterType
   modelId: string
   canonicalKey: string | null
   origin: 'discovered' | 'manual'
@@ -36,6 +41,14 @@ export interface CatalogListItem {
   override: CatalogFields
   lastSeenAt: Date
   routeTargetCount: number
+  apiFlavor: ApiFlavor | null
+  chatCompletionsPath: string | null
+  responsesPath: string | null
+  messagesPath: string | null
+  /** What a blank field on this row would inherit, so the dialog can show it
+   *  as a placeholder instead of sending an operator to the Providers page. */
+  providerApiFlavor: ApiFlavor
+  providerPaths: { chatCompletionsPath: string; responsesPath: string; messagesPath: string }
 }
 
 export interface CatalogFilter {
@@ -52,12 +65,16 @@ function toNumber(value: string | null): number | null {
 function toItem(
   row: CatalogModelRow,
   providerName: string,
+  providerAdapter: AdapterType,
+  providerApiFlavor: ApiFlavor,
+  providerPaths: { chatCompletionsPath: string; responsesPath: string; messagesPath: string },
   routeTargetCount: number,
 ): CatalogListItem {
   return {
     id: row.id,
     providerId: row.providerId,
     providerName,
+    providerAdapter,
     modelId: row.modelId,
     canonicalKey: row.canonicalKey,
     origin: row.origin,
@@ -75,6 +92,12 @@ function toItem(
     override: row.override as CatalogFields,
     lastSeenAt: row.lastSeenAt,
     routeTargetCount,
+    apiFlavor: row.apiFlavor,
+    chatCompletionsPath: row.chatCompletionsPath,
+    responsesPath: row.responsesPath,
+    messagesPath: row.messagesPath,
+    providerApiFlavor,
+    providerPaths,
   }
 }
 
@@ -86,7 +109,13 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
   ].filter((c) => c !== undefined)
 
   const rows = await db
-    .select({ model: catalogModels, providerName: providers.name })
+    .select({
+      model: catalogModels,
+      providerName: providers.name,
+      providerAdapter: providers.adapter,
+      providerApiFlavor: providers.apiFlavor,
+      providerConfig: providers.config,
+    })
     .from(catalogModels)
     .innerJoin(providers, eq(catalogModels.providerId, providers.id))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
@@ -97,15 +126,23 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
 
   return rows
     .filter(({ model }) => !search || model.modelId.toLowerCase().includes(search))
-    .map(({ model, providerName }) =>
-      toItem(
+    .map(({
+      model, providerName, providerAdapter, providerApiFlavor, providerConfig,
+    }) => {
+      const { chatCompletions, responses, messages } = resolveProviderPaths(
+        JSON.parse(providerConfig) as ProviderConfig,
+      )
+      return toItem(
         model,
         providerName,
+        providerAdapter,
+        providerApiFlavor,
+        { chatCompletionsPath: chatCompletions, responsesPath: responses, messagesPath: messages },
         targets.filter(
           (t) => t.providerId === model.providerId && t.upstreamModel === model.modelId,
         ).length,
-      ),
-    )
+      )
+    })
 }
 
 /** Re-run the merge for one row after its override changed. */
@@ -294,4 +331,88 @@ export async function targetWarnings(): Promise<Record<string, TargetWarning>> {
   }
 
   return warnings
+}
+
+export interface ModelGatewayInput {
+  apiFlavor?: ApiFlavor | null
+  chatCompletionsPath?: string | null
+  responsesPath?: string | null
+  messagesPath?: string | null
+}
+
+/**
+ * Writes how the gateway reaches one model. A plain column update: these are
+ * not layer fields, so there is no re-merge and `override` is left exactly as
+ * it was. A blank path clears back to the provider's, which is what the
+ * dialog's placeholder promises.
+ */
+export async function setModelGateway(
+  id: string,
+  input: ModelGatewayInput,
+): Promise<void> {
+  await requireRow(id)
+
+  const patch: Record<string, unknown> = { updatedAt: new Date() }
+
+  // `null` is a value here — "inherit the provider" — not an omission. Only
+  // `undefined` leaves a field alone.
+  if (input.apiFlavor !== undefined) {
+    if (input.apiFlavor !== null && !API_FLAVORS.includes(input.apiFlavor)) {
+      throw new Error(`"${input.apiFlavor}" is not a supported API flavor.`)
+    }
+    patch.apiFlavor = input.apiFlavor
+  }
+  // parseProviderPath returns null for a blank value and throws on a shape
+  // that would fail silently upstream, so validation and clearing are the
+  // same call — the same one the provider form goes through.
+  if (input.chatCompletionsPath !== undefined) {
+    patch.chatCompletionsPath = parseProviderPath(input.chatCompletionsPath ?? '')
+  }
+  if (input.responsesPath !== undefined) {
+    patch.responsesPath = parseProviderPath(input.responsesPath ?? '')
+  }
+  if (input.messagesPath !== undefined) {
+    patch.messagesPath = parseProviderPath(input.messagesPath ?? '')
+  }
+
+  await db.update(catalogModels).set(patch).where(eq(catalogModels.id, id))
+}
+
+export interface TargetGatewayView {
+  flavor: ApiFlavor
+  /** Which row decided it, so the screen can say where to go and change it. */
+  source: 'model' | 'provider'
+}
+
+/**
+ * The effective flavor of every route target, keyed by target id. A sibling of
+ * targetWarnings: the virtual-model page configures routing but no longer owns
+ * the flavor, and an operator must still be able to see what a target will do.
+ */
+export async function targetGatewayViews(): Promise<Record<string, TargetGatewayView>> {
+  const targets = await db.select().from(routeTargets)
+  if (targets.length === 0) return {}
+
+  const providerRows = await db.select().from(providers)
+  const catalogRows = await db.select().from(catalogModels)
+
+  const byProvider = new Map(providerRows.map((row) => [row.id, row]))
+  const byKey = new Map(
+    catalogRows.map((row) => [`${row.providerId}:${row.modelId}`, row]),
+  )
+
+  const views: Record<string, TargetGatewayView> = {}
+  for (const target of targets) {
+    const model = byKey.get(`${target.providerId}:${target.upstreamModel}`)
+    if (model?.apiFlavor) {
+      views[target.id] = { flavor: model.apiFlavor, source: 'model' }
+      continue
+    }
+    views[target.id] = {
+      flavor: byProvider.get(target.providerId)?.apiFlavor ?? 'chat_completions',
+      source: 'provider',
+    }
+  }
+
+  return views
 }

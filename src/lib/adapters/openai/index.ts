@@ -4,23 +4,26 @@ import type {
   AttemptContext,
   ChatCompletion,
   ChatCompletionChunk,
-  ProviderAdapter,
+  ChatOnlyAdapter,
   ProviderRuntime,
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { toProviderError } from './errors'
-import { resolveProviderPaths } from './paths'
+import { resolveRequestPaths } from '../paths'
 
 // Re-exported because tests and the registry import the factory type from the
 // adapter module rather than reaching past it.
 export type { OpenAIClientFactory }
 
+const FLAVOR_HINT =
+  'If this endpoint implements the Responses API or the Anthropic Messages API instead, set the model\'s API flavor accordingly on the Catalog page — or the provider\'s, if every model should follow it.'
+
 export function createOpenAIAdapter(
   runtime: ProviderRuntime,
   createClient?: OpenAIClientFactory,
-): ProviderAdapter {
+): ChatOnlyAdapter {
   const client = createOpenAIClient(runtime, createClient)
-  const paths = resolveProviderPaths(runtime.config)
+  const paths = resolveRequestPaths(runtime.config, runtime.baseUrl)
 
   function upstreamParams(req: ChatCompletionRequest, ctx: AttemptContext) {
     return { ...req, model: ctx.upstreamModel }
@@ -39,7 +42,7 @@ export function createOpenAIAdapter(
           path: paths.chatCompletions,
         })
       } catch (err) {
-        throw toProviderError(err)
+        throw toProviderError(err, FLAVOR_HINT)
       }
     },
 
@@ -66,13 +69,13 @@ export function createOpenAIAdapter(
           path: paths.chatCompletions,
         })
       } catch (err) {
-        throw toProviderError(err)
+        throw toProviderError(err, FLAVOR_HINT)
       }
 
       try {
         for await (const chunk of stream) yield chunk
       } catch (err) {
-        throw toProviderError(err)
+        throw toProviderError(err, FLAVOR_HINT)
       }
     },
 

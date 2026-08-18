@@ -9,7 +9,7 @@ import type {
   AttemptContext,
   ChatCompletion,
   ChatCompletionChunk,
-  ProviderAdapter,
+  ChatOnlyAdapter,
   ProviderRuntime,
 } from '../types'
 import { createGeminiClient, listModels, type GeminiClientFactory } from './client'
@@ -29,7 +29,7 @@ export type { GeminiClientFactory }
 export function createGeminiAdapter(
   runtime: ProviderRuntime,
   createClient?: GeminiClientFactory,
-): ProviderAdapter {
+): ChatOnlyAdapter {
   const client = createGeminiClient(runtime, createClient)
 
   /**

@@ -2,9 +2,12 @@ import type OpenAI from 'openai'
 import type { AdapterType } from '@/lib/adapters/credentials'
 import type { CatalogFields } from '@/lib/catalog/types'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
+import type { ResponsesRequest } from '@/lib/schemas/responses'
 
 export type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion
 export type ChatCompletionChunk = OpenAI.Chat.Completions.ChatCompletionChunk
+export type ResponsesResult = OpenAI.Responses.Response
+export type ResponseStreamEvent = OpenAI.Responses.ResponseStreamEvent
 
 export interface ProviderConfig {
   /** Skip sending stream_options.include_usage — some clones reject it. */
@@ -26,14 +29,31 @@ export interface ProviderConfig {
   requestReasoningSummary?: boolean
   /**
    * Per-endpoint path overrides, for clones that hang the OpenAI shape off
-   * somewhere other than where the SDK looks for it. Each is joined onto the
-   * base URL the same way the default is, so the base URL keeps carrying
-   * whatever prefix (`/v1`) it carries today. Absent means the default —
-   * see DEFAULT_PATHS in ./openai/paths.
+   * somewhere other than where the SDK looks for it. Each names the whole path
+   * on the base URL's host, replacing whatever prefix (`/v1`) the base URL
+   * carries; only the default, meaning absent, is appended to the base URL as
+   * it stands — see DEFAULT_PATHS and resolveRequestPaths in ./paths.
    */
   modelsPath?: string
   chatCompletionsPath?: string
+  responsesPath?: string
+  messagesPath?: string
   [key: string]: unknown
+}
+
+/**
+ * What one model contributes to adapter construction. The keys are the
+ * `ProviderConfig` keys deliberately: `createAdapter` folds these over the
+ * provider's config, so the adapters go on reading one object and never learn
+ * that a model can carry paths of its own.
+ *
+ * `null` means "this model names no path", which is not the same as "no path"
+ * — it must leave the provider's value standing.
+ */
+export interface ModelPathOverrides {
+  chatCompletionsPath?: string | null
+  responsesPath?: string | null
+  messagesPath?: string | null
 }
 
 export interface ProviderRuntime {
@@ -79,4 +99,22 @@ export interface ProviderAdapter {
    * sync reports `unsupported` rather than failing.
    */
   listModels?(ctx: ListModelsContext): Promise<DiscoveredModel[]>
+  /**
+   * Every adapter must be able to serve a Responses request: either
+   * natively, or through `withRespondViaChat` (see adapters/wrappers.ts),
+   * which every chat-only adapter is wrapped in at construction time.
+   */
+  respond(req: ResponsesRequest, ctx: AttemptContext): Promise<ResponsesResult>
+  respondStream(
+    req: ResponsesRequest,
+    ctx: AttemptContext,
+  ): AsyncIterable<ResponseStreamEvent>
 }
+
+/**
+ * What `createOpenAIAdapter` and `createGeminiAdapter` build: chat-native,
+ * with no opinion about the Responses API. Each is upgraded to a full
+ * `ProviderAdapter` by `withRespondViaChat` in registry.ts, which is the only
+ * place that is allowed to know these two methods are missing.
+ */
+export type ChatOnlyAdapter = Omit<ProviderAdapter, 'respond' | 'respondStream'>

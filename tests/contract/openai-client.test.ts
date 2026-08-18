@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
-import type { ProviderAdapter } from '@/lib/adapters/types'
-import { seedGateway } from '../helpers/gateway'
+import { handleResponses } from '@/lib/gateway/responses-handler'
+import { createAnthropicAdapter } from '@/lib/adapters/anthropic'
+import { withRespondViaChat } from '@/lib/adapters/wrappers'
+import type { ProviderAdapter, ProviderRuntime } from '@/lib/adapters/types'
+import { seedGateway, seedTargets } from '../helpers/gateway'
 import { resetDb } from '../helpers/db'
 import fixture from '../fixtures/openai-tool-call-stream.json'
 
@@ -26,7 +29,15 @@ const completion = {
   usage: { prompt_tokens: 40, completion_tokens: 12, total_tokens: 52 },
 }
 
-function gatewayClient(apiKey: string, adapter: Partial<ProviderAdapter>) {
+// `handler` defaults to the chat ingress, which every pre-existing test here
+// exercises; the Responses contract tests below pass handleResponses instead,
+// so both dialects can drive the same real OpenAI SDK against a fetch that
+// never leaves the process.
+function gatewayClient(
+  apiKey: string,
+  adapter: Partial<ProviderAdapter>,
+  handler: (request: Request, deps: { createAdapter: () => ProviderAdapter }) => Promise<Response> = handleChatCompletions,
+) {
   const deps = {
     createAdapter: () => ({
       async chat() { throw new Error('chat not stubbed') },
@@ -40,8 +51,32 @@ function gatewayClient(apiKey: string, adapter: Partial<ProviderAdapter>) {
     baseURL: 'http://gateway.test/v1',
     maxRetries: 0,
     fetch: ((url: string, init?: RequestInit) =>
-      handleChatCompletions(new Request(url, init), deps)) as unknown as typeof fetch,
+      handler(new Request(url, init), deps)) as unknown as typeof fetch,
   })
+}
+
+function runtime(name: string): ProviderRuntime {
+  return {
+    id: name, name, adapter: 'openai', baseUrl: 'https://api.anthropic.com/v1',
+    credentials: { apiKey: 'sk-test' }, config: {},
+  }
+}
+
+function anthropicMessage(text: string) {
+  return {
+    id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5',
+    content: [{ type: 'text', text }], stop_reason: 'end_turn',
+    usage: { input_tokens: 3, output_tokens: 2 },
+  }
+}
+
+function response(id: string) {
+  return {
+    id, object: 'response', created_at: 1, model: 'up-model', status: 'completed',
+    output: [{ type: 'message', id: 'msg_1', role: 'assistant', status: 'completed',
+      content: [{ type: 'output_text', text: 'hi', annotations: [] }] }],
+    usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
+  }
 }
 
 beforeEach(async () => {
@@ -151,4 +186,53 @@ test('the SDK surfaces an upstream rate limit as RateLimitError', async () => {
       messages: [{ role: 'user', content: 'hi' }],
     }),
   ).rejects.toBeInstanceOf(OpenAI.RateLimitError)
+})
+
+test('the SDK parses a Chat Completions response from an anthropic_messages model', async () => {
+  const { apiKey } = await seedTargets({
+    targets: [{ name: 'claude', adapter: 'openai_compatible', apiFlavor: 'anthropic_messages' }],
+  })
+  const create = vi.fn().mockResolvedValue(anthropicMessage('from anthropic'))
+  const factory = vi.fn().mockReturnValue({ messages: { create } })
+  const adapter = withRespondViaChat(
+    createAnthropicAdapter(runtime('claude'), null, factory as never),
+    'claude',
+  )
+  const client = gatewayClient(apiKey, adapter)
+
+  const result = await client.chat.completions.create({
+    model: 'house-model',
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+
+  expect(result.choices[0].message.content).toBe('from anthropic')
+})
+
+test('the openai SDK can call responses.create against the gateway', async () => {
+  const { apiKey } = await seedTargets({ targets: [{ name: 'p1', apiFlavor: 'responses' }] })
+  const client = gatewayClient(apiKey, { respond: async () => response('resp_1') as never }, handleResponses)
+
+  const result = await client.responses.create({ model: 'house-model', input: 'hi' })
+
+  expect(result.id).toBe('resp_1')
+  expect(result.output[0].type).toBe('message')
+})
+
+test('the openai SDK can stream responses.create against the gateway', async () => {
+  const { apiKey } = await seedTargets({ targets: [{ name: 'p1', apiFlavor: 'responses' }] })
+  const client = gatewayClient(apiKey, {
+    respondStream: (async function* () {
+      yield { type: 'response.created', sequence_number: 0, response: { id: 'resp_1', model: 'up', output: [] } }
+      yield { type: 'response.output_text.delta', sequence_number: 1, delta: 'hi' }
+      yield { type: 'response.completed', sequence_number: 2, response: { id: 'resp_1', model: 'up', output: [] } }
+    }) as never,
+  }, handleResponses)
+
+  const seen: number[] = []
+  for await (const event of await client.responses.create({ model: 'house-model', input: 'hi', stream: true })) {
+    seen.push((event as { sequence_number: number }).sequence_number)
+  }
+
+  // The SDK parses our framing, and sequence numbers arrive in order.
+  expect(seen).toEqual([0, 1, 2])
 })

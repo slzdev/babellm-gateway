@@ -6,11 +6,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { ApiFlavorSelect } from '@/components/admin/api-flavor-select'
 import { FormDialog } from '@/components/admin/form-dialog'
 import type { CatalogListItem } from '@/lib/admin/catalog'
+import { MODEL_PATH_FIELDS } from '@/lib/adapters/paths'
 import {
   addManualModelAction, clearOverrideAction, routeToModelAction,
-  saveRegistrySettingsAction, setOverrideAction, type ActionState,
+  saveRegistrySettingsAction, setModelGatewayAction, setOverrideAction, type ActionState,
 } from './actions'
 
 function Message({ state }: { state: ActionState | undefined }) {
@@ -107,6 +109,58 @@ export function OverrideDialog({
           </div>
         ))}
       </div>
+    </FormDialog>
+  )
+}
+
+export function GatewaySettingsDialog({
+  item, open, onOpenChange,
+}: {
+  item: CatalogListItem
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <FormDialog<ActionState>
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`Gateway settings for ${item.modelId}`}
+      description={`How the gateway calls this model on ${item.providerName}, whichever route reaches it. Blank inherits the provider.`}
+      action={setModelGatewayAction}
+      submitLabel="Save settings"
+      successMessage="Gateway settings saved."
+    >
+      <input type="hidden" name="id" value={item.id} />
+
+      <div className="space-y-2">
+        <Label htmlFor={`gateway-flavor-${item.id}`}>API flavor</Label>
+        <ApiFlavorSelect
+          id={`gateway-flavor-${item.id}`}
+          defaultValue={item.apiFlavor}
+          providerDefault={item.providerApiFlavor}
+        />
+        <p className="text-xs text-muted-foreground">
+          Which endpoint this model is called on. Only meaningful for OpenAI-shaped providers.
+        </p>
+      </div>
+
+      {MODEL_PATH_FIELDS.map((field) => (
+        <div key={field.name} className="space-y-2">
+          <Label htmlFor={`gateway-${field.name}-${item.id}`}>{field.label}</Label>
+          <Input
+            id={`gateway-${field.name}-${item.id}`}
+            name={field.name}
+            defaultValue={item[field.name] ?? ''}
+            placeholder={item.providerPaths[field.name]}
+          />
+          <p className="text-xs text-muted-foreground">{field.help}</p>
+        </div>
+      ))}
+
+      <p className="text-xs text-muted-foreground">
+        A path set here replaces everything after the provider&apos;s host, including any
+        prefix its base URL carries.
+      </p>
     </FormDialog>
   )
 }

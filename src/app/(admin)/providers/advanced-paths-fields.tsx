@@ -7,7 +7,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import type { AdapterType } from '@/lib/adapters/credentials'
-import { PATH_FIELDS } from '@/lib/adapters/openai/paths'
+import { PATH_FIELDS } from '@/lib/adapters/paths'
 
 /**
  * Per-endpoint path overrides, for a clone that hangs the OpenAI shape off
@@ -50,8 +50,10 @@ export function AdvancedPathsFields({ idPrefix, adapter, values = {} }: {
       */}
       <CollapsibleContent keepMounted className="space-y-3 border-t px-3 py-3">
         <p className="text-xs text-muted-foreground">
-          Each path is appended to the base URL, which keeps carrying its own prefix.
-          Leave a field blank to use the default.
+          A path you set replaces everything after the host: a base URL of{' '}
+          <code>https://example.com/gwt/v1</code> with <code>/openai/v1/models</code>{' '}
+          asks for <code>https://example.com/openai/v1/models</code>. Leave a field blank
+          for the default, which is appended to the base URL as it stands.
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
           {PATH_FIELDS.map((field) => (

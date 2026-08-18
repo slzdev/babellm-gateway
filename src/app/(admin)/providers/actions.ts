@@ -6,9 +6,10 @@ import {
   createProvider, deleteProvider, getProviderConfig, testProvider, updateProvider,
 } from '@/lib/admin/providers'
 import { adapterTypes, type AdapterType } from '@/lib/adapters/credentials'
+import { API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
 import {
   PATH_FIELDS, mergeProviderPaths, type ProviderPathInput,
-} from '@/lib/adapters/openai/paths'
+} from '@/lib/adapters/paths'
 import { parseRegistryNamespace } from '@/lib/catalog/config'
 import { syncProvider, type SyncResult } from '@/lib/catalog/sync'
 
@@ -40,10 +41,10 @@ function credentialsFrom(formData: FormData, adapter: AdapterType) {
 }
 
 /**
- * The path fields are rendered only for OpenAI-shaped adapters, so an absent
- * one means "not applicable". Only what the form actually submitted is
- * forwarded; mergeProviderPaths reads a missing key as "leave it alone" and a
- * submitted blank as "clear the override".
+ * The path fields are rendered under the same condition as the flavor field, so
+ * an absent one means "not applicable". Only what the form actually submitted
+ * is forwarded; mergeProviderPaths reads a missing key as "leave it alone" and
+ * a submitted blank as "clear the override".
  */
 function pathInputFrom(formData: FormData): ProviderPathInput {
   const input: ProviderPathInput = {}
@@ -52,6 +53,19 @@ function pathInputFrom(formData: FormData): ProviderPathInput {
     if (typeof value === 'string') input[field.name] = value
   }
   return input
+}
+
+/**
+ * The flavor field is only rendered for OpenAI-shaped adapters, so an absent
+ * value means "not applicable" rather than "cleared" — createProvider defaults
+ * it and updateProvider keeps whatever is stored.
+ */
+function apiFlavorFrom(formData: FormData): ApiFlavor | undefined {
+  const value = formData.get('apiFlavor')
+  if (typeof value !== 'string') return undefined
+  return (API_FLAVORS as readonly string[]).includes(value)
+    ? (value as ApiFlavor)
+    : undefined
 }
 
 export async function createProviderAction(
@@ -86,6 +100,7 @@ export async function createProviderAction(
       baseUrl: (formData.get('baseUrl') as string) || null,
       credentials: credentialsFrom(formData, adapter),
       config,
+      apiFlavor: apiFlavorFrom(formData),
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not create the provider.' }
@@ -190,6 +205,7 @@ export async function updateProviderAction(
       // never sent the current secret, so a blank field cannot mean "erase".
       ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
       config,
+      apiFlavor: apiFlavorFrom(formData),
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not update the provider.' }

@@ -3,13 +3,14 @@
 import { revalidatePath } from 'next/cache'
 import { requireAdmin } from '@/lib/admin/session'
 import {
-  addManualModel, clearOverrideField, deleteCatalogModel, setOverride,
+  addManualModel, clearOverrideField, deleteCatalogModel, setModelGateway, setOverride,
 } from '@/lib/admin/catalog'
 import { addRouteTarget, createVirtualModel } from '@/lib/admin/models'
 import { setCatalogSettings } from '@/lib/settings'
 import { loadRegistry } from '@/lib/catalog/registry'
 import { syncAllProviders } from '@/lib/catalog/sync'
 import { modelKinds, type CatalogFields } from '@/lib/catalog/types'
+import type { ApiFlavor } from '@/lib/api-flavors'
 
 export interface ActionState {
   error?: string
@@ -115,6 +116,38 @@ export async function clearOverrideAction(
   }
   revalidatePath('/catalog')
   return {}
+}
+
+/**
+ * "(inherit)" submits an empty string, and NULL is what makes a model follow
+ * its provider. Anything non-empty goes through unvalidated on purpose: the
+ * admin layer owns the enum check, so there is one place that can reject an
+ * unknown flavor.
+ */
+function apiFlavorValue(value: FormDataEntryValue | null): ApiFlavor | null {
+  const flavor = String(value ?? '')
+  return flavor === '' ? null : (flavor as ApiFlavor)
+}
+
+export async function setModelGatewayAction(
+  _prev: ActionState | undefined,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin()
+  try {
+    await setModelGateway(String(formData.get('id')), {
+      apiFlavor: apiFlavorValue(formData.get('apiFlavor')),
+      chatCompletionsPath: String(formData.get('chatCompletionsPath') ?? ''),
+      responsesPath: String(formData.get('responsesPath') ?? ''),
+      messagesPath: String(formData.get('messagesPath') ?? ''),
+    })
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Could not save the gateway settings.',
+    }
+  }
+  revalidatePath('/catalog')
+  return { success: 'Gateway settings saved.' }
 }
 
 export async function addManualModelAction(
