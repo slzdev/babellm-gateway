@@ -1,11 +1,11 @@
 import type { ResponseStreamEvent, ResponsesResult } from '@/lib/adapters/types'
 import type { LogUsage } from '@/lib/logs/types'
 import { droppedParams, toChatRequest } from '@/lib/translate/responses-to-chat'
-import { droppedParams as geminiDroppedParams } from '@/lib/translate/chat-to-gemini'
 import { responsesRequestSchema, type ResponsesRequest } from '@/lib/schemas/responses'
 import type { ClassifiedError } from '../errors'
 import { parseWith, type Ingress } from '../handler'
 import { newResponseId, rewriteResponse } from '../identity'
+import { droppedForChat } from './dropped'
 import type { StreamCapture, StreamProtocol } from '../sse'
 import { usageFromResponses } from '../usage'
 
@@ -73,18 +73,11 @@ export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, Respon
   modelOf: (req) => req.model,
   isStream: (req) => req.stream === true,
   droppedFor: (candidate, req) => {
-    // Gemini's own adapter translates regardless of target flavor — it has no
-    // native Responses endpoint to be "native" on — so it must be checked
-    // before the flavor short-circuit below, mirroring chatIngress.droppedFor.
-    // Checking flavor first would report nothing for a Gemini candidate pinned
-    // to `responses`, even though it still drops what Gemini cannot express.
-    if (candidate.provider.adapter === 'gemini') {
-      return [...droppedParams(req), ...geminiDroppedParams(toChatRequest(req))]
-    }
-    // A Responses-native target expresses everything it is sent; only the
-    // crossing path loses anything.
-    if (candidate.apiFlavor === 'responses') return []
-    return droppedParams(req)
+    // A Responses-native candidate expresses everything it is sent; every
+    // other one loses whatever responses-to-chat cannot carry, plus whatever
+    // the candidate itself cannot express of the result.
+    if (candidate.apiFlavor === 'responses' && candidate.provider.adapter !== 'gemini') return []
+    return [...droppedParams(req), ...droppedForChat(candidate, toChatRequest(req))]
   },
   run: (adapter, ctx, req) => adapter.respond(req, ctx),
   runStream: (adapter, ctx, req) => adapter.respondStream(req, ctx),
