@@ -89,7 +89,13 @@ export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, Respon
   newIdentityId: newResponseId,
   stream: responsesStreamProtocol,
   captureResponse: (identity, capture, outcome) => ({
-    id: identity.id,
+    // No `id` field: `identity.id` is a `resp_<uuid>` the handler minted for
+    // this ingress, but this ingress never rewrites response ids (unlike
+    // chat's), so the client actually received the upstream id instead.
+    // Logging `identity.id` here would stamp the capture record with an id
+    // nothing ever saw — worst precisely when someone is debugging a
+    // `previous_response_id` complaint. `StreamCapture` carries no upstream
+    // id to use instead, so the field is omitted rather than fabricated.
     object: 'response',
     model: identity.model,
     status: outcome === 'ok' ? 'completed' : 'incomplete',
