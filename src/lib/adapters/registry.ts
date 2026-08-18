@@ -6,7 +6,7 @@ import { createGeminiAdapter } from './gemini'
 import { createOpenAIAdapter } from './openai'
 import { createResponsesAdapter } from './openai/responses'
 import type { ProviderAdapter, ProviderConfig, ProviderRuntime } from './types'
-import { withChatViaResponses, withRespondViaChat } from './wrappers'
+import { withRespondViaChat } from './wrappers'
 
 export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
   return {
@@ -49,7 +49,10 @@ export function createAdapter(
 }
 
 function openAIShaped(runtime: ProviderRuntime, flavor: ApiFlavor): ProviderAdapter {
+  // The Responses adapter already implements chat/chatStream through
+  // chat-to-responses.ts, so this branch needs no wrapping — it is returned
+  // as-is, unlike the chat-only branch below.
   return flavor === 'responses'
-    ? withChatViaResponses(createResponsesAdapter(runtime))
+    ? createResponsesAdapter(runtime)
     : withRespondViaChat(createOpenAIAdapter(runtime), runtime.name)
 }
