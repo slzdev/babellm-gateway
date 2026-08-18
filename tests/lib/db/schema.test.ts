@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { apiKeys, providers, routeTargets, users, virtualModels } from '@/lib/db/schema'
+import { apiKeys, catalogModels, providers, routeTargets, users, virtualModels } from '@/lib/db/schema'
 import { encryptJson, decryptJson } from '@/lib/crypto'
 import { resetDb } from '../../helpers/db'
 
@@ -115,6 +115,40 @@ test('a provider can be stored with the responses flavor', async () => {
   }).returning()
 
   expect(row.apiFlavor).toBe('responses')
+})
+
+test('a catalog model inherits its provider flavor and paths by default', async () => {
+  const [p] = await db.insert(providers).values({
+    name: 'catalog-defaults', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
+  }).returning()
+
+  const [row] = await db.insert(catalogModels).values({
+    providerId: p.id, modelId: 'gpt-5',
+  }).returning()
+
+  // NULL, not 'chat_completions': a model that was never configured must stay
+  // distinguishable from one deliberately pinned to the provider's default.
+  expect(row.apiFlavor).toBeNull()
+  expect(row.chatCompletionsPath).toBeNull()
+  expect(row.responsesPath).toBeNull()
+})
+
+test('a catalog model can pin its own flavor and paths', async () => {
+  const [p] = await db.insert(providers).values({
+    name: 'catalog-pinned', adapter: 'openai', credentials: encryptJson({ apiKey: 'a' }),
+  }).returning()
+
+  const [row] = await db.insert(catalogModels).values({
+    providerId: p.id,
+    modelId: 'o5-pro',
+    apiFlavor: 'responses',
+    chatCompletionsPath: '/api/chat',
+    responsesPath: '/api/responses',
+  }).returning()
+
+  expect(row.apiFlavor).toBe('responses')
+  expect(row.chatCompletionsPath).toBe('/api/chat')
+  expect(row.responsesPath).toBe('/api/responses')
 })
 
 test('route targets carry nullable breaker overrides', async () => {

@@ -147,6 +147,16 @@ export const catalogModels = pgTable(
     modalities: jsonb('modalities').$type<{ input: string[]; output: string[] } | null>(),
     sources: jsonb('sources').$type<Record<string, string>>().notNull().default({}),
 
+    // How the gateway reaches this model, as opposed to what the model is.
+    // Columns rather than layers, for the reason on providers.apiFlavor: these
+    // decide whether a request can be served at all. sync() and merge() never
+    // touch them, so a re-sync cannot undo an operator's decision and a model
+    // that goes missing keeps its settings for when it comes back.
+    // NULL means "inherit the provider" in all three.
+    apiFlavor: apiFlavorEnum('api_flavor'),
+    chatCompletionsPath: text('chat_completions_path'),
+    responsesPath: text('responses_path'),
+
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
