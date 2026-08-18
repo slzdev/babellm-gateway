@@ -137,6 +137,13 @@ cost is that Anthropic models released after Claude Opus 4.6 reject any
 non-default value of either with a 400 — from the endpoint, not the gateway,
 as the SDK's own `@deprecated` notes on `temperature` and `top_p` document.
 
+Some providers refuse a non-streaming request that might run long — Anthropic
+answers *"Streaming is required for operations that may take longer than 10
+minutes"* before generating anything. **Force upstream streaming** on the
+provider, or on one catalog model, makes the gateway ask for a stream and
+collapse it back into a single response. The client still sends
+`stream: false` and still gets one body; only the upstream leg changes.
+
 | Provider type | Status |
 | --- | --- |
 | `openai` | ✅ Chat Completions, Responses, and Anthropic Messages flavors |
@@ -335,6 +342,15 @@ configured in the dashboard and stored in Postgres.
 > Don't reuse a fresh `ENCRYPTION_KEY` across environments if you already have
 > encrypted credentials under another one: rotating it makes those rows
 > undecryptable.
+
+> [!WARNING]
+> One upstream attempt may take **30 seconds** before the gateway gives up and
+> fails over. Raise **Request timeout** on any provider that serves long
+> requests — a provider set to force upstream streaming in order to survive a
+> ten-minute request will still be cut off at thirty seconds otherwise.
+
+If you are upgrading a deployment that predates this, the previous ceiling was
+120 seconds: anything that relied on it needs an explicit timeout set.
 
 ## Deploy
 
