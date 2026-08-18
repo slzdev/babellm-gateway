@@ -30,6 +30,10 @@ export interface Candidate {
   /** The paths this model is served on, or null when it names none. Only the
    *  OpenAI-shaped adapters read them. */
   pathOverrides: ModelPathOverrides | null
+  /** The model's catalogued output ceiling, or null when the catalog has
+   *  none. Read only by the Anthropic adapter, whose dialect requires
+   *  `max_tokens` to be stated even when the client sent none. */
+  maxOutputTokens: number | null
   /**
    * Whether an open breaker may demote this candidate.
    *
@@ -54,12 +58,17 @@ export interface ResolvedModel {
 /** Null rather than an empty object when there is no row, so a candidate that
  *  could not have overrides is distinguishable from one that has none set. */
 function modelPaths(
-  catalog: { chatCompletionsPath: string | null; responsesPath: string | null } | null,
+  catalog: {
+    chatCompletionsPath: string | null
+    responsesPath: string | null
+    messagesPath: string | null
+  } | null,
 ): ModelPathOverrides | null {
   if (!catalog) return null
   return {
     chatCompletionsPath: catalog.chatCompletionsPath,
     responsesPath: catalog.responsesPath,
+    messagesPath: catalog.messagesPath,
   }
 }
 
@@ -145,6 +154,7 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
       serviceTier: target.serviceTier,
       apiFlavor: catalog?.apiFlavor ?? provider.apiFlavor,
       pathOverrides: modelPaths(catalog),
+      maxOutputTokens: catalog?.maxOutputTokens ?? null,
       breakable: true,
       breakerThreshold: target.breakerThreshold,
       breakerCooldownSeconds: target.breakerCooldownSeconds,
@@ -203,6 +213,7 @@ async function resolveDirect(
       serviceTier: null,
       apiFlavor: row.catalog.apiFlavor ?? row.provider.apiFlavor,
       pathOverrides: modelPaths(row.catalog),
+      maxOutputTokens: row.catalog.maxOutputTokens,
       breakable: false,
       breakerThreshold: null,
       breakerCooldownSeconds: null,

@@ -346,6 +346,7 @@ test('a candidate carries the model path overrides', async () => {
   expect(candidates[0].pathOverrides).toEqual({
     chatCompletionsPath: null,
     responsesPath: '/api/v2/responses',
+    messagesPath: null,
   })
 })
 
@@ -354,5 +355,37 @@ test('a target outside the catalog carries no path overrides', async () => {
 
   const { candidates } = await resolveModel(model.name)
 
+  expect(candidates[0].pathOverrides).toBeNull()
+})
+
+test('a direct address carries the model ceiling and its messages path', async () => {
+  const [provider] = await db.insert(providers).values({
+    name: 'anthropic-test',
+    adapter: 'openai_compatible',
+    baseUrl: 'https://api.anthropic.com/v1',
+    credentials: encryptJson({ apiKey: 'sk-test' }),
+  }).returning()
+  await db.insert(catalogModels).values({
+    providerId: provider.id,
+    modelId: 'claude-opus-5',
+    apiFlavor: 'anthropic_messages',
+    maxOutputTokens: 64000,
+    messagesPath: '/anthropic/v1/messages',
+  })
+
+  const { candidates } = await resolveModel('anthropic-test/claude-opus-5')
+  expect(candidates[0].apiFlavor).toBe('anthropic_messages')
+  expect(candidates[0].maxOutputTokens).toBe(64000)
+  expect(candidates[0].pathOverrides?.messagesPath).toBe('/anthropic/v1/messages')
+})
+
+test('a target naming an uncatalogued model has no ceiling and no overrides', async () => {
+  const { fast, model } = await seed()
+  await db.insert(routeTargets).values({
+    virtualModelId: model.id, providerId: fast.id, upstreamModel: 'never-catalogued',
+  })
+
+  const { candidates } = await resolveModel('house-model')
+  expect(candidates[0].maxOutputTokens).toBeNull()
   expect(candidates[0].pathOverrides).toBeNull()
 })

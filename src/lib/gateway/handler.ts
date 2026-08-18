@@ -27,6 +27,7 @@ export interface GatewayDeps {
     provider: ProviderRow,
     flavor: ApiFlavor,
     paths: ModelPathOverrides | null,
+    maxOutputTokens: number | null,
   ) => ProviderAdapter
 }
 

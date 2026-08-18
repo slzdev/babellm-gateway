@@ -34,6 +34,7 @@ export interface ExecuteDeps {
     provider: ProviderRow,
     flavor: ApiFlavor,
     paths: ModelPathOverrides | null,
+    maxOutputTokens: number | null,
   ) => ProviderAdapter
   /**
    * Reports an attempt's outcome to the circuit breaker.
@@ -145,7 +146,10 @@ export async function execute<T>(
     let adapter: ProviderAdapter
     try {
       adapter = deps.createAdapter(
-        candidate.provider, candidate.apiFlavor, candidate.pathOverrides,
+        candidate.provider,
+        candidate.apiFlavor,
+        candidate.pathOverrides,
+        candidate.maxOutputTokens,
       )
     } catch (err) {
       // A provider the gateway cannot even construct an adapter for — an
