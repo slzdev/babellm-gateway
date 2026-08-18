@@ -32,6 +32,37 @@ await client.chat.completions.create({
 
 One line changed. Streaming, tool calls, and reasoning all come through.
 
+`/v1/responses` is served alongside it, the same client, the same virtual
+model:
+
+```ts
+await client.responses.create({
+  model: "smart",
+  input: "Hello",
+  stream: true,
+});
+```
+
+**What the Responses API supports:**
+
+- Stateful follow-ups (`previous_response_id`, `store`) are forwarded to
+  whichever provider serves the request, so they only work reliably when the
+  virtual model has **one** target — the id belongs to the provider that
+  minted it, and the gateway does not rewrite it to mean "whichever target
+  answers next."
+- `GET`/`DELETE`/cancel on `/v1/responses/{id}` and `background: true` are not
+  supported. A response id is passed through from the provider and carries no
+  routing information, so there is nothing to route a retrieval or a
+  background poll to.
+- Hosted tools (`web_search`, `file_search`, …) need a target whose API flavor
+  is `responses`. Against a Chat Completions target the request is **refused
+  with a 400**, not silently answered without the tool — and a virtual model
+  whose first target can't serve it does not fail over to a later target that
+  could.
+- Everything else works against any target. What a given target's API can't
+  express is dropped rather than rejected, and named in the
+  `x-babellm-dropped-params` response header and the request log.
+
 ## Why
 
 - **Your keys stay yours.** Provider credentials are encrypted at rest with
@@ -72,7 +103,7 @@ Set `GATEWAY_PORT` to publish elsewhere (`GATEWAY_PORT=3100 docker compose …`)
 
 ```mermaid
 flowchart LR
-    A["Your app<br/><sub>OpenAI SDK</sub>"] -->|"sk-bab-…"| B["BabeLLM<br/><sub>/v1/chat/completions</sub>"]
+    A["Your app<br/><sub>OpenAI SDK</sub>"] -->|"sk-bab-…"| B["BabeLLM<br/><sub>/v1/chat/completions<br/>/v1/responses</sub>"]
     B --> C{"Virtual model<br/><sub>policy + targets</sub>"}
     C -->|1| D["OpenAI"]
     C -->|2| E["Any OpenAI-compatible<br/><sub>Groq, OpenRouter, vLLM…</sub>"]
@@ -80,14 +111,19 @@ flowchart LR
     B -.-> G[("Postgres<br/><sub>logs · usage · config</sub>")]
 ```
 
-Clients always speak Chat Completions, and so does every OpenAI-shaped
-provider. Anything behind the gateway that doesn't — Gemini's
-`generateContent` — is translated in both directions.
+Clients can speak either Chat Completions or Responses. Every OpenAI-shaped
+provider is called on one of those two APIs, whichever its `api_flavor` says —
+set per provider and overridable per route target, so one virtual model can
+mix a `chat_completions` target with a `responses` one. Anything behind the
+gateway that speaks neither — Gemini's `generateContent` — is translated in
+both directions, and so is any request that crosses ingress and provider
+flavor (a Responses request served by a Chat Completions target, or vice
+versa).
 
 | Provider type | Status |
 | --- | --- |
-| `openai` | ✅ Chat Completions |
-| `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped |
+| `openai` | ✅ Chat Completions and Responses flavors |
+| `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped — Chat Completions and Responses flavors |
 | `gemini` | ✅ Native `@google/genai`, including thinking and media by URL |
 | `bedrock` | 🚧 Configurable, not yet served |
 
@@ -318,9 +354,11 @@ This is a real gateway — the `openai` SDK talks to it end to end, with
 streaming, tool calls, and policy-driven routing across every target — built in
 phases. What's still missing:
 
-- **No Responses API, either end.** Everything enters through
-  `/v1/chat/completions` and every OpenAI-shaped provider is called on
-  `/chat/completions`.
+- **The Responses ingress covers less ground than Chat Completions.** No
+  retrieval, deletion, or cancellation on `/v1/responses/{id}`, no
+  `background: true`, and a stateful follow-up only lands on the right
+  provider when the virtual model has one target — see the note under the
+  quick-start example above.
 - **Spend counters are volatile** without `REDIS_URL` — a restart resets each
   key's total spend to zero.
 - **Round-robin state is per process**, so multiple instances skew the

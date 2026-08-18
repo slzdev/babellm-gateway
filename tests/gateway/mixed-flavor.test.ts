@@ -229,7 +229,17 @@ test('a Responses request reaches a gemini target through the same wrapper', asy
   const { apiKey } = await seedTargets({ targets: [{ name: 'gem', adapter: 'gemini' }] })
 
   const res = await handleResponses(
-    responsesRequest({ model: 'house-model', input: 'hi', truncation: 'auto' }, apiKey),
+    responsesRequest(
+      // `truncation: 'auto'` trips responses-to-chat's own drop;
+      // `parallel_tool_calls: false` survives that translation into the Chat
+      // request (toChatRequest maps it straight through) and only then trips
+      // Gemini's UNMAPPABLE list — a real instruction Gemini cannot honour,
+      // not the `true` default chat-to-gemini treats as inert. Together they
+      // pin that `droppedFor` composes both stages' lists rather than one
+      // shadowing the other.
+      { model: 'house-model', input: 'hi', truncation: 'auto', parallel_tool_calls: false },
+      apiKey,
+    ),
     fakeAdapterByProvider({
       gem: chatOnlyRespondingVia('gem', vi.fn().mockResolvedValue(completion('gem'))),
     }),
@@ -237,8 +247,13 @@ test('a Responses request reaches a gemini target through the same wrapper', asy
 
   expect(res.status).toBe(200)
   // Two translation stages, one list: what Responses-to-Chat dropped and what
-  // Gemini cannot express are reported together.
-  expect(res.headers.get('x-babellm-dropped-params')).toContain('truncation')
+  // Gemini cannot express are reported together. Deleting the Gemini
+  // composition stage would still leave `truncation` (from responses-to-chat
+  // alone), so `parallel_tool_calls` is the assertion that actually depends
+  // on it.
+  const dropped = res.headers.get('x-babellm-dropped-params')
+  expect(dropped).toContain('truncation')
+  expect(dropped).toContain('parallel_tool_calls')
 })
 
 test('a hosted tool against a chat-only target is a 400 that does not fail over', async () => {
