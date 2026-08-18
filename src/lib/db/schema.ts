@@ -38,6 +38,10 @@ export const providers = pgTable('providers', {
   // `config` key because it decides whether a request can be served at all,
   // which is the same class of fact as `adapter` and `base_url`.
   apiFlavor: apiFlavorEnum('api_flavor').notNull().default('chat_completions'),
+  // A column rather than a `config` key for the same reason as apiFlavor: it
+  // decides how a request is made, not what a model is, and it is read on the
+  // request path by resolve().
+  forceUpstreamStream: boolean('force_upstream_stream').notNull().default(false),
   enabled: boolean('enabled').notNull().default(true),
   lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
   lastSyncStatus: syncStatusEnum('last_sync_status'),
@@ -152,11 +156,15 @@ export const catalogModels = pgTable(
     // decide whether a request can be served at all. sync() and merge() never
     // touch them, so a re-sync cannot undo an operator's decision and a model
     // that goes missing keeps its settings for when it comes back.
-    // NULL means "inherit the provider" in all four.
+    // NULL means "inherit the provider" in all five.
     apiFlavor: apiFlavorEnum('api_flavor'),
     chatCompletionsPath: text('chat_completions_path'),
     responsesPath: text('responses_path'),
     messagesPath: text('messages_path'),
+    // Tri-state, unlike the boolean on providers: NULL inherits, `true` forces
+    // and `false` refuses to force even where the provider does. A default
+    // would collapse the last two into each other.
+    forceUpstreamStream: boolean('force_upstream_stream'),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

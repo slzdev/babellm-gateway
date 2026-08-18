@@ -71,6 +71,13 @@
       "when": 1787054676375,
       "tag": "0009_spooky_ted_forrester",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787064740471,
+      "tag": "0010_steady_tenebrous",
+      "breakpoints": true
     }
   ]
 }

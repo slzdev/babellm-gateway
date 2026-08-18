@@ -15,6 +15,7 @@ function candidate(name: string): Candidate {
     weight: 100,
     serviceTier: null,
     apiFlavor: 'chat_completions',
+    forceUpstreamStream: false,
     pathOverrides: null,
     maxOutputTokens: null,
     breakable: true,

@@ -27,6 +27,14 @@ export interface Candidate {
    *  nullable: the routing loop must never have to work out where the
    *  answer came from. */
   apiFlavor: ApiFlavor
+  /**
+   * Whether to open the upstream leg as a stream even when the client asked
+   * for a single body, for a provider that refuses long non-streaming
+   * requests. Resolved rather than nullable, for the same reason `apiFlavor`
+   * is: the routing loop must never have to work out where the answer came
+   * from.
+   */
+  forceUpstreamStream: boolean
   /** The paths this model is served on, or null when it names none. Only the
    *  OpenAI-shaped adapters read them. */
   pathOverrides: ModelPathOverrides | null
@@ -153,6 +161,9 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
       weight: target.weight,
       serviceTier: target.serviceTier,
       apiFlavor: catalog?.apiFlavor ?? provider.apiFlavor,
+      // `??`, not `||`: `false` on the model is a decision to opt out, and
+      // must beat `true` on the provider.
+      forceUpstreamStream: catalog?.forceUpstreamStream ?? provider.forceUpstreamStream,
       pathOverrides: modelPaths(catalog),
       maxOutputTokens: catalog?.maxOutputTokens ?? null,
       breakable: true,
@@ -212,6 +223,7 @@ async function resolveDirect(
       // breaker for it. The flavor comes from the catalog row itself.
       serviceTier: null,
       apiFlavor: row.catalog.apiFlavor ?? row.provider.apiFlavor,
+      forceUpstreamStream: row.catalog.forceUpstreamStream ?? row.provider.forceUpstreamStream,
       pathOverrides: modelPaths(row.catalog),
       maxOutputTokens: row.catalog.maxOutputTokens,
       breakable: false,

@@ -5,7 +5,7 @@ import { catalogModels, providers, routeTargets, virtualModels } from '@/lib/db/
 import { resolveModel } from '@/lib/gateway/resolve'
 import { encryptJson } from '@/lib/crypto'
 import { resetDb } from '../../helpers/db'
-import { seedTargets } from '../../helpers/gateway'
+import { seedGateway, seedTargets } from '../../helpers/gateway'
 
 beforeEach(async () => {
   process.env.ENCRYPTION_KEY = 'c'.repeat(64)
@@ -388,4 +388,86 @@ test('a target naming an uncatalogued model has no ceiling and no overrides', as
   const { candidates } = await resolveModel('house-model')
   expect(candidates[0].maxOutputTokens).toBeNull()
   expect(candidates[0].pathOverrides).toBeNull()
+})
+
+test('a candidate inherits force_upstream_stream from its provider', async () => {
+  const seeded = await seedGateway()
+  await db.update(providers)
+    .set({ forceUpstreamStream: true })
+    .where(eq(providers.id, seeded.provider.id))
+
+  const { candidates } = await resolveModel(seeded.virtualModel)
+
+  expect(candidates[0].forceUpstreamStream).toBe(true)
+})
+
+test('a candidate defaults to not forcing', async () => {
+  const seeded = await seedGateway()
+
+  const { candidates } = await resolveModel(seeded.virtualModel)
+
+  expect(candidates[0].forceUpstreamStream).toBe(false)
+})
+
+test('a catalog model set to false beats a provider set to true', async () => {
+  // The reason the column is nullable with no default: `false` has to be a
+  // decision, not an absence, or a model could never opt out of its provider.
+  const seeded = await seedGateway()
+  await db.update(providers)
+    .set({ forceUpstreamStream: true })
+    .where(eq(providers.id, seeded.provider.id))
+  await db.insert(catalogModels).values({
+    providerId: seeded.provider.id,
+    modelId: seeded.upstreamModel,
+    forceUpstreamStream: false,
+  })
+
+  const { candidates } = await resolveModel(seeded.virtualModel)
+
+  expect(candidates[0].forceUpstreamStream).toBe(false)
+})
+
+test('a catalog model set to true beats a provider left off', async () => {
+  const seeded = await seedGateway()
+  await db.insert(catalogModels).values({
+    providerId: seeded.provider.id,
+    modelId: seeded.upstreamModel,
+    forceUpstreamStream: true,
+  })
+
+  const { candidates } = await resolveModel(seeded.virtualModel)
+
+  expect(candidates[0].forceUpstreamStream).toBe(true)
+})
+
+test('a catalog model that says nothing inherits the provider', async () => {
+  const seeded = await seedGateway()
+  await db.update(providers)
+    .set({ forceUpstreamStream: true })
+    .where(eq(providers.id, seeded.provider.id))
+  await db.insert(catalogModels).values({
+    providerId: seeded.provider.id,
+    modelId: seeded.upstreamModel,
+    forceUpstreamStream: null,
+  })
+
+  const { candidates } = await resolveModel(seeded.virtualModel)
+
+  expect(candidates[0].forceUpstreamStream).toBe(true)
+})
+
+test('a direct provider/model address resolves it from its catalog row', async () => {
+  const seeded = await seedGateway()
+  await db.update(providers)
+    .set({ forceUpstreamStream: true })
+    .where(eq(providers.id, seeded.provider.id))
+  await db.insert(catalogModels).values({
+    providerId: seeded.provider.id,
+    modelId: 'gpt-4o-direct',
+    forceUpstreamStream: false,
+  })
+
+  const { candidates } = await resolveModel(`${seeded.provider.name}/gpt-4o-direct`)
+
+  expect(candidates[0].forceUpstreamStream).toBe(false)
 })
