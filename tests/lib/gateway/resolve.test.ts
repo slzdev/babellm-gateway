@@ -329,3 +329,24 @@ test('one provider can serve a chat model and a responses model', async () => {
 
   expect(candidates.map((c) => c.apiFlavor)).toEqual(['chat_completions', 'responses'])
 })
+
+test('a candidate carries the model path overrides', async () => {
+  const { model } = await seedTargets({
+    targets: [{ name: 'p1', responsesPath: '/api/v2/responses' }],
+  })
+
+  const { candidates } = await resolveModel(model.name)
+
+  expect(candidates[0].pathOverrides).toEqual({
+    chatCompletionsPath: null,
+    responsesPath: '/api/v2/responses',
+  })
+})
+
+test('a target outside the catalog carries no path overrides', async () => {
+  const { model } = await seedTargets({ targets: [{ name: 'p1' }] })
+
+  const { candidates } = await resolveModel(model.name)
+
+  expect(candidates[0].pathOverrides).toBeNull()
+})

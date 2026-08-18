@@ -15,6 +15,7 @@ function candidate(name: string): Candidate {
     weight: 100,
     serviceTier: null,
     apiFlavor: 'chat_completions',
+    pathOverrides: null,
     breakable: true,
     breakerThreshold: null,
     breakerCooldownSeconds: null,

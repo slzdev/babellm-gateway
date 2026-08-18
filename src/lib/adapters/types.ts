@@ -40,6 +40,20 @@ export interface ProviderConfig {
   [key: string]: unknown
 }
 
+/**
+ * What one model contributes to adapter construction. The keys are the
+ * `ProviderConfig` keys deliberately: `createAdapter` folds these over the
+ * provider's config, so the adapters go on reading one object and never learn
+ * that a model can carry paths of its own.
+ *
+ * `null` means "this model names no path", which is not the same as "no path"
+ * — it must leave the provider's value standing.
+ */
+export interface ModelPathOverrides {
+  chatCompletionsPath?: string | null
+  responsesPath?: string | null
+}
+
 export interface ProviderRuntime {
   id: string
   name: string

@@ -48,6 +48,27 @@ export const PATH_FIELDS = [
   },
 ] as const
 
+/**
+ * The fields a single model may override, for the catalog's gateway dialog.
+ * Written out rather than filtered from PATH_FIELDS because the help text is
+ * what differs: on a provider form these describe where the provider serves
+ * everything, and here they describe one model departing from that.
+ */
+export const MODEL_PATH_FIELDS = [
+  {
+    name: 'chatCompletionsPath',
+    label: 'Chat completions path',
+    placeholder: DEFAULT_PATHS.chatCompletions,
+    help: 'Where this one model is served, if not where the provider serves the rest.',
+  },
+  {
+    name: 'responsesPath',
+    label: 'Responses path',
+    placeholder: DEFAULT_PATHS.responses,
+    help: 'Where this one model answers the Responses API.',
+  },
+] as const
+
 /** What a provider form submits for the fields above. */
 export type ProviderPathInput = Partial<Record<(typeof PATH_FIELDS)[number]['name'], string>>
 

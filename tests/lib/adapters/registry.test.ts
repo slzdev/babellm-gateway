@@ -162,3 +162,82 @@ test('an explicit flavor overrides the provider column', async () => {
   // Responses endpoint of a provider whose default is Chat Completions.
   expect(calledPath(fetchSpy)).toMatch(/\/responses$/)
 })
+
+test('a model path override moves the chat completions endpoint', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(
+    provider({ adapter: 'openai_compatible', baseUrl: 'https://api.example/v1' }),
+    'chat_completions',
+    { chatCompletionsPath: '/api/chat' },
+  )
+  await adapter.chat(chatBody, chatCtx)
+
+  expect(calledPath(fetchSpy)).toBe('https://api.example/v1/api/chat')
+})
+
+test('a model path override moves the responses endpoint', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(
+    provider({ adapter: 'openai_compatible', baseUrl: 'https://api.example/v1' }),
+    'responses',
+    { responsesPath: '/api/v2/responses' },
+  )
+  await adapter.chat(chatBody, chatCtx)
+
+  expect(calledPath(fetchSpy)).toBe('https://api.example/v1/api/v2/responses')
+})
+
+test('a model that names no path leaves the provider config alone', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(
+    provider({
+      adapter: 'openai_compatible',
+      baseUrl: 'https://api.example/v1',
+      config: JSON.stringify({ chatCompletionsPath: '/provider/chat' }),
+    }),
+    'chat_completions',
+    { chatCompletionsPath: null, responsesPath: null },
+  )
+  await adapter.chat(chatBody, chatCtx)
+
+  // null is "this model says nothing", which must not erase the provider's
+  // value — the distinction the nullable columns exist to preserve.
+  expect(calledPath(fetchSpy)).toBe('https://api.example/v1/provider/chat')
+})
+
+test('a model cannot move the models listing path', async () => {
+  // Listing is a provider operation: sync calls createAdapter with no model in
+  // hand, so a per-model override must not reach it.
+  const fetchSpy = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  )
+  vi.stubGlobal('fetch', fetchSpy)
+
+  const adapter = createAdapter(
+    provider({
+      adapter: 'openai_compatible',
+      baseUrl: 'https://api.example/v1',
+      config: JSON.stringify({ modelsPath: '/api/models' }),
+    }),
+    'chat_completions',
+    { chatCompletionsPath: '/api/chat' },
+  )
+  await adapter.listModels!({ signal: new AbortController().signal })
+
+  expect(calledPath(fetchSpy)).toBe('https://api.example/v1/api/models')
+})
+
+test('gemini accepts model path overrides and ignores them', () => {
+  // Gemini's client builds its own URLs, so the only thing worth pinning is
+  // that a model carrying paths does not break its construction.
+  const adapter = createAdapter(
+    provider({ adapter: 'gemini', credentials: encryptJson({ apiKey: 'g-key' }) }),
+    'chat_completions',
+    { chatCompletionsPath: '/api/chat' },
+  )
+
+  expect(typeof adapter.chat).toBe('function')
+})

@@ -5,7 +5,9 @@ import { UnsupportedOperationError } from '@/lib/gateway/errors'
 import { createGeminiAdapter } from './gemini'
 import { createOpenAIAdapter } from './openai'
 import { createResponsesAdapter } from './openai/responses'
-import type { ProviderAdapter, ProviderConfig, ProviderRuntime } from './types'
+import type {
+  ModelPathOverrides, ProviderAdapter, ProviderConfig, ProviderRuntime,
+} from './types'
 import { withRespondViaChat } from './wrappers'
 
 export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
@@ -22,8 +24,9 @@ export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
 export function createAdapter(
   provider: ProviderRow,
   flavor: ApiFlavor = provider.apiFlavor,
+  paths?: ModelPathOverrides | null,
 ): ProviderAdapter {
-  const runtime = resolveProviderRuntime(provider)
+  const runtime = withModelPaths(resolveProviderRuntime(provider), paths)
 
   switch (runtime.adapter) {
     case 'openai':
@@ -46,6 +49,24 @@ export function createAdapter(
         `The "${runtime.adapter}" adapter is not available yet.`,
       )
   }
+}
+
+/**
+ * Layers a model's paths over its provider's. Only the keys the model actually
+ * names are copied, so an unset one falls through to the provider — and
+ * `modelsPath` is not among them, because listing models is a provider
+ * operation that happens with no model in hand.
+ */
+function withModelPaths(
+  runtime: ProviderRuntime,
+  paths: ModelPathOverrides | null | undefined,
+): ProviderRuntime {
+  if (!paths?.chatCompletionsPath && !paths?.responsesPath) return runtime
+
+  const config: ProviderConfig = { ...runtime.config }
+  if (paths.chatCompletionsPath) config.chatCompletionsPath = paths.chatCompletionsPath
+  if (paths.responsesPath) config.responsesPath = paths.responsesPath
+  return { ...runtime, config }
 }
 
 function openAIShaped(runtime: ProviderRuntime, flavor: ApiFlavor): ProviderAdapter {

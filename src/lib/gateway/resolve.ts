@@ -5,6 +5,7 @@ import {
   catalogModels, providers, routeTargets, virtualModels,
   type ProviderRow,
 } from '@/lib/db/schema'
+import type { ModelPathOverrides } from '@/lib/adapters/types'
 import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ServiceTier } from '@/lib/service-tiers'
 import { GatewayError } from './errors'
@@ -26,6 +27,9 @@ export interface Candidate {
    *  nullable: the routing loop must never have to work out where the
    *  answer came from. */
   apiFlavor: ApiFlavor
+  /** The paths this model is served on, or null when it names none. Only the
+   *  OpenAI-shaped adapters read them. */
+  pathOverrides: ModelPathOverrides | null
   /**
    * Whether an open breaker may demote this candidate.
    *
@@ -45,6 +49,18 @@ export interface ResolvedModel {
   // synthesize one without inventing a whole virtual_models row.
   model: SelectableModel
   candidates: Candidate[]
+}
+
+/** Null rather than an empty object when there is no row, so a candidate that
+ *  could not have overrides is distinguishable from one that has none set. */
+function modelPaths(
+  catalog: { chatCompletionsPath: string | null; responsesPath: string | null } | null,
+): ModelPathOverrides | null {
+  if (!catalog) return null
+  return {
+    chatCompletionsPath: catalog.chatCompletionsPath,
+    responsesPath: catalog.responsesPath,
+  }
 }
 
 function modelNotFound(name: string): GatewayError {
@@ -128,6 +144,7 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
       weight: target.weight,
       serviceTier: target.serviceTier,
       apiFlavor: catalog?.apiFlavor ?? provider.apiFlavor,
+      pathOverrides: modelPaths(catalog),
       breakable: true,
       breakerThreshold: target.breakerThreshold,
       breakerCooldownSeconds: target.breakerCooldownSeconds,
@@ -185,6 +202,7 @@ async function resolveDirect(
       // breaker for it. The flavor comes from the catalog row itself.
       serviceTier: null,
       apiFlavor: row.catalog.apiFlavor ?? row.provider.apiFlavor,
+      pathOverrides: modelPaths(row.catalog),
       breakable: false,
       breakerThreshold: null,
       breakerCooldownSeconds: null,

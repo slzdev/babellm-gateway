@@ -1,7 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
 import { createAdapter as defaultCreateAdapter } from '@/lib/adapters/registry'
-import type { AttemptContext, ProviderAdapter } from '@/lib/adapters/types'
+import type { AttemptContext, ModelPathOverrides, ProviderAdapter } from '@/lib/adapters/types'
 import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ProviderRow } from '@/lib/db/schema'
 import { logRequest, resolveRequestLogStore } from '@/lib/logs'
@@ -23,7 +23,11 @@ import { selectOrder } from './select'
 import { sseResponse, startStream, type StreamCapture, type StreamOutcome, type StreamProtocol } from './sse'
 
 export interface GatewayDeps {
-  createAdapter: (provider: ProviderRow, flavor: ApiFlavor) => ProviderAdapter
+  createAdapter: (
+    provider: ProviderRow,
+    flavor: ApiFlavor,
+    paths: ModelPathOverrides | null,
+  ) => ProviderAdapter
 }
 
 const defaultDeps: GatewayDeps = { createAdapter: defaultCreateAdapter }

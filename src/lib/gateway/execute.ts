@@ -1,5 +1,5 @@
 import 'server-only'
-import type { AttemptContext, ProviderAdapter } from '@/lib/adapters/types'
+import type { AttemptContext, ModelPathOverrides, ProviderAdapter } from '@/lib/adapters/types'
 import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ProviderRow } from '@/lib/db/schema'
 import {
@@ -30,7 +30,11 @@ export interface ExecuteResult<T> {
 }
 
 export interface ExecuteDeps {
-  createAdapter: (provider: ProviderRow, flavor: ApiFlavor) => ProviderAdapter
+  createAdapter: (
+    provider: ProviderRow,
+    flavor: ApiFlavor,
+    paths: ModelPathOverrides | null,
+  ) => ProviderAdapter
   /**
    * Reports an attempt's outcome to the circuit breaker.
    *
@@ -140,7 +144,9 @@ export async function execute<T>(
 
     let adapter: ProviderAdapter
     try {
-      adapter = deps.createAdapter(candidate.provider, candidate.apiFlavor)
+      adapter = deps.createAdapter(
+        candidate.provider, candidate.apiFlavor, candidate.pathOverrides,
+      )
     } catch (err) {
       // A provider the gateway cannot even construct an adapter for — an
       // unimplemented adapter type, or missing credentials — is one target's
