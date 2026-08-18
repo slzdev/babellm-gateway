@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { ApiFlavorSelect } from '@/components/admin/api-flavor-select'
+import { ForceStreamSelect } from '@/components/admin/force-stream-select'
 import { FormDialog } from '@/components/admin/form-dialog'
 import type { CatalogListItem } from '@/lib/admin/catalog'
 import { MODEL_PATH_FIELDS } from '@/lib/adapters/paths'
@@ -141,6 +142,19 @@ export function GatewaySettingsDialog({
         />
         <p className="text-xs text-muted-foreground">
           Which endpoint this model is called on. Only meaningful for OpenAI-shaped providers.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor={`gateway-force-stream-${item.id}`}>Forced upstream streaming</Label>
+        <ForceStreamSelect
+          id={`gateway-force-stream-${item.id}`}
+          defaultValue={item.forceUpstreamStream}
+          providerDefault={item.providerForceUpstreamStream}
+        />
+        <p className="text-xs text-muted-foreground">
+          Call this model with a stream even when the client asked for a single
+          response. The client still gets one response.
         </p>
       </div>
 

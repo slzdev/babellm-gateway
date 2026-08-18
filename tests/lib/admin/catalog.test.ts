@@ -389,3 +389,88 @@ test('the list item reports the provider messages path as the inherited placehol
   const [item] = await listCatalog()
   expect(item.providerPaths.messagesPath).toBe('/messages')
 })
+
+/** The one catalog row `seedCatalog(['gpt-4o'])` produces. */
+async function onlyModel() {
+  const [row] = await db.select().from(catalogModels)
+  return row
+}
+
+test('a model inherits by default, which listCatalog reports as null', async () => {
+  await seedCatalog(['gpt-4o'])
+
+  const [item] = await listCatalog()
+
+  expect(item.forceUpstreamStream).toBeNull()
+  expect(item.providerForceUpstreamStream).toBe(false)
+})
+
+test('listCatalog surfaces the provider default so the dialog can name it', async () => {
+  const provider = await seedCatalog(['gpt-4o'])
+  await db.update(providers)
+    .set({ forceUpstreamStream: true })
+    .where(eq(providers.id, provider.id))
+
+  const [item] = await listCatalog()
+
+  // The dialog's "(inherit — forced)" label reads this, so an operator can see
+  // what blank means without opening the Providers page.
+  expect(item.providerForceUpstreamStream).toBe(true)
+  expect(item.forceUpstreamStream).toBeNull()
+})
+
+test('setModelGateway stores an explicit true', async () => {
+  await seedCatalog(['gpt-4o'])
+  const model = await onlyModel()
+
+  await setModelGateway(model.id, { forceUpstreamStream: true })
+
+  const [row] = await db.select().from(catalogModels).where(eq(catalogModels.id, model.id))
+  expect(row.forceUpstreamStream).toBe(true)
+})
+
+test('setModelGateway stores an explicit false, which is not the same as inheriting', async () => {
+  await seedCatalog(['gpt-4o'])
+  const model = await onlyModel()
+
+  await setModelGateway(model.id, { forceUpstreamStream: false })
+
+  const [row] = await db.select().from(catalogModels).where(eq(catalogModels.id, model.id))
+  // Not null: "never force" has to survive a provider that forces.
+  expect(row.forceUpstreamStream).toBe(false)
+})
+
+test('setModelGateway clears back to inherit on null', async () => {
+  await seedCatalog(['gpt-4o'])
+  const model = await onlyModel()
+
+  await setModelGateway(model.id, { forceUpstreamStream: true })
+  await setModelGateway(model.id, { forceUpstreamStream: null })
+
+  const [row] = await db.select().from(catalogModels).where(eq(catalogModels.id, model.id))
+  expect(row.forceUpstreamStream).toBeNull()
+})
+
+test('setModelGateway leaves the field alone when the key is absent', async () => {
+  await seedCatalog(['gpt-4o'])
+  const model = await onlyModel()
+
+  await setModelGateway(model.id, { forceUpstreamStream: true })
+  await setModelGateway(model.id, { apiFlavor: 'responses' })
+
+  const [row] = await db.select().from(catalogModels).where(eq(catalogModels.id, model.id))
+  expect(row.forceUpstreamStream).toBe(true)
+})
+
+test('a re-sync does not reset the setting', async () => {
+  // The whole reason it is a column and not a catalog layer: sync() and
+  // merge() must never be able to undo an operator's decision.
+  const provider = await seedCatalog(['gpt-4o'])
+  const model = await onlyModel()
+  await setModelGateway(model.id, { forceUpstreamStream: true })
+
+  await syncProvider(provider.id, { registry, createAdapterImpl: () => listing(['gpt-4o']) })
+
+  const [row] = await db.select().from(catalogModels).where(eq(catalogModels.id, model.id))
+  expect(row.forceUpstreamStream).toBe(true)
+})

@@ -49,6 +49,8 @@ export interface CatalogListItem {
    *  as a placeholder instead of sending an operator to the Providers page. */
   providerApiFlavor: ApiFlavor
   providerPaths: { chatCompletionsPath: string; responsesPath: string; messagesPath: string }
+  forceUpstreamStream: boolean | null
+  providerForceUpstreamStream: boolean
 }
 
 export interface CatalogFilter {
@@ -69,6 +71,7 @@ function toItem(
   providerApiFlavor: ApiFlavor,
   providerPaths: { chatCompletionsPath: string; responsesPath: string; messagesPath: string },
   routeTargetCount: number,
+  providerForceUpstreamStream: boolean,
 ): CatalogListItem {
   return {
     id: row.id,
@@ -98,6 +101,8 @@ function toItem(
     messagesPath: row.messagesPath,
     providerApiFlavor,
     providerPaths,
+    forceUpstreamStream: row.forceUpstreamStream,
+    providerForceUpstreamStream,
   }
 }
 
@@ -115,6 +120,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
       providerAdapter: providers.adapter,
       providerApiFlavor: providers.apiFlavor,
       providerConfig: providers.config,
+      providerForceUpstreamStream: providers.forceUpstreamStream,
     })
     .from(catalogModels)
     .innerJoin(providers, eq(catalogModels.providerId, providers.id))
@@ -128,6 +134,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
     .filter(({ model }) => !search || model.modelId.toLowerCase().includes(search))
     .map(({
       model, providerName, providerAdapter, providerApiFlavor, providerConfig,
+      providerForceUpstreamStream,
     }) => {
       const { chatCompletions, responses, messages } = resolveProviderPaths(
         JSON.parse(providerConfig) as ProviderConfig,
@@ -141,6 +148,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
         targets.filter(
           (t) => t.providerId === model.providerId && t.upstreamModel === model.modelId,
         ).length,
+        providerForceUpstreamStream,
       )
     })
 }
@@ -338,6 +346,7 @@ export interface ModelGatewayInput {
   chatCompletionsPath?: string | null
   responsesPath?: string | null
   messagesPath?: string | null
+  forceUpstreamStream?: boolean | null
 }
 
 /**
@@ -373,6 +382,9 @@ export async function setModelGateway(
   }
   if (input.messagesPath !== undefined) {
     patch.messagesPath = parseProviderPath(input.messagesPath ?? '')
+  }
+  if (input.forceUpstreamStream !== undefined) {
+    patch.forceUpstreamStream = input.forceUpstreamStream
   }
 
   await db.update(catalogModels).set(patch).where(eq(catalogModels.id, id))

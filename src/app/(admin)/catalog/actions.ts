@@ -129,6 +129,15 @@ function apiFlavorValue(value: FormDataEntryValue | null): ApiFlavor | null {
   return flavor === '' ? null : (flavor as ApiFlavor)
 }
 
+/** Three states over the wire: "" is inherit (NULL), "true" and "false" are
+ *  decisions. Absent is treated as inherit rather than false, so a dialog that
+ *  ever stops rendering the field cannot silently clear it. */
+function forceUpstreamStreamValue(value: FormDataEntryValue | null): boolean | null {
+  const raw = String(value ?? '')
+  if (raw === '') return null
+  return raw === 'true'
+}
+
 export async function setModelGatewayAction(
   _prev: ActionState | undefined,
   formData: FormData,
@@ -140,6 +149,7 @@ export async function setModelGatewayAction(
       chatCompletionsPath: String(formData.get('chatCompletionsPath') ?? ''),
       responsesPath: String(formData.get('responsesPath') ?? ''),
       messagesPath: String(formData.get('messagesPath') ?? ''),
+      forceUpstreamStream: forceUpstreamStreamValue(formData.get('forceUpstreamStream')),
     })
   } catch (err) {
     return {
