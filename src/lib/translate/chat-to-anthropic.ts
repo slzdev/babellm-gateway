@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk'
-import type { ProviderConfig } from '@/lib/adapters/types'
+import type { ChatCompletion, ProviderConfig } from '@/lib/adapters/types'
 import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
 
 /** What Anthropic requires when neither the client nor the catalog states a
@@ -234,4 +234,97 @@ export function toMessagesRequest(
     // `output_config` are recent enough that pinning them to the SDK's
     // current type would break the build on a version bump either way.
   } as Anthropic.MessageCreateParams
+}
+
+type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } }
+
+/**
+ * Shared with the stream translator, which derives the same reason from the
+ * stop_reason carried on message_delta.
+ *
+ * Truncation and refusal outrank a present tool call, for the reason
+ * chat-to-gemini records: a call that finished on max_tokens may have
+ * truncated arguments, and reporting `tool_calls` would hide that from the
+ * client.
+ */
+function finishReasonFor(
+  stopReason: string | null | undefined,
+  hasToolCalls: boolean,
+): 'stop' | 'length' | 'tool_calls' | 'content_filter' {
+  if (stopReason === 'max_tokens') return 'length'
+  if (stopReason === 'refusal') return 'content_filter'
+  if (hasToolCalls || stopReason === 'tool_use') return 'tool_calls'
+  return 'stop'
+}
+
+interface AnthropicUsage {
+  input_tokens?: number | null
+  output_tokens?: number | null
+  cache_read_input_tokens?: number | null
+  cache_creation_input_tokens?: number | null
+}
+
+/**
+ * Cache tokens are input tokens that were read from or written to the cache,
+ * reported beside `input_tokens` rather than inside it. Leaving them out would
+ * under-report prompt tokens on every cached request, and cost is computed
+ * from these.
+ *
+ * There is no reasoning-token equivalent: Anthropic bills thinking inside
+ * output_tokens and reports no separate count, so completion_tokens_details is
+ * omitted rather than filled with a number nothing measured.
+ */
+function toUsage(usage: AnthropicUsage) {
+  const cached = usage.cache_read_input_tokens ?? 0
+  const promptTokens = (usage.input_tokens ?? 0) + cached + (usage.cache_creation_input_tokens ?? 0)
+  const completionTokens = usage.output_tokens ?? 0
+
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: promptTokens + completionTokens,
+    ...(cached > 0 ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
+  }
+}
+
+export function fromMessage(msg: Anthropic.Message, model: string): ChatCompletion {
+  let content = ''
+  let reasoning = ''
+  const toolCalls: ToolCall[] = []
+
+  for (const block of msg.content ?? []) {
+    if (block.type === 'text') content += block.text
+    else if (block.type === 'thinking') reasoning += block.thinking
+    else if (block.type === 'tool_use') {
+      toolCalls.push({
+        id: block.id,
+        type: 'function',
+        function: { name: block.name, arguments: JSON.stringify(block.input ?? {}) },
+      })
+    }
+    // redacted_thinking carries no readable text — it is an opaque blob the
+    // model can replay to itself — so there is nothing to surface.
+  }
+
+  return {
+    id: msg.id,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: msg.model ?? model,
+    choices: [{
+      index: 0,
+      message: {
+        role: 'assistant',
+        content: content.length > 0 ? content : null,
+        // Non-standard, and deliberately so: it is the convention DeepSeek,
+        // vLLM and OpenRouter already use, and the field responses-to-chat.ts
+        // reads when this crossing is followed by a second one.
+        ...(reasoning.length > 0 ? { reasoning_content: reasoning } : {}),
+        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+      },
+      finish_reason: finishReasonFor(msg.stop_reason, toolCalls.length > 0),
+      logprobs: null,
+    }],
+    ...(msg.usage ? { usage: toUsage(msg.usage) } : {}),
+  } as ChatCompletion
 }
