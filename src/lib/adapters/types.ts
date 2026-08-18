@@ -13,7 +13,7 @@ export type ResponseStreamEvent = OpenAI.Responses.ResponseStreamEvent
 export interface ProviderConfig {
   /** Skip sending stream_options.include_usage — some clones reject it. */
   disableStreamUsage?: boolean
-  /** Per-request upstream timeout in milliseconds. Defaults to 120_000. */
+  /** Per-request upstream timeout in milliseconds. Defaults to DEFAULT_TIMEOUT_MS. */
   timeoutMs?: number
   /**
    * models.dev namespace this provider's models live under ("groq",

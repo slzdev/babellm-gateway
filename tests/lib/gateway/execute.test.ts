@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
-import { execute } from '@/lib/gateway/execute'
+import { attemptContext, execute } from '@/lib/gateway/execute'
 import { ProviderError, RoutedError, UnsupportedOperationError } from '@/lib/gateway/errors'
 import type { ProviderAdapter } from '@/lib/adapters/types'
 import type { Candidate } from '@/lib/gateway/resolve'
@@ -303,4 +303,28 @@ test('execute passes the candidate forcing decision to the adapter factory', asy
     expect.anything(),
     expect.objectContaining({ forceStream: true }),
   )
+})
+
+// AbortSignal.timeout() schedules through Node's internal timer wheel, not
+// the global setTimeout that vi.useFakeTimers() patches, so fake timers never
+// observe it firing. Asserting the millisecond argument it was constructed
+// with is the reliable way to pin the ceiling without an actual 30s wait.
+test('an attempt times out after 30 seconds by default', () => {
+  const timeoutSpy = vi.spyOn(AbortSignal, 'timeout')
+
+  attemptContext(candidate('oai'), 'req_1', new AbortController().signal)
+
+  expect(timeoutSpy).toHaveBeenCalledWith(30_000)
+  timeoutSpy.mockRestore()
+})
+
+test('config.timeoutMs overrides the default', () => {
+  const timeoutSpy = vi.spyOn(AbortSignal, 'timeout')
+  const target = candidate('oai')
+  target.provider = { ...target.provider, config: JSON.stringify({ timeoutMs: 600_000 }) }
+
+  attemptContext(target, 'req_1', new AbortController().signal)
+
+  expect(timeoutSpy).toHaveBeenCalledWith(600_000)
+  timeoutSpy.mockRestore()
 })

@@ -1,14 +1,13 @@
 import 'server-only'
 import type { AttemptContext, ProviderAdapter, TargetSettings } from '@/lib/adapters/types'
 import type { ProviderRow } from '@/lib/db/schema'
+import { DEFAULT_TIMEOUT_MS } from '@/lib/timeouts'
 import {
   RoutedError,
   classifyProviderError,
   type ClassifiedError,
 } from './errors'
 import type { Candidate } from './resolve'
-
-const DEFAULT_TIMEOUT_MS = 120_000
 
 export interface AttemptRecord {
   n: number
