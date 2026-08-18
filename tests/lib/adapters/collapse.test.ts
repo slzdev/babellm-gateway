@@ -141,6 +141,15 @@ test('a stream that yields nothing throws rather than returning an empty complet
   )
 })
 
+test('a stream of only usage chunks throws rather than returning zero choices', async () => {
+  // The final chunk of a real stream carries usage with an empty `choices`
+  // array. A stream of NOTHING BUT that has not answered the request, and
+  // must fail over rather than hand back a completion with no choices.
+  await expect(collapseChatStream(stream([
+    chunk([], { usage: { prompt_tokens: 40, completion_tokens: 0, total_tokens: 40 } }),
+  ]))).rejects.toThrow(/stream ended without producing/i)
+})
+
 test('propagates an error thrown mid-stream', async () => {
   async function* failing(): AsyncIterable<ChatCompletionChunk> {
     yield chunk([{ index: 0, delta: { content: 'a' }, finish_reason: null }]) as ChatCompletionChunk

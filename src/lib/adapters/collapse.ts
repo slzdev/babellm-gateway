@@ -179,9 +179,13 @@ export async function collapseChatStream(
   }
 
   // An upstream that opened a stream and then said nothing has not answered
-  // the request. Throwing rather than returning an empty completion is what
-  // lets execute()'s chain classify it as retryable and fail over.
-  if (!head) {
+  // the request. That covers a stream with zero chunks, but also a stream
+  // that carried only a trailing usage chunk (whose `choices` is deliberately
+  // empty) and never produced a single choice — that is the same non-answer,
+  // just with usage attached. Throwing rather than returning an empty
+  // completion is what lets execute()'s chain classify it as retryable and
+  // fail over.
+  if (!head || choices.size === 0) {
     throw new Error('The upstream stream ended without producing any chunks.')
   }
 
