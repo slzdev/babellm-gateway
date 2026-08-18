@@ -384,9 +384,33 @@ test('forceStream on a responses provider forces respond() natively', async () =
   expect(result).toEqual({ id: 'resp_1', object: 'response', status: 'completed' })
 })
 
-test('forceStream on a gemini provider forces it too', async () => {
+test('forceStream on a responses provider forces chat() too', async () => {
+  // Responses events, not chat chunks: this adapter's `chatStream` translates
+  // the upstream's own dialect through chat-to-responses.ts.
+  const fetchSpy = stubStreamingFetch(sse(
+    { type: 'response.output_text.delta', delta: 'hi', output_index: 0 },
+    {
+      type: 'response.completed',
+      response: { id: 'resp_1', object: 'response', status: 'completed', output: [] },
+    },
+  ))
+  const adapter = createAdapter(provider({ apiFlavor: 'responses' }), { forceStream: true })
+  await adapter.chat(chatBody, chatCtx)
+
+  // The Responses branch wraps both native pairs: withForcedResponseStream
+  // replaces `respond` alone, so dropping the inner withForcedChatStream would
+  // leave the Chat ingress on this provider calling an unstreamed upstream.
+  expect(calledPath(fetchSpy)).toMatch(/\/responses$/)
+  expect(sentBody(fetchSpy).stream).toBe(true)
+})
+
+test('a forced gemini provider still constructs with both chat and respond', async () => {
   // Flavor says nothing about Gemini, but forcing is about the upstream call
-  // rather than the dialect, so the gemini branch must apply it as well.
+  // rather than the dialect, so the gemini branch must apply it as well. Only
+  // construction is asserted: Gemini talks through @google/genai rather than
+  // fetch, and createAdapter exposes no seam for the client stub the adapter's
+  // own tests inject, so the wire assertion the other branches get is not
+  // reachable from here. adapters/wrappers.test.ts covers the behaviour.
   const adapter = createAdapter(
     provider({ adapter: 'gemini', credentials: encryptJson({ apiKey: 'k' }) }),
     { forceStream: true },

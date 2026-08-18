@@ -284,6 +284,23 @@ test('execute passes the candidate ceiling to the adapter factory', async () => 
 
   expect(createAdapter).toHaveBeenCalledWith(
     expect.anything(),
-    expect.objectContaining({ flavor: 'chat_completions', paths: null, maxOutputTokens: 64000 }),
+    expect.objectContaining({
+      flavor: 'chat_completions', paths: null, maxOutputTokens: 64000, forceStream: false,
+    }),
+  )
+})
+
+test('execute passes the candidate forcing decision to the adapter factory', async () => {
+  const createAdapter = vi.fn().mockReturnValue(stubAdapter)
+  const run = vi.fn().mockResolvedValue('body')
+  const chain = [{ ...candidate('a'), forceUpstreamStream: true }]
+
+  await execute(chain, 'req_1', live, { createAdapter }, run)
+
+  // The catalog model's tri-state override lives on the candidate, not on the
+  // provider row — the provider column alone would not produce this.
+  expect(createAdapter).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ forceStream: true }),
   )
 })
