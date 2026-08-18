@@ -45,6 +45,31 @@ function calledPath(fetchSpy: ReturnType<typeof stubFetch>): string {
   return String(fetchSpy.mock.calls[0][0])
 }
 
+/** The SSE body a streaming upstream returns. `stubFetch` answers JSON, which
+ *  the SDK's streaming path cannot parse — a forced adapter calls the
+ *  streaming endpoint, so it needs an event stream to drain. */
+function sse(...events: unknown[]): string {
+  return events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n'
+}
+
+function stubStreamingFetch(body: string) {
+  const fetchSpy = vi.fn().mockResolvedValue(
+    new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+  )
+  vi.stubGlobal('fetch', fetchSpy)
+  return fetchSpy
+}
+
+/** What the adapter actually put on the wire. */
+function sentBody(fetchSpy: ReturnType<typeof stubFetch>): Record<string, unknown> {
+  return JSON.parse(String(fetchSpy.mock.calls[0][1].body))
+}
+
+const streamedChunk = {
+  id: 'chatcmpl-up', object: 'chat.completion.chunk', created: 1, model: 'model-x',
+  choices: [{ index: 0, delta: { role: 'assistant', content: 'hi' }, finish_reason: 'stop' }],
+}
+
 function provider(overrides: Partial<ProviderRow> = {}): ProviderRow {
   return {
     id: '00000000-0000-0000-0000-000000000001',
@@ -54,6 +79,7 @@ function provider(overrides: Partial<ProviderRow> = {}): ProviderRow {
     credentials: encryptJson({ apiKey: 'sk-test' }),
     config: '{}',
     apiFlavor: 'chat_completions',
+    forceUpstreamStream: false,
     enabled: true,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -155,7 +181,10 @@ test('a responses-flavored openai_compatible provider still needs a base URL', (
 
 test('an explicit flavor overrides the provider column', async () => {
   const fetchSpy = stubFetch()
-  const adapter = createAdapter(provider({ apiFlavor: 'chat_completions' }), 'responses')
+  const adapter = createAdapter(
+    provider({ apiFlavor: 'chat_completions' }),
+    { flavor: 'responses' },
+  )
   await adapter.chat(chatBody, chatCtx)
 
   // The model's override arrives as an argument, so a model may reach the
@@ -167,8 +196,7 @@ test('a model path override moves the chat completions endpoint', async () => {
   const fetchSpy = stubFetch()
   const adapter = createAdapter(
     provider({ adapter: 'openai_compatible', baseUrl: 'https://api.example/v1' }),
-    'chat_completions',
-    { chatCompletionsPath: '/api/chat' },
+    { flavor: 'chat_completions', paths: { chatCompletionsPath: '/api/chat' } },
   )
   await adapter.chat(chatBody, chatCtx)
 
@@ -179,8 +207,7 @@ test('a model path override moves the responses endpoint', async () => {
   const fetchSpy = stubFetch()
   const adapter = createAdapter(
     provider({ adapter: 'openai_compatible', baseUrl: 'https://api.example/v1' }),
-    'responses',
-    { responsesPath: '/api/v2/responses' },
+    { flavor: 'responses', paths: { responsesPath: '/api/v2/responses' } },
   )
   await adapter.chat(chatBody, chatCtx)
 
@@ -195,8 +222,7 @@ test('a model that names no path leaves the provider config alone', async () => 
       baseUrl: 'https://api.example/v1',
       config: JSON.stringify({ chatCompletionsPath: '/provider/chat' }),
     }),
-    'chat_completions',
-    { chatCompletionsPath: null, responsesPath: null },
+    { flavor: 'chat_completions', paths: { chatCompletionsPath: null, responsesPath: null } },
   )
   await adapter.chat(chatBody, chatCtx)
 
@@ -222,8 +248,7 @@ test('a model cannot move the models listing path', async () => {
       baseUrl: 'https://api.example/v1',
       config: JSON.stringify({ modelsPath: '/api/models' }),
     }),
-    'chat_completions',
-    { chatCompletionsPath: '/api/chat' },
+    { flavor: 'chat_completions', paths: { chatCompletionsPath: '/api/chat' } },
   )
   await adapter.listModels!({ signal: new AbortController().signal })
 
@@ -235,8 +260,7 @@ test('gemini accepts model path overrides and ignores them', () => {
   // that a model carrying paths does not break its construction.
   const adapter = createAdapter(
     provider({ adapter: 'gemini', credentials: encryptJson({ apiKey: 'g-key' }) }),
-    'chat_completions',
-    { chatCompletionsPath: '/api/chat' },
+    { flavor: 'chat_completions', paths: { chatCompletionsPath: '/api/chat' } },
   )
 
   expect(typeof adapter.chat).toBe('function')
@@ -246,7 +270,7 @@ test('an anthropic_messages model hits /messages, not /chat/completions or /resp
   const fetchSpy = stubFetch()
   const adapter = createAdapter(
     provider({ adapter: 'openai_compatible', baseUrl: 'https://api.example/v1' }),
-    'anthropic_messages',
+    { flavor: 'anthropic_messages' },
   )
   expect(typeof adapter.respond).toBe('function')
   await adapter.chat(chatBody, chatCtx)
@@ -263,8 +287,7 @@ test('a model path override moves the messages endpoint', async () => {
       baseUrl: 'https://api.example/v1',
       config: JSON.stringify({ messagesPath: '/provider/messages' }),
     }),
-    'anthropic_messages',
-    { messagesPath: '/anthropic/v1/messages' },
+    { flavor: 'anthropic_messages', paths: { messagesPath: '/anthropic/v1/messages' } },
   )
   await adapter.chat(chatBody, chatCtx)
 
@@ -275,13 +298,100 @@ test('a model path override moves the messages endpoint', async () => {
 })
 
 test('the gemini adapter ignores an anthropic_messages flavor, as it ignores the others', () => {
-  const adapter = createAdapter(provider({ adapter: 'gemini' }), 'anthropic_messages')
+  const adapter = createAdapter(provider({ adapter: 'gemini' }), { flavor: 'anthropic_messages' })
   expect(typeof adapter.chat).toBe('function')
 })
 
 test('an openai_compatible provider with no base URL is still refused', () => {
   expect(() => createAdapter(
     provider({ adapter: 'openai_compatible', baseUrl: null }),
-    'anthropic_messages',
+    { flavor: 'anthropic_messages' },
   )).toThrow(/no base URL/)
+})
+
+test('an unforced provider still calls the non-streaming endpoint', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(provider({ apiFlavor: 'chat_completions' }))
+  await adapter.chat(chatBody, chatCtx)
+
+  expect(sentBody(fetchSpy).stream).toBe(false)
+})
+
+test('forceStream makes chat() ask the upstream for a stream', async () => {
+  const fetchSpy = stubStreamingFetch(sse(streamedChunk))
+  const adapter = createAdapter(
+    provider({ apiFlavor: 'chat_completions' }),
+    { forceStream: true },
+  )
+  const result = await adapter.chat(chatBody, chatCtx)
+
+  // The upstream saw a stream…
+  expect(sentBody(fetchSpy).stream).toBe(true)
+  // …and the caller got a single completion regardless.
+  expect(result.object).toBe('chat.completion')
+  expect(result.choices[0].message.content).toBe('hi')
+})
+
+test('the provider column forces even when settings name no forceStream', async () => {
+  const fetchSpy = stubStreamingFetch(sse(streamedChunk))
+  const adapter = createAdapter(provider({ forceUpstreamStream: true }))
+  await adapter.chat(chatBody, chatCtx)
+
+  // catalog sync and the provider test button call createAdapter with no
+  // settings at all; the provider's own column has to still apply.
+  expect(sentBody(fetchSpy).stream).toBe(true)
+})
+
+test('an explicit forceStream: false beats a provider column set to true', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(
+    provider({ forceUpstreamStream: true }),
+    { forceStream: false },
+  )
+  await adapter.chat(chatBody, chatCtx)
+
+  // This is how a catalog model opts out of its provider.
+  expect(sentBody(fetchSpy).stream).toBe(false)
+})
+
+test('forceStream reaches respond() through withRespondViaChat on a chat-only adapter', async () => {
+  const fetchSpy = stubStreamingFetch(sse(streamedChunk))
+  const adapter = createAdapter(
+    provider({ apiFlavor: 'chat_completions' }),
+    { forceStream: true },
+  )
+  await adapter.respond({ model: 'fast', input: 'hi' } as never, chatCtx)
+
+  // The forcing wrapper goes INSIDE withRespondViaChat, so the Responses
+  // ingress is forced too. Reversing that order would leave this at false.
+  expect(calledPath(fetchSpy)).toMatch(/\/chat\/completions$/)
+  expect(sentBody(fetchSpy).stream).toBe(true)
+})
+
+test('forceStream on a responses provider forces respond() natively', async () => {
+  const fetchSpy = stubStreamingFetch(sse(
+    {
+      type: 'response.completed',
+      response: { id: 'resp_1', object: 'response', status: 'completed' },
+    },
+  ))
+  const adapter = createAdapter(provider({ apiFlavor: 'responses' }), { forceStream: true })
+  const result = await adapter.respond({ model: 'fast', input: 'hi' } as never, chatCtx)
+
+  expect(calledPath(fetchSpy)).toMatch(/\/responses$/)
+  expect(sentBody(fetchSpy).stream).toBe(true)
+  // Verbatim, not reassembled: the terminal event carried the whole object.
+  expect(result).toEqual({ id: 'resp_1', object: 'response', status: 'completed' })
+})
+
+test('forceStream on a gemini provider forces it too', async () => {
+  // Flavor says nothing about Gemini, but forcing is about the upstream call
+  // rather than the dialect, so the gemini branch must apply it as well.
+  const adapter = createAdapter(
+    provider({ adapter: 'gemini', credentials: encryptJson({ apiKey: 'k' }) }),
+    { forceStream: true },
+  )
+
+  expect(typeof adapter.chat).toBe('function')
+  expect(typeof adapter.respond).toBe('function')
 })

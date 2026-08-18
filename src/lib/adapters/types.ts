@@ -1,5 +1,6 @@
 import type OpenAI from 'openai'
 import type { AdapterType } from '@/lib/adapters/credentials'
+import type { ApiFlavor } from '@/lib/api-flavors'
 import type { CatalogFields } from '@/lib/catalog/types'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
 import type { ResponsesRequest } from '@/lib/schemas/responses'
@@ -118,3 +119,20 @@ export interface ProviderAdapter {
  * place that is allowed to know these two methods are missing.
  */
 export type ChatOnlyAdapter = Omit<ProviderAdapter, 'respond' | 'respondStream'>
+
+/**
+ * What resolution worked out about one target, as opposed to what the provider
+ * is. One object rather than four positional arguments on `createAdapter`,
+ * because they are all the same kind of fact and four consecutive optionals
+ * have nothing but their order to tell them apart at a call site.
+ *
+ * Every field is optional so a caller with no model in hand — catalog sync,
+ * the provider test button — can omit the lot and get the provider's own
+ * settings.
+ */
+export interface TargetSettings {
+  flavor?: ApiFlavor
+  paths?: ModelPathOverrides | null
+  maxOutputTokens?: number | null
+  forceStream?: boolean
+}

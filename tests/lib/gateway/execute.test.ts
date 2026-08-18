@@ -283,6 +283,7 @@ test('execute passes the candidate ceiling to the adapter factory', async () => 
   await execute(chain, 'req_1', live, { createAdapter }, run)
 
   expect(createAdapter).toHaveBeenCalledWith(
-    expect.anything(), 'chat_completions', null, 64000,
+    expect.anything(),
+    expect.objectContaining({ flavor: 'chat_completions', paths: null, maxOutputTokens: 64000 }),
   )
 })

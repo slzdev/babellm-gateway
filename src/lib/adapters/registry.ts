@@ -7,9 +7,9 @@ import { createGeminiAdapter } from './gemini'
 import { createOpenAIAdapter } from './openai'
 import { createResponsesAdapter } from './openai/responses'
 import type {
-  ModelPathOverrides, ProviderAdapter, ProviderConfig, ProviderRuntime,
+  ModelPathOverrides, ProviderAdapter, ProviderConfig, ProviderRuntime, TargetSettings,
 } from './types'
-import { withRespondViaChat } from './wrappers'
+import { withForcedChatStream, withForcedResponseStream, withRespondViaChat } from './wrappers'
 
 export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
   return {
@@ -24,28 +24,32 @@ export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
 
 export function createAdapter(
   provider: ProviderRow,
-  flavor: ApiFlavor = provider.apiFlavor,
-  paths?: ModelPathOverrides | null,
-  maxOutputTokens?: number | null,
+  settings: TargetSettings = {},
 ): ProviderAdapter {
-  const runtime = withModelPaths(resolveProviderRuntime(provider), paths)
+  const flavor = settings.flavor ?? provider.apiFlavor
+  const forceStream = settings.forceStream ?? provider.forceUpstreamStream
+  const maxOutputTokens = settings.maxOutputTokens ?? null
+  const runtime = withModelPaths(resolveProviderRuntime(provider), settings.paths)
 
   switch (runtime.adapter) {
     case 'openai':
-      return flavoredAdapter(runtime, flavor, maxOutputTokens ?? null)
+      return flavoredAdapter(runtime, flavor, maxOutputTokens, forceStream)
     case 'openai_compatible':
       if (!runtime.baseUrl) {
         throw new Error(
           `Provider "${runtime.name}" is openai_compatible but has no base URL configured.`,
         )
       }
-      return flavoredAdapter(runtime, flavor, maxOutputTokens ?? null)
-    case 'gemini':
+      return flavoredAdapter(runtime, flavor, maxOutputTokens, forceStream)
+    case 'gemini': {
       // Gemini speaks neither OpenAI dialect natively, so flavor says nothing
       // about it: the adapter translates from Chat Completions either way,
       // and gets `respond`/`respondStream` from the same wrapper any
-      // chat-only adapter does.
-      return withRespondViaChat(createGeminiAdapter(runtime), runtime.name)
+      // chat-only adapter does. Forcing applies all the same — it is about the
+      // upstream call, not the dialect.
+      const base = createGeminiAdapter(runtime)
+      return withRespondViaChat(forceStream ? withForcedChatStream(base) : base, runtime.name)
+    }
     case 'bedrock':
       throw new UnsupportedOperationError(
         `The "${runtime.adapter}" adapter is not available yet.`,
@@ -73,18 +77,31 @@ function withModelPaths(
 }
 
 /**
- * Dispatches on the flavor the model resolved to. Two of the three branches
- * need `withRespondViaChat`; the Responses adapter already implements
- * chat/chatStream through chat-to-responses.ts and is returned as-is.
+ * Dispatches on the flavor the model resolved to, then applies forcing. Two of
+ * the three branches need `withRespondViaChat`; the Responses adapter already
+ * implements chat/chatStream through chat-to-responses.ts.
+ *
+ * For a chat-only adapter the forcing wrapper goes INSIDE withRespondViaChat,
+ * so `respond` derives from the already-forced `chat` and one wrapper covers
+ * both ingresses. Reversing that order would leave the Responses ingress
+ * calling a non-streaming upstream on a provider that refuses one.
  */
 function flavoredAdapter(
   runtime: ProviderRuntime,
   flavor: ApiFlavor,
   maxOutputTokens: number | null,
+  forceStream: boolean,
 ): ProviderAdapter {
-  if (flavor === 'responses') return createResponsesAdapter(runtime)
-  if (flavor === 'anthropic_messages') {
-    return withRespondViaChat(createAnthropicAdapter(runtime, maxOutputTokens), runtime.name)
+  if (flavor === 'responses') {
+    const base = createResponsesAdapter(runtime)
+    // Both native pairs wrapped independently: a Responses request must not
+    // round-trip through chat shape merely because chat is forced too.
+    return forceStream ? withForcedResponseStream(withForcedChatStream(base)) : base
   }
-  return withRespondViaChat(createOpenAIAdapter(runtime), runtime.name)
+
+  const base = flavor === 'anthropic_messages'
+    ? createAnthropicAdapter(runtime, maxOutputTokens)
+    : createOpenAIAdapter(runtime)
+
+  return withRespondViaChat(forceStream ? withForcedChatStream(base) : base, runtime.name)
 }
