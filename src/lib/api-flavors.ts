@@ -10,3 +10,11 @@
 export const API_FLAVORS = ['chat_completions', 'responses'] as const
 
 export type ApiFlavor = (typeof API_FLAVORS)[number]
+
+/** Human-readable labels for the raw enum values, shared by every selector
+ *  that renders them — the target dialogs' `ApiFlavorSelect` and the
+ *  provider dialogs alike — so the two screens read as one concept. */
+export const API_FLAVOR_LABELS: Record<ApiFlavor, string> = {
+  chat_completions: 'Chat Completions',
+  responses: 'Responses',
+}

@@ -10,7 +10,7 @@ import { AdvancedPathsFields } from './advanced-paths-fields'
 import { CredentialField } from './provider-fields'
 import { RegistryNamespaceField } from './registry-namespace-field'
 import type { AdapterType } from '@/lib/adapters/credentials'
-import { API_FLAVORS } from '@/lib/api-flavors'
+import { API_FLAVOR_LABELS, API_FLAVORS } from '@/lib/api-flavors'
 
 const ADAPTERS: AdapterType[] = ['openai', 'openai_compatible', 'gemini', 'bedrock']
 
@@ -56,7 +56,9 @@ export function CreateProviderDialog() {
               defaultValue="chat_completions"
               className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
             >
-              {API_FLAVORS.map((flavor) => <option key={flavor} value={flavor}>{flavor}</option>)}
+              {API_FLAVORS.map((flavor) => (
+                <option key={flavor} value={flavor}>{API_FLAVOR_LABELS[flavor]}</option>
+              ))}
             </select>
             <p className="text-xs text-muted-foreground">
               Choose Responses if this endpoint returns 404 on

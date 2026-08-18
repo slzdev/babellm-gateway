@@ -1,11 +1,6 @@
 'use client'
 
-import { API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
-
-const LABELS: Record<ApiFlavor, string> = {
-  chat_completions: 'Chat Completions',
-  responses: 'Responses',
-}
+import { API_FLAVOR_LABELS as LABELS, API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
 
 /**
  * The flavor selector both target dialogs render.
