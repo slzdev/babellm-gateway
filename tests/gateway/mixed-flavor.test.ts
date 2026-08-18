@@ -44,29 +44,6 @@ function responseResult(text: string) {
   }
 }
 
-/**
- * A Responses-shaped result, for a fake `respond` on a Responses-native
- * target. Unused by the tests below as things stand — "a chat request still
- * reaches a responses-flavored target" pins ingress dispatch instead (see its
- * comment) — but kept, mirroring `completion()`, for the next test that needs
- * one.
- */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function responsesResult(from: string) {
-  return {
-    id: 'resp_1', object: 'response', created_at: 1, model: `${from}-model`,
-    status: 'completed', incomplete_details: null,
-    output: [{
-      type: 'message', id: 'msg_1', role: 'assistant', status: 'completed',
-      content: [{ type: 'output_text', text: from, annotations: [] }],
-    }],
-    usage: {
-      input_tokens: 1, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-      output_tokens: 1, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 2,
-    },
-  }
-}
-
 function completion(from: string) {
   return {
     id: 'chatcmpl-upstream', object: 'chat.completion', created: 1,
