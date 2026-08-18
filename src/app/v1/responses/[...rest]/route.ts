@@ -4,7 +4,11 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 /**
- * Retrieval, deletion and cancellation are deliberately unimplemented.
+ * Retrieval, deletion, cancellation and input-item listing are deliberately
+ * unimplemented — covering `/v1/responses/{id}`, `/v1/responses/{id}/cancel`
+ * and `/v1/responses/{id}/input_items` alike via a catch-all segment, so all
+ * four unsupported endpoints get this explanation rather than three of them
+ * getting it and the rest falling through to Next's default 404.
  *
  * None of them carries a `model`, and this gateway passes provider response ids
  * through unrewritten, so there is nothing to route on: the id names a

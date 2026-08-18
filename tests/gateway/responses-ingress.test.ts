@@ -57,6 +57,7 @@ test('rejects background at parse time, before any target is tried', async () =>
 
   expect(res.status).toBe(400)
   expect(respond).not.toHaveBeenCalled()
+  expect((await res.json()).error.message).toContain('GET /v1/responses/{id}')
 })
 
 test('fails over to a second Responses target', async () => {
@@ -122,9 +123,27 @@ test('streams named events and never sends [DONE]', async () => {
 })
 
 test('retrieval says why it is unsupported rather than 404ing blankly', async () => {
-  const { GET } = await import('@/app/v1/responses/[id]/route')
+  const { GET } = await import('@/app/v1/responses/[...rest]/route')
 
   const res = await GET()
   expect(res.status).toBe(404)
   expect((await res.json()).error.code).toBe('unsupported_endpoint')
+})
+
+test('cancel and input_items get the same explanation, not a bare 404', async () => {
+  // `[...rest]` is a catch-all segment: Next routes any depth under
+  // `/v1/responses/{id}/...` here, including `/cancel` and `/input_items`
+  // (spec §3.3, §9). This only exercises the exported handlers directly —
+  // Next's file-based routing is what actually maps those multi-segment
+  // paths here — but it pins that every verb this file exports answers with
+  // the same explanatory 404, not Next's default one.
+  const { GET, POST, DELETE } = await import('@/app/v1/responses/[...rest]/route')
+
+  for (const handler of [GET, POST, DELETE]) {
+    const res = await handler()
+    expect(res.status).toBe(404)
+    const body = await res.json()
+    expect(body.error.code).toBe('unsupported_endpoint')
+    expect(body.error.message).toContain('POST /v1/responses only')
+  }
 })
