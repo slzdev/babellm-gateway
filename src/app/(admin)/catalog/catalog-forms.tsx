@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { ApiFlavorSelect } from '@/components/admin/api-flavor-select'
 import { FormDialog } from '@/components/admin/form-dialog'
 import type { CatalogListItem } from '@/lib/admin/catalog'
-import { MODEL_PATH_FIELDS } from '@/lib/adapters/openai/paths'
+import { MODEL_PATH_FIELDS } from '@/lib/adapters/paths'
 import {
   addManualModelAction, clearOverrideAction, routeToModelAction,
   saveRegistrySettingsAction, setModelGatewayAction, setOverrideAction, type ActionState,

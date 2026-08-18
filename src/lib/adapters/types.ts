@@ -32,11 +32,12 @@ export interface ProviderConfig {
    * somewhere other than where the SDK looks for it. Each names the whole path
    * on the base URL's host, replacing whatever prefix (`/v1`) the base URL
    * carries; only the default, meaning absent, is appended to the base URL as
-   * it stands — see DEFAULT_PATHS and resolveRequestPaths in ./openai/paths.
+   * it stands — see DEFAULT_PATHS and resolveRequestPaths in ./paths.
    */
   modelsPath?: string
   chatCompletionsPath?: string
   responsesPath?: string
+  messagesPath?: string
   [key: string]: unknown
 }
 
@@ -52,6 +53,7 @@ export interface ProviderConfig {
 export interface ModelPathOverrides {
   chatCompletionsPath?: string | null
   responsesPath?: string | null
+  messagesPath?: string | null
 }
 
 export interface ProviderRuntime {

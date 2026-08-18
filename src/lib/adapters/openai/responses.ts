@@ -14,7 +14,7 @@ import type {
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { toProviderError } from './errors'
-import { resolveRequestPaths } from './paths'
+import { resolveRequestPaths } from '../paths'
 
 // The symmetric misconfiguration to the Chat Completions hint below: a
 // provider set to `responses` that in fact only speaks Chat Completions. The

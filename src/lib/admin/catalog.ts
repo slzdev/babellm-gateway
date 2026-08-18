@@ -15,7 +15,7 @@ import type {
   CatalogFields, FieldSources, Modalities, ModelKind,
 } from '@/lib/catalog/types'
 import { API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
-import { parseProviderPath, resolveProviderPaths } from '@/lib/adapters/openai/paths'
+import { parseProviderPath, resolveProviderPaths } from '@/lib/adapters/paths'
 import type { ProviderConfig } from '@/lib/adapters/types'
 import type { AdapterType } from '@/lib/adapters/credentials'
 
@@ -44,10 +44,13 @@ export interface CatalogListItem {
   apiFlavor: ApiFlavor | null
   chatCompletionsPath: string | null
   responsesPath: string | null
+  // No catalog_models column yet for this one — see Task 3 — so it always
+  // reads null until that override becomes storable.
+  messagesPath: string | null
   /** What a blank field on this row would inherit, so the dialog can show it
    *  as a placeholder instead of sending an operator to the Providers page. */
   providerApiFlavor: ApiFlavor
-  providerPaths: { chatCompletionsPath: string; responsesPath: string }
+  providerPaths: { chatCompletionsPath: string; responsesPath: string; messagesPath: string }
 }
 
 export interface CatalogFilter {
@@ -66,7 +69,7 @@ function toItem(
   providerName: string,
   providerAdapter: AdapterType,
   providerApiFlavor: ApiFlavor,
-  providerPaths: { chatCompletionsPath: string; responsesPath: string },
+  providerPaths: { chatCompletionsPath: string; responsesPath: string; messagesPath: string },
   routeTargetCount: number,
 ): CatalogListItem {
   return {
@@ -94,6 +97,7 @@ function toItem(
     apiFlavor: row.apiFlavor,
     chatCompletionsPath: row.chatCompletionsPath,
     responsesPath: row.responsesPath,
+    messagesPath: null,
     providerApiFlavor,
     providerPaths,
   }
@@ -127,7 +131,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
     .map(({
       model, providerName, providerAdapter, providerApiFlavor, providerConfig,
     }) => {
-      const { chatCompletions, responses } = resolveProviderPaths(
+      const { chatCompletions, responses, messages } = resolveProviderPaths(
         JSON.parse(providerConfig) as ProviderConfig,
       )
       return toItem(
@@ -135,7 +139,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
         providerName,
         providerAdapter,
         providerApiFlavor,
-        { chatCompletionsPath: chatCompletions, responsesPath: responses },
+        { chatCompletionsPath: chatCompletions, responsesPath: responses, messagesPath: messages },
         targets.filter(
           (t) => t.providerId === model.providerId && t.upstreamModel === model.modelId,
         ).length,

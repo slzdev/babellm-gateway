@@ -9,7 +9,7 @@ import { adapterTypes, type AdapterType } from '@/lib/adapters/credentials'
 import { API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
 import {
   PATH_FIELDS, mergeProviderPaths, type ProviderPathInput,
-} from '@/lib/adapters/openai/paths'
+} from '@/lib/adapters/paths'
 import { parseRegistryNamespace } from '@/lib/catalog/config'
 import { syncProvider, type SyncResult } from '@/lib/catalog/sync'
 

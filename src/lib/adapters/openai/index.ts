@@ -9,7 +9,7 @@ import type {
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { toProviderError } from './errors'
-import { resolveRequestPaths } from './paths'
+import { resolveRequestPaths } from '../paths'
 
 // Re-exported because tests and the registry import the factory type from the
 // adapter module rather than reaching past it.

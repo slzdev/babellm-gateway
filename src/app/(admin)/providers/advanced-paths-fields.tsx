@@ -7,7 +7,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import type { AdapterType } from '@/lib/adapters/credentials'
-import { PATH_FIELDS } from '@/lib/adapters/openai/paths'
+import { PATH_FIELDS } from '@/lib/adapters/paths'
 
 /**
  * Per-endpoint path overrides, for a clone that hangs the OpenAI shape off

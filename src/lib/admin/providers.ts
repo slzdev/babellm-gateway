@@ -8,7 +8,7 @@ import { decryptJson, encryptJson } from '@/lib/crypto'
 import { credentialSchemas, maskCredentials, type AdapterType } from '@/lib/adapters/credentials'
 import { createAdapter } from '@/lib/adapters/registry'
 import type { ApiFlavor } from '@/lib/api-flavors'
-import { PATH_FIELDS } from '@/lib/adapters/openai/paths'
+import { PATH_FIELDS } from '@/lib/adapters/paths'
 import { parseProviderConfig, readRegistryNamespace } from '@/lib/catalog/config'
 
 export interface ProviderInput {

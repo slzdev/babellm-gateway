@@ -1,4 +1,4 @@
-import type { ProviderConfig } from '../types'
+import type { ProviderConfig } from './types'
 
 /**
  * What the OpenAI SDK appends to `baseURL` for each endpoint. These are the
@@ -13,6 +13,11 @@ export const DEFAULT_PATHS = {
   models: '/models',
   chatCompletions: '/chat/completions',
   responses: '/responses',
+  // Relative like the others, so a base URL that carries its own `/v1`
+  // still resolves correctly. The Anthropic SDK's own default is the
+  // absolute `/v1/messages`; the adapter always passes an explicit path,
+  // so that default never applies and cannot double the prefix.
+  messages: '/messages',
 } as const
 
 export type ProviderPaths = { -readonly [K in keyof typeof DEFAULT_PATHS]: string }
@@ -22,6 +27,7 @@ const CONFIG_KEYS: Record<keyof ProviderPaths, string> = {
   models: 'modelsPath',
   chatCompletions: 'chatCompletionsPath',
   responses: 'responsesPath',
+  messages: 'messagesPath',
 }
 
 /**
@@ -49,6 +55,12 @@ export const PATH_FIELDS = [
     placeholder: DEFAULT_PATHS.responses,
     help: 'Where this provider serves the Responses API.',
   },
+  {
+    name: 'messagesPath',
+    label: 'Messages path',
+    placeholder: DEFAULT_PATHS.messages,
+    help: 'Where this provider serves the Anthropic Messages API.',
+  },
 ] as const
 
 /**
@@ -69,6 +81,12 @@ export const MODEL_PATH_FIELDS = [
     label: 'Responses path',
     placeholder: DEFAULT_PATHS.responses,
     help: 'Where this one model answers the Responses API.',
+  },
+  {
+    name: 'messagesPath',
+    label: 'Messages path',
+    placeholder: DEFAULT_PATHS.messages,
+    help: 'Where this one model answers the Anthropic Messages API.',
   },
 ] as const
 
@@ -154,6 +172,7 @@ export function resolveProviderPaths(config: ProviderConfig): ProviderPaths {
     models: resolveOne(config, 'models').path,
     chatCompletions: resolveOne(config, 'chatCompletions').path,
     responses: resolveOne(config, 'responses').path,
+    messages: resolveOne(config, 'messages').path,
   }
 }
 
@@ -192,6 +211,7 @@ export function resolveRequestPaths(
     models: resolve('models'),
     chatCompletions: resolve('chatCompletions'),
     responses: resolve('responses'),
+    messages: resolve('messages'),
   }
 }
 

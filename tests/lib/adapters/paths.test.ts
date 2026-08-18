@@ -1,12 +1,13 @@
 import { describe, expect, test } from 'vitest'
 import {
   DEFAULT_PATHS,
+  MODEL_PATH_FIELDS,
   PATH_FIELDS,
   mergeProviderPaths,
   parseProviderPath,
   resolveProviderPaths,
   resolveRequestPaths,
-} from '@/lib/adapters/openai/paths'
+} from '@/lib/adapters/paths'
 
 describe('parseProviderPath', () => {
   test('reads a blank value as "use the default"', () => {
@@ -49,11 +50,13 @@ describe('resolveProviderPaths', () => {
       models: '/models',
       chatCompletions: '/chat/completions',
       responses: '/responses',
+      messages: '/messages',
     })
     expect(DEFAULT_PATHS).toEqual({
       models: '/models',
       chatCompletions: '/chat/completions',
       responses: '/responses',
+      messages: '/messages',
     })
   })
 
@@ -62,6 +65,7 @@ describe('resolveProviderPaths', () => {
       models: '/models',
       chatCompletions: '/api/v2/chat',
       responses: '/responses',
+      messages: '/messages',
     })
   })
 
@@ -74,6 +78,7 @@ describe('resolveProviderPaths', () => {
       models: '/api/models',
       chatCompletions: '/api/chat',
       responses: '/api/responses',
+      messages: '/messages',
     })
   })
 
@@ -96,6 +101,7 @@ describe('resolveRequestPaths', () => {
       models: '/models',
       chatCompletions: '/chat/completions',
       responses: '/responses',
+      messages: '/messages',
     })
   })
 
@@ -111,6 +117,7 @@ describe('resolveRequestPaths', () => {
       models: '/models',
       chatCompletions: '/chat/completions',
       responses: 'https://example.com/openai/v1/responses',
+      messages: '/messages',
     })
   })
 
@@ -162,13 +169,13 @@ describe('resolveRequestPaths', () => {
 describe('PATH_FIELDS', () => {
   test('describes each endpoint once, keyed by the config key it writes', () => {
     expect(PATH_FIELDS.map((f) => f.name)).toEqual([
-      'modelsPath', 'chatCompletionsPath', 'responsesPath',
+      'modelsPath', 'chatCompletionsPath', 'responsesPath', 'messagesPath',
     ])
   })
 
   test('carries the default as the placeholder, so a blank box reads as "default"', () => {
     expect(PATH_FIELDS.map((f) => f.placeholder)).toEqual([
-      '/models', '/chat/completions', '/responses',
+      '/models', '/chat/completions', '/responses', '/messages',
     ])
   })
 })
@@ -213,4 +220,22 @@ describe('mergeProviderPaths', () => {
     expect(() => mergeProviderPaths({}, { modelsPath: 'https://api.x.ai/v1/models' }))
       .toThrow(/full URL/i)
   })
+})
+
+test('messages defaults to /messages and joins onto the base URL', () => {
+  const paths = resolveRequestPaths({}, 'https://api.anthropic.com/v1')
+  expect(paths.messages).toBe('/messages')
+})
+
+test('a configured messages path resolves against the base URL origin', () => {
+  const paths = resolveRequestPaths(
+    { messagesPath: '/anthropic/v1/messages' },
+    'https://gateway.test/openai/v1',
+  )
+  expect(paths.messages).toBe('https://gateway.test/anthropic/v1/messages')
+})
+
+test('the messages path is offered on both the provider and the model forms', () => {
+  expect(PATH_FIELDS.map((f) => f.name)).toContain('messagesPath')
+  expect(MODEL_PATH_FIELDS.map((f) => f.name)).toContain('messagesPath')
 })
