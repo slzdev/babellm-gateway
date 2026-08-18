@@ -1,7 +1,7 @@
 # Per-model API flavor and request paths
 
 Date: 2026-08-18
-Status: approved, not yet implemented
+Status: implemented on `worktree-responses-api` (commits 65e5e4a..153e134)
 
 ## Problem
 
