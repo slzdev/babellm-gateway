@@ -195,6 +195,19 @@ export default async function LogDetailPage({
         )}
       </section>
 
+      {log.tags ? (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold">Tags</h2>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(log.tags).map(([key, value]) => (
+              <Badge key={key} variant="secondary" className="font-mono">
+                {key}={value}
+              </Badge>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {log.droppedParams?.length ? (
         <section className="space-y-2">
           <h2 className="text-sm font-semibold">Dropped parameters</h2>

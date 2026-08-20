@@ -1,3 +1,4 @@
+import { eq, sql } from 'drizzle-orm'
 import { beforeEach, expect, test } from 'vitest'
 import { db, pool } from '@/lib/db'
 import { requestLogs } from '@/lib/db/schema'
@@ -179,4 +180,109 @@ test('maintain provisions the current month and drops what fell out of the windo
   expect(result.created).toContain('request_logs_2030_06')
   expect(result.dropped).toContain('request_logs_2030_01')
   expect(result.dropped).not.toContain('request_logs_2030_06')
+})
+
+test('a written tag set comes back on the row and on the detail', async () => {
+  const id = uuidv7()
+  await postgresStore.write(entry({ id, tags: { env: 'prod', team: 'a' } }))
+
+  const page = await postgresStore.query({ limit: 10 })
+  expect(page.rows[0].tags).toEqual({ env: 'prod', team: 'a' })
+
+  const detail = await postgresStore.get(id)
+  expect(detail?.tags).toEqual({ env: 'prod', team: 'a' })
+})
+
+// The distinction this column exists to preserve: a request that sent no
+// header must be NULL, never {}, so it stays distinguishable from a row
+// written before the feature existed.
+test('an entry with no tags stores SQL NULL, not an empty object', async () => {
+  const id = uuidv7()
+  await postgresStore.write(entry({ id }))
+
+  const page = await postgresStore.query({ limit: 10 })
+  expect(page.rows[0].tags).toBeNull()
+
+  const [row] = await db
+    .select({ isNull: sql<boolean>`${requestLogs.tags} IS NULL` })
+    .from(requestLogs)
+    .where(eq(requestLogs.id, id))
+  expect(row.isNull).toBe(true)
+})
+
+test('an empty tag object is stored as NULL rather than {}', async () => {
+  const id = uuidv7()
+  await postgresStore.write(entry({ id, tags: {} }))
+
+  const [row] = await db
+    .select({ isNull: sql<boolean>`${requestLogs.tags} IS NULL` })
+    .from(requestLogs)
+    .where(eq(requestLogs.id, id))
+  expect(row.isNull).toBe(true)
+})
+
+/** Five rows whose tags (and, for the fifth, status) differ, for the
+ * containment cases below. Uses the `entry()` helper already defined at the
+ * top of this file. The fifth row carries status: 500 alongside env: 'prod'
+ * so a test combining a tag filter with statusClass: 'success' has a row
+ * that the tag filter alone would wrongly include. */
+async function seedTagged() {
+  const rows: Array<Partial<RequestLogEntry>> = [
+    { tags: { env: 'prod', team: 'a' } },
+    { tags: { env: 'prod', team: 'b' } },
+    { tags: { env: 'staging', team: 'a' } },
+    { tags: null },
+    { tags: { env: 'prod' }, status: 500 },
+  ]
+  for (const overrides of rows) {
+    await postgresStore.write(entry(overrides))
+  }
+}
+
+test('one pair matches every row carrying it', async () => {
+  await seedTagged()
+  const page = await postgresStore.query({ limit: 10, tags: { env: 'prod' } })
+  expect(page.rows).toHaveLength(3)
+})
+
+test('two pairs are ANDed, not ORed', async () => {
+  await seedTagged()
+  const page = await postgresStore.query({ limit: 10, tags: { env: 'prod', team: 'a' } })
+  expect(page.rows).toHaveLength(1)
+  expect(page.rows[0].tags).toEqual({ env: 'prod', team: 'a' })
+})
+
+test('a row matches a filter naming only some of its tags', async () => {
+  await seedTagged()
+  const page = await postgresStore.query({ limit: 10, tags: { team: 'b' } })
+  expect(page.rows).toHaveLength(1)
+  expect(page.rows[0].tags).toEqual({ env: 'prod', team: 'b' })
+})
+
+// A NULL column yields NULL under @>, not true — so an untagged row, and
+// every row written before this column existed, is excluded rather than
+// matching an empty set.
+test('an untagged row matches no tag filter', async () => {
+  await seedTagged()
+  const page = await postgresStore.query({ limit: 10, tags: { env: 'prod' } })
+  expect(page.rows.every((row) => row.tags !== null)).toBe(true)
+})
+
+test('a tag filter combines with the other filters', async () => {
+  await seedTagged()
+  const page = await postgresStore.query({
+    limit: 10,
+    tags: { env: 'prod' },
+    statusClass: 'success',
+  })
+  expect(page.rows).toHaveLength(2)
+})
+
+test('a value containing SQL syntax is parameterized, not interpolated', async () => {
+  await seedTagged()
+  const page = await postgresStore.query({
+    limit: 10,
+    tags: { env: "prod' OR 1=1 --" },
+  })
+  expect(page.rows).toHaveLength(0)
 })

@@ -257,6 +257,14 @@ export const requestLogs = pgTable(
     pricing: jsonb('pricing').$type<LoggedPricing | null>(),
 
     droppedParams: jsonb('dropped_params').$type<string[]>(),
+
+    // Caller-supplied key=value pairs from the x-babellm-tags header.
+    // Nullable with no default, and never written as {}: NULL means "this
+    // request sent no tags", which must stay distinguishable from a row
+    // written before this column existed. Unindexed by decision — every
+    // /logs query is already bounded by the uuid v7 keyset range, so a
+    // containment filter scans a bounded slice rather than the table.
+    tags: jsonb('tags').$type<Record<string, string> | null>(),
     payloadCaptured: boolean('payload_captured').notNull().default(false),
 
     // Inline rather than a second table. A separate payloads table needs a

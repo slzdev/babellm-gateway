@@ -42,6 +42,9 @@ export interface RequestLogEntry {
   usage?: LogUsage | null
   cost?: CostBreakdown | null
   droppedParams?: string[]
+  /** Caller-supplied tags from the x-babellm-tags header. Absent or null both
+   * mean "no tags"; the store writes SQL NULL for either. */
+  tags?: Record<string, string> | null
   payload?: LogPayload | null
 }
 
@@ -97,6 +100,9 @@ export interface LogFilter {
   model?: string
   statusClass?: StatusClass
   outcome?: RequestOutcome
+  /** Every pair must be present on the row: one jsonb containment operator,
+   * ANDed regardless of how many pairs are supplied. */
+  tags?: Record<string, string>
   /** Keyset cursors — uuid v7 ids. `after` pages older, `before` pages newer. */
   after?: string
   before?: string
@@ -118,6 +124,7 @@ export interface LogRow {
   promptTokens: number | null
   completionTokens: number | null
   costUsd: string | null
+  tags: Record<string, string> | null
   payloadCaptured: boolean
 }
 

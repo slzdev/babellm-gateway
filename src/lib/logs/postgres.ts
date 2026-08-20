@@ -39,6 +39,7 @@ const LIST_COLUMNS = {
   promptTokens: requestLogs.promptTokens,
   completionTokens: requestLogs.completionTokens,
   costUsd: requestLogs.costUsd,
+  tags: requestLogs.tags,
   payloadCaptured: requestLogs.payloadCaptured,
 }
 
@@ -51,6 +52,12 @@ function conditions(filter: LogFilter) {
   if (filter.apiKeyId) where.push(eq(requestLogs.apiKeyId, filter.apiKeyId))
   if (filter.model) where.push(eq(requestLogs.model, filter.model))
   if (filter.outcome) where.push(eq(requestLogs.outcome, filter.outcome))
+  // Containment: `@>` is true when the row's tags contain every pair given,
+  // so N pairs are ANDed in one operator. NULL tags yield NULL, which is
+  // false enough to exclude untagged and pre-migration rows.
+  if (filter.tags && Object.keys(filter.tags).length > 0) {
+    where.push(sql`${requestLogs.tags} @> ${JSON.stringify(filter.tags)}::jsonb`)
+  }
   if (filter.statusClass === 'success') where.push(lt(requestLogs.status, 400))
   if (filter.statusClass === 'client_error') {
     where.push(gte(requestLogs.status, 400), lt(requestLogs.status, 500))
@@ -95,6 +102,10 @@ export const postgresStore: ReadableRequestLogStore = {
       costUsd: entry.cost?.totalUsd ?? null,
       pricing: entry.cost?.pricing ?? null,
       droppedParams: entry.droppedParams?.length ? entry.droppedParams : null,
+      // An empty object is normalized to NULL here rather than at the call
+      // site, so no caller can accidentally introduce the {} state the
+      // column's comment forbids.
+      tags: entry.tags && Object.keys(entry.tags).length > 0 ? entry.tags : null,
       payloadCaptured: entry.payload != null,
       requestJson: entry.payload?.request ?? null,
       responseJson: entry.payload?.response ?? null,
@@ -163,6 +174,7 @@ export const postgresStore: ReadableRequestLogStore = {
       promptTokens: log.promptTokens,
       completionTokens: log.completionTokens,
       costUsd: log.costUsd,
+      tags: log.tags,
       payloadCaptured: log.payloadCaptured,
       errorType: log.errorType,
       errorCode: log.errorCode,

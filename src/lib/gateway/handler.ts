@@ -21,6 +21,7 @@ import { openTargetsFor, recordHealth } from './health'
 import { resolveModel, type Candidate } from './resolve'
 import { selectOrder } from './select'
 import { sseResponse, startStream, type StreamCapture, type StreamOutcome, type StreamProtocol } from './sse'
+import { tagsFromRequest } from './tags'
 
 export interface GatewayDeps {
   createAdapter: (
@@ -190,6 +191,9 @@ export async function runGatewayRequest<Req, Res, Chunk>(
   let modelName: string | null = null
   let stream = false
   let dropped: string[] = []
+  // Parsed before anything else can fail, so a request that dies in body
+  // parsing, routing, or upstream still carries its tags on the log row.
+  let tags: Record<string, string> | null = null
   // Payload capture is per key and off by default, so the cost of assembling
   // and storing bodies falls only on the keys that asked for it.
   let capturePayloads = false
@@ -283,6 +287,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
       usage,
       cost,
       ...(dropped.length > 0 ? { droppedParams: dropped } : {}),
+      tags,
       payload,
     })
   }
@@ -292,6 +297,11 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     keyId = apiKey.id
     keyName = apiKey.name
     capturePayloads = apiKey.logPayloads
+    // After resolveApiKey so the rejection is attributable — the catch below
+    // logs any GatewayError thrown in here, and reads keyId/keyName from this
+    // scope. Before the body parse because it is the cheaper check, and
+    // because it puts the tags in scope for every failure path after it.
+    tags = tagsFromRequest(request)
     const body = ingress.parse(await readJson(request))
     requestBody = body
     modelName = ingress.modelOf(body)
