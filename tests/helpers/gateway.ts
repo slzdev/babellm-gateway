@@ -52,23 +52,33 @@ export async function seedGateway(options: SeedOptions = {}) {
   return { provider, model, target, key, apiKey: generated.key, virtualModel, upstreamModel }
 }
 
-export function chatRequest(body: unknown, apiKey: string | null) {
+export function chatRequest(
+  body: unknown,
+  apiKey: string | null,
+  headers: Record<string, string> = {},
+) {
   return new Request('http://gateway.test/v1/chat/completions', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      ...headers,
     },
     body: JSON.stringify(body),
   })
 }
 
-export function responsesRequest(body: unknown, apiKey: string | null) {
+export function responsesRequest(
+  body: unknown,
+  apiKey: string | null,
+  headers: Record<string, string> = {},
+) {
   return new Request('http://gateway.test/v1/responses', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      ...headers,
     },
     body: JSON.stringify(body),
   })
