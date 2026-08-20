@@ -284,6 +284,44 @@ work.
 
 </details>
 
+### Tagging requests
+
+Any request may carry an `x-babellm-tags` header of comma-separated
+`key=value` pairs. The gateway records them on the request log, and `/logs`
+can filter by any combination of them.
+
+```ts
+await client.chat.completions.create(
+  { model: "smart", messages: [{ role: "user", content: "Hello" }] },
+  { headers: { "x-babellm-tags": "env=prod,feature=checkout,customer=acme-3122" } },
+);
+```
+
+The rules, all enforced:
+
+| Rule | Limit |
+| --- | --- |
+| Header size | 2048 bytes |
+| Number of tags | 16 |
+| Key | `[a-z0-9_.-]`, 1–64 characters, lowercased |
+| Value | 1–256 characters, no control characters, no `,` |
+| Duplicate keys | rejected |
+
+Keys are lowercased, so `Env` and `env` are one dimension. Values keep their
+case. A value cannot contain a comma, because the separator is unescaped.
+
+**A header that breaks any of these rules fails the request with a `400`**
+rather than being dropped, and the rejection is logged against the calling
+key. This is deliberate: a tag that is silently discarded produces a dashboard
+quietly missing a slice of its traffic, with nothing on either side to reveal
+it. The request is rejected before any provider is called, so it costs nothing
+upstream.
+
+Tags are stored on the request log only. They are not forwarded to providers,
+they do not appear in the usage and cost dashboard, and they cannot carry
+limits or budgets. They age out with the log rows that hold them, at whatever
+retention the logging settings specify.
+
 ### Rate limits and budgets
 
 Every key can carry an `rpm` limit, a `tpm` limit, a monthly budget, and a
