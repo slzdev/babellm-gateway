@@ -100,6 +100,9 @@ export interface LogFilter {
   model?: string
   statusClass?: StatusClass
   outcome?: RequestOutcome
+  /** Every pair must be present on the row: one jsonb containment operator,
+   * ANDed regardless of how many pairs are supplied. */
+  tags?: Record<string, string>
   /** Keyset cursors — uuid v7 ids. `after` pages older, `before` pages newer. */
   after?: string
   before?: string

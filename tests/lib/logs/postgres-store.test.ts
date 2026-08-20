@@ -220,3 +220,65 @@ test('an empty tag object is stored as NULL rather than {}', async () => {
     .where(eq(requestLogs.id, id))
   expect(row.isNull).toBe(true)
 })
+
+/** Four rows whose tags differ, for the containment cases below. Uses the
+ * `entry()` helper already defined at the top of this file. */
+async function seedTagged() {
+  const tagSets: Array<Record<string, string> | null> = [
+    { env: 'prod', team: 'a' },
+    { env: 'prod', team: 'b' },
+    { env: 'staging', team: 'a' },
+    null,
+  ]
+  for (const tags of tagSets) {
+    await postgresStore.write(entry({ tags }))
+  }
+}
+
+test('one pair matches every row carrying it', async () => {
+  await seedTagged()
+  const page = await postgresStore.query({ limit: 10, tags: { env: 'prod' } })
+  expect(page.rows).toHaveLength(2)
+})
+
+test('two pairs are ANDed, not ORed', async () => {
+  await seedTagged()
+  const page = await postgresStore.query({ limit: 10, tags: { env: 'prod', team: 'a' } })
+  expect(page.rows).toHaveLength(1)
+  expect(page.rows[0].tags).toEqual({ env: 'prod', team: 'a' })
+})
+
+test('a row matches a filter naming only some of its tags', async () => {
+  await seedTagged()
+  const page = await postgresStore.query({ limit: 10, tags: { team: 'b' } })
+  expect(page.rows).toHaveLength(1)
+  expect(page.rows[0].tags).toEqual({ env: 'prod', team: 'b' })
+})
+
+// A NULL column yields NULL under @>, not true — so an untagged row, and
+// every row written before this column existed, is excluded rather than
+// matching an empty set.
+test('an untagged row matches no tag filter', async () => {
+  await seedTagged()
+  const page = await postgresStore.query({ limit: 10, tags: { env: 'prod' } })
+  expect(page.rows.every((row) => row.tags !== null)).toBe(true)
+})
+
+test('a tag filter combines with the other filters', async () => {
+  await seedTagged()
+  const page = await postgresStore.query({
+    limit: 10,
+    tags: { env: 'prod' },
+    statusClass: 'success',
+  })
+  expect(page.rows).toHaveLength(2)
+})
+
+test('a value containing SQL syntax is parameterized, not interpolated', async () => {
+  await seedTagged()
+  const page = await postgresStore.query({
+    limit: 10,
+    tags: { env: "prod' OR 1=1 --" },
+  })
+  expect(page.rows).toHaveLength(0)
+})

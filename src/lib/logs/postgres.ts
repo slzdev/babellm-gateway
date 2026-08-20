@@ -52,6 +52,12 @@ function conditions(filter: LogFilter) {
   if (filter.apiKeyId) where.push(eq(requestLogs.apiKeyId, filter.apiKeyId))
   if (filter.model) where.push(eq(requestLogs.model, filter.model))
   if (filter.outcome) where.push(eq(requestLogs.outcome, filter.outcome))
+  // Containment: `@>` is true when the row's tags contain every pair given,
+  // so N pairs are ANDed in one operator. NULL tags yield NULL, which is
+  // false enough to exclude untagged and pre-migration rows.
+  if (filter.tags && Object.keys(filter.tags).length > 0) {
+    where.push(sql`${requestLogs.tags} @> ${JSON.stringify(filter.tags)}::jsonb`)
+  }
   if (filter.statusClass === 'success') where.push(lt(requestLogs.status, 400))
   if (filter.statusClass === 'client_error') {
     where.push(gte(requestLogs.status, 400), lt(requestLogs.status, 500))
