@@ -2,13 +2,16 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
+import { X } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { parseTags } from '@/lib/tags'
 import {
-  DEFAULT_LOG_PAGE_SIZE, LOG_PAGE_SIZES, nextFilterParams,
+  DEFAULT_LOG_PAGE_SIZE, LOG_PAGE_SIZES, addTagParam, nextFilterParams, removeTagParam,
 } from '@/lib/admin/log-filter-params'
 
 const RANGES = [
@@ -69,9 +72,37 @@ export function LogFilters({
   const router = useRouter()
   const params = useSearchParams()
   const [requestId, setRequestId] = useState('')
+  const [tagKey, setTagKey] = useState('')
+  const [tagValue, setTagValue] = useState('')
+  const [tagError, setTagError] = useState<string | null>(null)
+
+  const activeTags = params.getAll('tag')
 
   function apply(name: string, value: string) {
     router.push(`/logs?${nextFilterParams(params, name, value).toString()}`)
+  }
+
+  function addTag() {
+    const token = `${tagKey.trim()}=${tagValue.trim()}`
+    // Validated with the gateway's own parser, so the chip shows the
+    // normalized form that will actually match, and an invalid tag is
+    // refused at the input instead of being silently dropped server-side.
+    const parsed = parseTags(token)
+    if (!parsed.ok) {
+      setTagError(parsed.message)
+      return
+    }
+    if (!parsed.tags) return
+
+    const [key, value] = Object.entries(parsed.tags)[0]
+    setTagError(null)
+    setTagKey('')
+    setTagValue('')
+    router.push(`/logs?${addTagParam(params, `${key}=${value}`).toString()}`)
+  }
+
+  function dropTag(token: string) {
+    router.push(`/logs?${removeTagParam(params, token).toString()}`)
   }
 
   return (
@@ -137,6 +168,50 @@ export function LogFilters({
         />
         <Button type="submit" variant="secondary">Find</Button>
       </form>
+
+      <div className="flex w-full flex-wrap items-center gap-2">
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            addTag()
+          }}
+        >
+          <Input
+            value={tagKey}
+            onChange={(event) => setTagKey(event.target.value)}
+            placeholder="tag key"
+            className="w-32 font-mono text-xs"
+            aria-label="Tag key"
+          />
+          <Input
+            value={tagValue}
+            onChange={(event) => setTagValue(event.target.value)}
+            placeholder="tag value"
+            className="w-40 font-mono text-xs"
+            aria-label="Tag value"
+          />
+          <Button type="submit" variant="secondary">Add tag</Button>
+        </form>
+
+        {activeTags.map((token) => (
+          <Badge key={token} variant="secondary" className="gap-1 font-mono">
+            {token}
+            <button
+              type="button"
+              onClick={() => dropTag(token)}
+              aria-label={`Remove tag filter ${token}`}
+              className="opacity-60 hover:opacity-100"
+            >
+              <X className="size-3" />
+            </button>
+          </Badge>
+        ))}
+      </div>
+
+      {tagError ? (
+        <p className="w-full text-xs text-destructive">{tagError}</p>
+      ) : null}
     </div>
   )
 }
