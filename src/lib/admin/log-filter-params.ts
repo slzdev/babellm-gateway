@@ -58,12 +58,18 @@ export function nextFilterParams(
 }
 
 /**
- * Appends one `key=value` token to the tag filter.
+ * Adds one `key=value` token to the tag filter, replacing any existing token
+ * for the same key.
  *
  * `nextFilterParams` cannot serve here: it calls `URLSearchParams.set`, which
  * replaces every value of a name, and `tag` is the first multi-valued filter.
  * `NEUTRAL_VALUES` gains no entry for the same reason — "no tag filter" is
  * expressed by having no `tag` params, not by a sentinel value.
+ *
+ * A tag key is a dimension and the filter is conjunctive (see `tagFilter` in
+ * `./logs`), so two values for the same key can never both match — the query
+ * that runs is first-wins. Replacing rather than appending keeps the chips
+ * the filter bar renders equal to the filter that actually ran.
  *
  * Cursors are cleared exactly as `nextFilterParams` clears them: a filter
  * change makes the old keyset position meaningless whether the filter holds
@@ -71,7 +77,13 @@ export function nextFilterParams(
  */
 export function addTagParam(current: URLSearchParams, token: string): URLSearchParams {
   const next = new URLSearchParams(current.toString())
-  if (token && !next.getAll('tag').includes(token)) next.append('tag', token)
+  if (token) {
+    const key = token.slice(0, token.indexOf('='))
+    const kept = next.getAll('tag').filter((value) => !value.startsWith(`${key}=`))
+    next.delete('tag')
+    for (const value of kept) next.append('tag', value)
+    next.append('tag', token)
+  }
   next.delete('after')
   next.delete('before')
   return next

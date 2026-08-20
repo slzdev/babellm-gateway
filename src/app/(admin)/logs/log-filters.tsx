@@ -83,7 +83,11 @@ export function LogFilters({
   }
 
   function addTag() {
-    const token = `${tagKey.trim()}=${tagValue.trim()}`
+    const key = tagKey.trim()
+    const value = tagValue.trim()
+    if (!key && !value) return
+
+    const token = `${key}=${value}`
     // Validated with the gateway's own parser, so the chip shows the
     // normalized form that will actually match, and an invalid tag is
     // refused at the input instead of being silently dropped server-side.
@@ -92,16 +96,20 @@ export function LogFilters({
       setTagError(parsed.message)
       return
     }
+    // Unreachable: `token` always contains "=", so parseTags cannot return
+    // tags: null here. Kept as a type guard narrowing parsed.tags from
+    // Record<string, string> | null for the Object.entries call below.
     if (!parsed.tags) return
 
-    const [key, value] = Object.entries(parsed.tags)[0]
+    const [normalizedKey, normalizedValue] = Object.entries(parsed.tags)[0]
     setTagError(null)
     setTagKey('')
     setTagValue('')
-    router.push(`/logs?${addTagParam(params, `${key}=${value}`).toString()}`)
+    router.push(`/logs?${addTagParam(params, `${normalizedKey}=${normalizedValue}`).toString()}`)
   }
 
   function dropTag(token: string) {
+    setTagError(null)
     router.push(`/logs?${removeTagParam(params, token).toString()}`)
   }
 

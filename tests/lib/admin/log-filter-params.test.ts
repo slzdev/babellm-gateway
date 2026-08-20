@@ -56,9 +56,14 @@ test('unrelated filters survive the change', () => {
   expect(next.get('range')).toBe('all')
 })
 
-test('addTagParam appends rather than replacing, so tags accumulate', () => {
+test('addTagParam appends a token for a new key, so tags accumulate', () => {
   const next = addTagParam(new URLSearchParams('tag=env%3Dprod'), 'team=a')
   expect(next.getAll('tag')).toEqual(['env=prod', 'team=a'])
+})
+
+test('addTagParam replaces the existing token for the same key rather than appending', () => {
+  const next = addTagParam(new URLSearchParams('tag=env%3Dprod'), 'env=staging')
+  expect(next.getAll('tag')).toEqual(['env=staging'])
 })
 
 test('addTagParam clears the keyset cursors', () => {

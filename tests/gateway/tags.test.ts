@@ -98,9 +98,10 @@ test('a rejected header still writes a log row against the calling key', async (
 })
 
 // Tags are most useful on requests that went wrong, so they must not be
-// conditional on the request going right. This is what the ordering in the
-// handler buys, and it is the test that would fail if someone moved the
-// parse below the body parse or the routing.
+// conditional on the request going right. This body is valid, so this test
+// only pins that the parse runs before the upstream call — it cannot detect
+// a parse moved after body parsing or routing; the sibling test below,
+// "tags reach the log row when the body fails to parse", pins that ordering.
 test('tags reach the log row when the upstream call fails', async () => {
   const { apiKey } = await seedGateway()
   const boom = new OpenAI.APIError(500, { message: 'boom', code: 'x' }, 'boom', undefined)

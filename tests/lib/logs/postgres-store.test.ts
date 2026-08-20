@@ -221,24 +221,28 @@ test('an empty tag object is stored as NULL rather than {}', async () => {
   expect(row.isNull).toBe(true)
 })
 
-/** Four rows whose tags differ, for the containment cases below. Uses the
- * `entry()` helper already defined at the top of this file. */
+/** Five rows whose tags (and, for the fifth, status) differ, for the
+ * containment cases below. Uses the `entry()` helper already defined at the
+ * top of this file. The fifth row carries status: 500 alongside env: 'prod'
+ * so a test combining a tag filter with statusClass: 'success' has a row
+ * that the tag filter alone would wrongly include. */
 async function seedTagged() {
-  const tagSets: Array<Record<string, string> | null> = [
-    { env: 'prod', team: 'a' },
-    { env: 'prod', team: 'b' },
-    { env: 'staging', team: 'a' },
-    null,
+  const rows: Array<Partial<RequestLogEntry>> = [
+    { tags: { env: 'prod', team: 'a' } },
+    { tags: { env: 'prod', team: 'b' } },
+    { tags: { env: 'staging', team: 'a' } },
+    { tags: null },
+    { tags: { env: 'prod' }, status: 500 },
   ]
-  for (const tags of tagSets) {
-    await postgresStore.write(entry({ tags }))
+  for (const overrides of rows) {
+    await postgresStore.write(entry(overrides))
   }
 }
 
 test('one pair matches every row carrying it', async () => {
   await seedTagged()
   const page = await postgresStore.query({ limit: 10, tags: { env: 'prod' } })
-  expect(page.rows).toHaveLength(2)
+  expect(page.rows).toHaveLength(3)
 })
 
 test('two pairs are ANDed, not ORed', async () => {
