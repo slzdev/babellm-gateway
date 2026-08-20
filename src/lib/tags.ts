@@ -19,7 +19,6 @@ const MAX_TAGS = 16
 const MAX_VALUE_LENGTH = 256
 
 const KEY_RE = /^[a-z0-9_.-]{1,64}$/
-// eslint-disable-next-line no-control-regex -- matching control characters is the point
 const CONTROL_RE = /[\u0000-\u001f\u007f]/
 
 /**

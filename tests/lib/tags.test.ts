@@ -104,13 +104,13 @@ test('rejects a value over 256 characters', () => {
 })
 
 test('rejects a control character in a value', () => {
-  expect(err('env=prod')).toBe(
+  expect(err('env=pr\u0007od')).toBe(
     'x-babellm-tags: value for "env" contains a control character',
   )
 })
 
 test('rejects DEL as a control character too', () => {
-  expect(err('env=prod')).toBe(
+  expect(err('env=pr\u007fod')).toBe(
     'x-babellm-tags: value for "env" contains a control character',
   )
 })
