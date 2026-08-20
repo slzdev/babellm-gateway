@@ -1,6 +1,7 @@
 import 'server-only'
 import { resolveRequestLogStore } from '@/lib/logs'
 import type { LogDetail, LogFilter, LogPage, StatusClass } from '@/lib/logs/types'
+import { parseTags } from '@/lib/tags'
 import { DEFAULT_LOG_PAGE_SIZE, DEFAULT_RANGE, LOG_PAGE_SIZES } from './log-filter-params'
 
 export { DEFAULT_LOG_PAGE_SIZE, DEFAULT_RANGE, LOG_PAGE_SIZES }
@@ -34,11 +35,47 @@ function key(value: string | undefined): string | undefined {
   return value && UUID_RE.test(value) ? value : undefined
 }
 
+/**
+ * Turns repeated `tag` params into a filter object.
+ *
+ * Shares `parseTags` with the gateway ingress, so a key typed here is
+ * normalized exactly as the gateway normalized it on the way in — otherwise a
+ * search for `Env=prod` would find nothing while the rows sat there stored as
+ * `env`. The two differ only in what a failure means: the gateway throws a
+ * 400, and this drops the token, per this module's standing contract that a
+ * hand-edited URL shows the default view rather than an error page.
+ *
+ * Returns undefined when nothing survives, so the caller omits `tags`
+ * entirely rather than sending an empty object the store would have to
+ * special-case.
+ */
+function tagFilter(raw: string | string[] | undefined): Record<string, string> | undefined {
+  if (!raw) return undefined
+  const tokens = Array.isArray(raw) ? raw : [raw]
+
+  const tags: Record<string, string> = {}
+  for (const token of tokens) {
+    const result = parseTags(token)
+    if (!result.ok || !result.tags) continue
+    for (const [key, value] of Object.entries(result.tags)) {
+      // First wins. A duplicated key in a URL is a hand-edit or a stale link,
+      // and silently preferring the last one would change which rows come
+      // back with no sign in the filter bar.
+      if (!Object.hasOwn(tags, key)) tags[key] = value
+    }
+  }
+
+  return Object.keys(tags).length > 0 ? tags : undefined
+}
+
 export interface LogSearchParams {
   range?: string
   key?: string
   model?: string
   status?: string
+  /** Repeated `?tag=key=value`. Next supplies an array for a repeated param
+   * and a bare string for a single one. */
+  tag?: string | string[]
   size?: string
   after?: string
   before?: string
@@ -71,6 +108,7 @@ export function parseLogFilter(
   const status = params.status
   const after = cursor(params.after)
   const before = cursor(params.before)
+  const tags = tagFilter(params.tag)
 
   const apiKeyId = key(params.key)
 
@@ -84,6 +122,7 @@ export function parseLogFilter(
     ...(status === 'stream_interrupted' || status === 'client_closed'
       ? { outcome: status }
       : {}),
+    ...(tags ? { tags } : {}),
     ...(after ? { after } : {}),
     ...(before ? { before } : {}),
     limit: pageSize(params.size),

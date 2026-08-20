@@ -159,3 +159,42 @@ test('loadLogDetail returns null for a malformed id rather than throwing', async
   // "hand-edited URL renders notFound(), not a 500" contract end to end.
   await expect(loadLogDetail('req_x')).resolves.toBeNull()
 })
+
+test('a single tag param becomes a one-pair filter', () => {
+  expect(parseLogFilter({ tag: 'env=prod' }).tags).toEqual({ env: 'prod' })
+})
+
+test('repeated tag params are merged into one filter object', () => {
+  expect(parseLogFilter({ tag: ['env=prod', 'team=a'] }).tags).toEqual({
+    env: 'prod', team: 'a',
+  })
+})
+
+// The gateway lowercases keys on the way in, so the filter must too — or a
+// search for Env=prod finds nothing while the rows sit there stored as env.
+test('a tag key is normalized the same way the gateway normalizes it', () => {
+  expect(parseLogFilter({ tag: 'ENV=prod' }).tags).toEqual({ env: 'prod' })
+})
+
+// parseLogFilter's standing contract: a hand-edited URL shows a view, not an
+// error page. The gateway throws on the same input; this side drops it.
+test('a malformed tag param is dropped rather than thrown', () => {
+  expect(() => parseLogFilter({ tag: 'not a pair' })).not.toThrow()
+  expect(parseLogFilter({ tag: 'not a pair' }).tags).toBeUndefined()
+})
+
+test('a malformed tag is dropped while a valid sibling survives', () => {
+  expect(parseLogFilter({ tag: ['env=prod', 'not a pair'] }).tags).toEqual({ env: 'prod' })
+})
+
+test('a duplicated key keeps the first and drops the rest', () => {
+  expect(parseLogFilter({ tag: ['env=prod', 'env=staging'] }).tags).toEqual({ env: 'prod' })
+})
+
+test('an all-malformed list omits tags from the filter entirely', () => {
+  expect(parseLogFilter({ tag: ['bad', 'also bad'] }).tags).toBeUndefined()
+})
+
+test('no tag param means no tags filter', () => {
+  expect(parseLogFilter({}).tags).toBeUndefined()
+})

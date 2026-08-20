@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { nextFilterParams } from '@/lib/admin/log-filter-params'
+import { addTagParam, nextFilterParams, removeTagParam } from '@/lib/admin/log-filter-params'
 
 test('selecting "All time" keeps range=all in the URL rather than deleting it', () => {
   const next = nextFilterParams(new URLSearchParams(), 'range', 'all')
@@ -54,4 +54,39 @@ test('unrelated filters survive the change', () => {
   expect(next.get('key')).toBe('k-1')
   expect(next.get('model')).toBe('m')
   expect(next.get('range')).toBe('all')
+})
+
+test('addTagParam appends rather than replacing, so tags accumulate', () => {
+  const next = addTagParam(new URLSearchParams('tag=env%3Dprod'), 'team=a')
+  expect(next.getAll('tag')).toEqual(['env=prod', 'team=a'])
+})
+
+test('addTagParam clears the keyset cursors', () => {
+  const next = addTagParam(new URLSearchParams('after=abc&before=def'), 'env=prod')
+  expect(next.get('after')).toBeNull()
+  expect(next.get('before')).toBeNull()
+})
+
+test('addTagParam preserves the other filters', () => {
+  const next = addTagParam(new URLSearchParams('range=7d&model=house'), 'env=prod')
+  expect(next.get('range')).toBe('7d')
+  expect(next.get('model')).toBe('house')
+})
+
+test('removeTagParam drops only the named tag', () => {
+  const next = removeTagParam(
+    new URLSearchParams('tag=env%3Dprod&tag=team%3Da'),
+    'env=prod',
+  )
+  expect(next.getAll('tag')).toEqual(['team=a'])
+})
+
+test('removeTagParam clears the keyset cursors', () => {
+  const next = removeTagParam(new URLSearchParams('tag=env%3Dprod&after=abc'), 'env=prod')
+  expect(next.get('after')).toBeNull()
+})
+
+test('removing the last tag leaves no tag param at all', () => {
+  const next = removeTagParam(new URLSearchParams('tag=env%3Dprod'), 'env=prod')
+  expect(next.getAll('tag')).toEqual([])
 })
