@@ -228,7 +228,19 @@ value) that a caller can trivially avoid.
 
 ## 5. Implementation
 
-### 5.1 `src/lib/gateway/tags.ts`
+### 5.1 Two modules, for the same reason `log-filter-params.ts` exists
+
+The pure parser and the throwing wrapper live in **separate files**, and the
+boundary is a bundling constraint rather than a stylistic one. The filter bar is
+a Client Component, so everything it imports enters the browser bundle;
+`src/lib/gateway/errors.ts`, where `GatewayError` lives, imports the `openai`
+package. A single module exporting both `parseTags` and a wrapper that throws
+`GatewayError` would pull the OpenAI SDK into the browser the moment the filter
+bar imported it. This is the hazard `src/lib/admin/log-filter-params.ts` already
+documents for the `server-only` chain, and the split is the same answer.
+
+**`src/lib/tags.ts`** — pure, no imports, no `server-only`, safe in a client
+bundle:
 
 ```ts
 export const TAGS_HEADER = 'x-babellm-tags'
@@ -240,13 +252,17 @@ export type TagParse =
 /** Parses a raw header value. Returns a failure rather than throwing, so the
  *  admin filter can drop what the ingress rejects. */
 export function parseTags(raw: string | null): TagParse
+```
 
-/** The ingress wrapper: throws a GatewayError on failure. */
+**`src/lib/gateway/tags.ts`** — the ingress wrapper, which may import freely:
+
+```ts
+/** Reads and validates the header. Throws a GatewayError on failure. */
 export function tagsFromRequest(request: Request): Record<string, string> | null
 ```
 
-Splitting the pure parser from the throwing wrapper is what lets §3.7's two
-callers share one set of rules.
+Splitting the pure parser from the throwing wrapper is also what lets §3.7's two
+callers share one set of rules while interpreting failure differently.
 
 ### 5.2 `src/lib/gateway/handler.ts`
 
@@ -306,16 +322,29 @@ nothing survives — the established degrade-don't-throw contract.
 
 ### 5.6 UI
 
+`log-filter-params.ts` gains `addTagParam` and `removeTagParam`. The existing
+`nextFilterParams` cannot be reused: it calls `URLSearchParams.set`, which
+replaces every value of a name, and `tag` is the first multi-valued filter. The
+new helpers use `append` and a filtered rebuild respectively, and both clear the
+`after`/`before` cursors exactly as `nextFilterParams` does — a filter change
+makes the old keyset position meaningless whether the filter is single- or
+multi-valued. `NEUTRAL_VALUES` is untouched: `tag` has no neutral value, since
+its absence is expressed by having no `tag` params at all.
+
 `log-filters.tsx` gains a key input, a value input, and an add button, which
 appends a `tag` param. Active tags render as removable shadcn `Badge` chips that
 rewrite the query string, matching how the other filters already drive the URL.
+The bar validates the typed pair with `parseTags` before appending, so an
+invalid tag is refused at the input rather than silently dropped server-side,
+and the chip shows the normalized (lowercased-key) form that will actually
+match.
 `logs/[id]/page.tsx` renders the row's tags as `Badge` chips, or nothing at all
 when `tags` is `null`. `badge`, `input`, and `button` are all installed; no new
 shadcn component is required.
 
 ## 6. Testing
 
-**Parser** (`tests/lib/gateway/tags.test.ts`) — the accepted form; absent,
+**Parser** (`tests/lib/tags.test.ts`) — the accepted form; absent,
 empty, and whitespace-only headers all yielding `null`; key lowercasing; value
 case preserved; `note=a=b` splitting on the first `=`; and one case per
 rejection: bad key charset, key over 64, empty value, value over 256, 17 pairs,
