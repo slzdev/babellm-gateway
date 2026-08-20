@@ -39,6 +39,7 @@ const LIST_COLUMNS = {
   promptTokens: requestLogs.promptTokens,
   completionTokens: requestLogs.completionTokens,
   costUsd: requestLogs.costUsd,
+  tags: requestLogs.tags,
   payloadCaptured: requestLogs.payloadCaptured,
 }
 
@@ -95,6 +96,10 @@ export const postgresStore: ReadableRequestLogStore = {
       costUsd: entry.cost?.totalUsd ?? null,
       pricing: entry.cost?.pricing ?? null,
       droppedParams: entry.droppedParams?.length ? entry.droppedParams : null,
+      // An empty object is normalized to NULL here rather than at the call
+      // site, so no caller can accidentally introduce the {} state the
+      // column's comment forbids.
+      tags: entry.tags && Object.keys(entry.tags).length > 0 ? entry.tags : null,
       payloadCaptured: entry.payload != null,
       requestJson: entry.payload?.request ?? null,
       responseJson: entry.payload?.response ?? null,
@@ -163,6 +168,7 @@ export const postgresStore: ReadableRequestLogStore = {
       promptTokens: log.promptTokens,
       completionTokens: log.completionTokens,
       costUsd: log.costUsd,
+      tags: log.tags,
       payloadCaptured: log.payloadCaptured,
       errorType: log.errorType,
       errorCode: log.errorCode,

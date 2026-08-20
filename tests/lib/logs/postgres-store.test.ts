@@ -1,3 +1,4 @@
+import { eq, sql } from 'drizzle-orm'
 import { beforeEach, expect, test } from 'vitest'
 import { db, pool } from '@/lib/db'
 import { requestLogs } from '@/lib/db/schema'
@@ -179,4 +180,43 @@ test('maintain provisions the current month and drops what fell out of the windo
   expect(result.created).toContain('request_logs_2030_06')
   expect(result.dropped).toContain('request_logs_2030_01')
   expect(result.dropped).not.toContain('request_logs_2030_06')
+})
+
+test('a written tag set comes back on the row and on the detail', async () => {
+  const id = uuidv7()
+  await postgresStore.write(entry({ id, tags: { env: 'prod', team: 'a' } }))
+
+  const page = await postgresStore.query({ limit: 10 })
+  expect(page.rows[0].tags).toEqual({ env: 'prod', team: 'a' })
+
+  const detail = await postgresStore.get(id)
+  expect(detail?.tags).toEqual({ env: 'prod', team: 'a' })
+})
+
+// The distinction this column exists to preserve: a request that sent no
+// header must be NULL, never {}, so it stays distinguishable from a row
+// written before the feature existed.
+test('an entry with no tags stores SQL NULL, not an empty object', async () => {
+  const id = uuidv7()
+  await postgresStore.write(entry({ id }))
+
+  const page = await postgresStore.query({ limit: 10 })
+  expect(page.rows[0].tags).toBeNull()
+
+  const [row] = await db
+    .select({ isNull: sql<boolean>`${requestLogs.tags} IS NULL` })
+    .from(requestLogs)
+    .where(eq(requestLogs.id, id))
+  expect(row.isNull).toBe(true)
+})
+
+test('an empty tag object is stored as NULL rather than {}', async () => {
+  const id = uuidv7()
+  await postgresStore.write(entry({ id, tags: {} }))
+
+  const [row] = await db
+    .select({ isNull: sql<boolean>`${requestLogs.tags} IS NULL` })
+    .from(requestLogs)
+    .where(eq(requestLogs.id, id))
+  expect(row.isNull).toBe(true)
 })

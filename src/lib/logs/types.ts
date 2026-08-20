@@ -42,6 +42,9 @@ export interface RequestLogEntry {
   usage?: LogUsage | null
   cost?: CostBreakdown | null
   droppedParams?: string[]
+  /** Caller-supplied tags from the x-babellm-tags header. Absent or null both
+   * mean "no tags"; the store writes SQL NULL for either. */
+  tags?: Record<string, string> | null
   payload?: LogPayload | null
 }
 
@@ -118,6 +121,7 @@ export interface LogRow {
   promptTokens: number | null
   completionTokens: number | null
   costUsd: string | null
+  tags: Record<string, string> | null
   payloadCaptured: boolean
 }
 
