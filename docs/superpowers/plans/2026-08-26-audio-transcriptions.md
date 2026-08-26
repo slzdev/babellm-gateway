@@ -4,7 +4,7 @@
 
 **Goal:** Serve `POST /v1/audio/transcriptions` for any OpenAI client, against OpenAI-shaped and Gemini targets, with the same routing, failover, breaker, limit, tag, logging and pricing lifecycle every other endpoint gets.
 
-**Architecture:** A third `Ingress` on the existing shared handler. Three additive seams make that possible: `read` (the body is multipart, not JSON), `toResponse` (three of the five response formats are not JSON), and `supports` (an `anthropic_messages` target cannot transcribe and is filtered out of the chain rather than attempted). `transcribe` joins `ProviderAdapter`, native for both OpenAI-shaped flavors from one shared implementation, translated for Gemini by a new pure module.
+**Architecture:** A third `Ingress` on the existing shared handler. Three additive seams make that possible: `read` (the body is multipart, not JSON), `toResponse` (three of the five response formats are not JSON), and `supports` (a target that cannot serve *this* request — an `anthropic_messages` one ever, a Gemini one for the timestamp formats — is filtered out of the chain before selection rather than attempted). `transcribe` joins `ProviderAdapter`, native for both OpenAI-shaped flavors from one shared implementation, translated for Gemini by a new pure module.
 
 **Tech Stack:** TypeScript, Next.js 16, Drizzle ORM, Postgres, Vitest, OpenAI SDK, `@google/genai`.
 
@@ -48,7 +48,10 @@ export interface Ingress<Req, Res, Chunk> {
   /** Renders the finished result. Both JSON dialects pass `Response.json`. */
   toResponse(res: Res, headers: HeadersInit): Response
   /** Which candidates can serve this dialect. Absent means "all of them". */
-  supports?(candidate: Candidate): boolean
+  // Widened after Task 6 to take the request as well — see Task 7. A
+  // capability that depends on what was asked for cannot be judged from the
+  // candidate alone.
+  supports?(candidate: Candidate, req: Req): boolean
   /** Absent for a dialect with no response id of its own. */
   newIdentityId?(): string
   /** The three streaming members, absent for a dialect this gateway does not
@@ -67,7 +70,7 @@ Handler changes, all inside `runGatewayRequest`:
 
 ```ts
 const supports = ingress.supports
-const eligible = supports ? candidates.filter((candidate) => supports(candidate)) : candidates
+const eligible = supports ? candidates.filter((candidate) => supports(candidate, body)) : candidates
 const chain = selectOrder(eligible, model, { open })
 
 if (chain.length === 0) {
@@ -324,7 +327,26 @@ Members:
 
 - `read`: `transcriptionRequestSchema` over `transcriptionFromForm(await request.formData())`, with a 400 (`invalid_form`) when the body is not multipart at all — a client that sent JSON here has made a mistake worth naming.
 - `modelOf`: `req.model`. `isStream`: always `false` (the schema refuses `stream: true`).
-- `supports`: `candidate.apiFlavor !== 'anthropic_messages'`.
+- `supports`: judged per request, not per target (spec §3.5). An
+  `anthropic_messages` candidate never transcribes. A Gemini candidate
+  transcribes, but not into `verbose_json`, `srt` or `vtt` — so it is excluded
+  for exactly those three formats and eligible for the other two. Everything
+  else is eligible.
+
+  This is the seam widening the coordinator ruled on after Task 6:
+  `supports?(candidate: Candidate, req: Req): boolean` now receives the
+  request, in `handler.ts` and in Chat's and Responses' (absent)
+  implementations alike. Without it, a virtual model holding one Gemini and one
+  Whisper target under a `round_robin` policy would answer an `srt` request
+  correctly about half the time, depending on which target selection chose —
+  and non-deterministic success is not a behaviour a gateway may have. With it,
+  a mixed model serves timestamps from the target that has them and only a
+  model where nothing can serve refuses.
+
+  The translator's own `assertTranscribable` refusal stays exactly as it is.
+  It guards the route that has no chain to steer: a direct `provider/model`
+  address resolves to a single candidate, and the 501 for an empty chain would
+  be a worse answer there than a 400 naming the format.
 - `droppedFor`: the Gemini translator's `droppedParams` for a Gemini candidate, `[]` otherwise — an OpenAI-shaped target is sent the request as it arrived.
 - `run`: `adapter.transcribe(req, ctx)`.
 - `usageOf`: `usageFromTranscription`, which maps `{type:'tokens'}` onto prompt/completion tokens and returns null for `{type:'duration'}` and for a string result.
@@ -376,6 +398,8 @@ Drive `handleTranscriptions` with a real multipart `Request` and a stubbed `crea
 3. `x-request-id`, `x-babellm-provider`, `x-babellm-upstream-model` and the rate-limit headers on a success.
 4. Failover: first target throws a retryable error, second serves, response comes from the second, log's attempt chain has two entries — and the **same file content** arrives at the second adapter, which is the failover-safety proof.
 5. An `anthropic_messages` target in a two-target model is skipped: one attempt, served by the other.
+5b. **Request-dependent eligibility** (spec §3.5): a virtual model holding a Gemini target *before* a Whisper target answers an `srt` request from the Whisper one, in a single attempt, with no Gemini call and no breaker record — and answers a `json` request from the Gemini one, since it is eligible for that format. Assert both directions from the same seeded model: this is the pair that would have been a coin flip if eligibility were judged at attempt time.
+5c. A Gemini-only model asked for `srt` refuses, naming the format, and does not report an upstream failure.
 6. A model whose only target is `anthropic_messages` answers 501 `unsupported_operation`.
 7. Limits: an rpm-exhausted key gets 429 before any adapter call.
 8. `x-babellm-tags` reaching the log row.
@@ -422,7 +446,7 @@ Add, in the voice the README already uses:
 - The endpoint in the intro, with a short `client.audio.transcriptions.create` example beside the `responses.create` one.
 - `/v1/audio/transcriptions` in the mermaid diagram's gateway node.
 - What it supports: five response formats, any OpenAI-shaped or Gemini target, the same virtual models, failover, budgets and logs.
-- The limitations, each as a decision with its reason: no `stream: true`; `verbose_json`/`srt`/`vtt` refused against a Gemini target because it returns no timestamps; duration-billed models (`whisper-1` and clones) logging as **unpriced**, because the catalog has no per-minute rate; the 25 MB cap; no `/v1/audio/translations` or `/v1/audio/speech`.
+- The limitations, each as a decision with its reason: no `stream: true`; `verbose_json`/`srt`/`vtt` never answered by a Gemini target because it returns no timestamps — served by another target in the same virtual model if one can, refused only when none can; duration-billed models (`whisper-1` and clones) logging as **unpriced**, because the catalog has no per-minute rate; the 25 MB cap; no `/v1/audio/translations` or `/v1/audio/speech`.
 - The per-provider and per-model `audioTranscriptionsPath` override wherever the other paths are documented.
 
 Then the completion check, per `superpowers:verification-before-completion`:

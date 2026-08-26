@@ -88,7 +88,7 @@ could not have existed before.
 | Multipart body | `Ingress.read(request)` replaces `Ingress.parse(raw)`. Section 3.2. |
 | Non-JSON responses | `Ingress.toResponse(res, headers)`. Section 3.3. |
 | Adapter surface | `transcribe` on `ProviderAdapter`; no streaming twin. Section 3.4. |
-| Targets that cannot transcribe | Filtered out of the chain, not attempted. Section 3.5. |
+| Targets that cannot serve a request | Filtered out of the chain before selection, not attempted. Judged per request, not per target. Section 3.5. |
 | Gemini | Inline audio, `json` and `text` only. Section 3.6. |
 | Streaming | Refused with 400. Section 3.7. |
 | Duration-billed usage | Logged as unmeasured, priced as null. Section 3.8. |
@@ -218,21 +218,36 @@ API, which has no transcription endpoint and no audio input at all. The method
 exists and throws, because `ProviderAdapter` requires it — but section 3.5
 means the throw is unreachable through the gateway.
 
-### 3.5 A target that cannot transcribe is skipped, not attempted
+### 3.5 A target that cannot serve this request is skipped, not attempted
 
 An `anthropic_messages` target inside a virtual model would otherwise burn an
 attempt, a breaker failure, and an upstream round trip to learn something the
 gateway already knew from its own configuration.
 
 ```ts
-supports?(candidate: Candidate): boolean
+supports?(candidate: Candidate, req: Req): boolean
 ```
 
 Optional on `Ingress`, absent for Chat and Responses (every candidate can serve
-those), and implemented by the transcription ingress as "not
-`anthropic_messages`". The handler filters the candidate list through it
-*before* `selectOrder` runs, and answers 501 `unsupported_operation` naming
-the model when nothing remains.
+those), and implemented by the transcription ingress. The handler filters the
+candidate list through it *before* `selectOrder` runs, and answers 501
+`unsupported_operation` naming the model when nothing remains.
+
+**The request is a parameter, not just the candidate**, and that is the
+substantive decision here. Whether a target can serve a transcription is not a
+property of the target alone: a Gemini target can transcribe, but not into
+`verbose_json`, `srt` or `vtt` (section 3.6). If that were discovered at
+*attempt* time instead, the same request would succeed or fail depending on
+which target selection happened to choose — a virtual model with one Gemini and
+one Whisper target under a `round_robin` policy would answer an `srt` request
+correctly about half the time. Non-deterministic success is not a behaviour a
+gateway may have, so capability that depends on the request has to be known
+before ordering, where it can steer the chain rather than fail from inside it.
+
+The consequence is the desirable one: a mixed virtual model serves an `srt`
+request from the target that can produce timestamps, and only a model where
+*nothing* can serve it refuses. What the client asked for is then answered or
+explained, never coin-flipped.
 
 This is deliberately *not* the treatment the Responses ingress gives hosted
 tools, which are refused with a 400 rather than failed over. The difference is
@@ -270,13 +285,26 @@ client, like the other translators:
 - **Response.** The candidate's text becomes `{ text }` for `json`, or the bare
   string for `text`.
 
-`verbose_json`, `srt` and `vtt` against a Gemini target are **refused with a
-400** naming the target's provider. Gemini returns no timestamps, and all three
-formats are timestamps: `srt` and `vtt` are nothing else, and a `verbose_json`
-carrying an empty `segments` array and a `duration` the gateway made up would
-be a fabricated measurement in a response whose whole purpose is to carry
-measurements. The gateway's standing rule is that a number it did not measure
-is null, never zero — a `duration` it did not measure is no different.
+`verbose_json`, `srt` and `vtt` are **never answered by a Gemini target**.
+Gemini returns no timestamps, and all three formats are timestamps: `srt` and
+`vtt` are nothing else, and a `verbose_json` carrying an empty `segments` array
+and a `duration` the gateway made up would be a fabricated measurement in a
+response whose whole purpose is to carry measurements. The gateway's standing
+rule is that a number it did not measure is null, never zero — a `duration` it
+did not measure is no different.
+
+How that is enforced depends on whether anything else in the chain can serve
+the request, and section 3.5 is what makes the difference invisible to the
+client. A Gemini candidate is filtered out of the chain for these three
+formats before selection, so a virtual model that also holds a Whisper target
+answers normally from it. Only when no candidate survives is the request
+refused, with a 400 naming the format and why it cannot be produced.
+
+`assertTranscribable` in the translator refuses the same three formats a second
+time. That is not redundancy: `supports` steers a chain, while the translator
+guards the one route that has no chain to steer — a direct `provider/model`
+address to a Gemini model, which resolves to a single candidate. Both must
+refuse, and neither is reachable from the other's path.
 
 Consequently `timestamp_granularities` is unreachable for a Gemini target (it
 is only valid with `verbose_json`) and needs no drop entry. What is dropped, and
