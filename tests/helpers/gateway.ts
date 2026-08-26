@@ -125,6 +125,9 @@ export function fakeAdapterDeps(adapter: Partial<ProviderAdapter>) {
       async *respondStream() {
         throw new Error('respondStream not stubbed')
       },
+      async transcribe() {
+        throw new Error('transcribe not stubbed')
+      },
       ...adapter,
     }) as ProviderAdapter,
   }
@@ -241,6 +244,9 @@ export function fakeAdapterByProvider(
       },
       async *respondStream() {
         throw new Error(`respondStream not stubbed for ${provider.name}`)
+      },
+      async transcribe() {
+        throw new Error(`transcribe not stubbed for ${provider.name}`)
       },
       ...(byName[provider.name] ?? {}),
     }) as ProviderAdapter,
