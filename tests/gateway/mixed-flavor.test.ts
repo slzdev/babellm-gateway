@@ -96,6 +96,14 @@ function chatOnlyRespondingVia(
       throw new Error(`chatStream not used in this test for ${providerName}`)
     },
   }
+  // Named rather than nested inside the `withTranscribeUnsupported(...)` call
+  // below: TypeScript's inference for a generic call fed straight into a
+  // second generic call, in a `: ProviderAdapter` return position, tries to
+  // contextually type this file's object literal against `ProviderAdapter`
+  // itself and rejects it as missing `respond`/`respondStream`/`transcribe`
+  // — even though the literal only needs to satisfy `ChatOnlyAdapter`, the
+  // inner call's actual parameter type. Binding the intermediate result
+  // breaks that chain and resolves each call independently.
   const respondable = withRespondViaChat(chatOnly, providerName)
   return withTranscribeUnsupported(
     respondable,
@@ -123,6 +131,8 @@ function chatOnlyStreamingVia(
     },
     chatStream: chatStream as ProviderAdapter['chatStream'],
   }
+  // See the identical `respondable` binding in `chatOnlyRespondingVia` above
+  // for why this cannot be inlined into the call below.
   const respondable = withRespondViaChat(chatOnly, providerName)
   return withTranscribeUnsupported(
     respondable,

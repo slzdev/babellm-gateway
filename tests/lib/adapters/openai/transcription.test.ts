@@ -1,9 +1,11 @@
 import { expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
+import { createOpenAIAdapter } from '@/lib/adapters/openai'
 import { transcribeVia } from '@/lib/adapters/openai/audio'
+import { withModelPaths } from '@/lib/adapters/registry'
 import { withTranscribeUnsupported } from '@/lib/adapters/wrappers'
 import { UnsupportedOperationError } from '@/lib/gateway/errors'
-import type { AttemptContext, ChatOnlyAdapter } from '@/lib/adapters/types'
+import type { AttemptContext, ChatOnlyAdapter, ProviderRuntime } from '@/lib/adapters/types'
 import type { TranscriptionRequest } from '@/lib/schemas/transcription'
 
 const ctx: AttemptContext = {
@@ -29,6 +31,18 @@ function fakeClient(result: unknown = { text: 'hi' }) {
   const create = vi.fn().mockResolvedValue(result)
   const client = { audio: { transcriptions: { create } } }
   return { create, client }
+}
+
+/**
+ * Like `fakeClient`, but wrapped in a factory suitable for `createOpenAIAdapter`
+ * — used by the two path-resolution tests below, which need real path
+ * resolution (`resolveRequestPaths`, `withModelPaths`) to run rather than
+ * handing `transcribeVia` an already-resolved string directly.
+ */
+function fakeAdapterClient(result: unknown = { text: 'hi' }) {
+  const create = vi.fn().mockResolvedValue(result)
+  const factory = vi.fn().mockReturnValue({ audio: { transcriptions: { create } } })
+  return { create, factory }
 }
 
 test('substitutes the upstream model name', async () => {
@@ -70,22 +84,44 @@ test('passes the abort signal and the resolved path', async () => {
   })
 })
 
-test('a provider-level path override reaches the call', async () => {
-  // `transcribeVia` is handed whatever path the caller already resolved
-  // (provider config, then a model override layered over it) — it does not
-  // resolve paths itself, just like the chat and responses adapters.
-  const { create, client } = fakeClient()
-  const transcribe = transcribeVia(client as never, 'https://api.example/provider/audio')
-  await transcribe(request(), ctx)
+// The two tests below exercise real path resolution — resolveRequestPaths
+// (via createOpenAIAdapter) and withModelPaths' layering (via registry.ts) —
+// rather than handing transcribeVia an already-resolved string, which is what
+// distinguishes "a provider path reaches the call" from "a model path wins
+// over a provider's" instead of testing the same pass-through twice.
+
+function runtimeWithProviderAudioPath(path: string): ProviderRuntime {
+  return {
+    id: 'p1',
+    name: 'clone',
+    adapter: 'openai_compatible',
+    baseUrl: 'https://api.example/v1',
+    credentials: { apiKey: 'sk-test' },
+    config: { audioTranscriptionsPath: path },
+  }
+}
+
+test('a provider-level path override reaches the call, with no model override present', async () => {
+  const { create, factory } = fakeAdapterClient()
+  const adapter = createOpenAIAdapter(runtimeWithProviderAudioPath('/provider/audio'), factory as never)
+  await adapter.transcribe(request(), ctx)
 
   expect(create.mock.calls[0][1]).toMatchObject({ path: 'https://api.example/provider/audio' })
 })
 
-test('a model-level path override reaches the call the same way', async () => {
-  const { create, client } = fakeClient()
-  const transcribe = transcribeVia(client as never, 'https://api.example/model/audio')
-  await transcribe(request(), ctx)
+test('a model-level path override wins over a differently-valued provider-level one', async () => {
+  const { create, factory } = fakeAdapterClient()
+  const runtime = withModelPaths(
+    runtimeWithProviderAudioPath('/provider/audio'),
+    { audioTranscriptionsPath: '/model/audio' },
+  )
+  const adapter = createOpenAIAdapter(runtime, factory as never)
+  await adapter.transcribe(request(), ctx)
 
+  // Not merely "a model path reaches the call" (which the provider-only test
+  // above would also show if the layering were broken and the model value
+  // were ignored) — this asserts the model's value specifically, over a
+  // provider value that would produce a different, observably wrong path.
   expect(create.mock.calls[0][1]).toMatchObject({ path: 'https://api.example/model/audio' })
 })
 

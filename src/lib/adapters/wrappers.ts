@@ -61,11 +61,12 @@ export function withRespondViaChat<A extends ChatOnlyAdapter>(
  * operator who misconfigured a route — so it should say *why* this provider
  * cannot serve, not just that it can't.
  *
- * Bounded by `ChatOnlyAdapter`, not `Omit<ProviderAdapter, 'transcribe'>`:
- * the registry always applies this after `withRespondViaChat`, so in
- * practice `adapter` already carries `respond`/`respondStream`, but nothing
- * here needs that — and requiring it would force the two wrappers' generic
- * inference to thread through each other at every call site for no benefit.
+ * Bounded by `ChatOnlyAdapter`, not the tighter `Omit<ProviderAdapter,
+ * 'transcribe'>`: nothing in this function reads `respond`/`respondStream`,
+ * so there is no reason to demand them. The registry happens to always call
+ * this after `withRespondViaChat`, which satisfies either bound — but the
+ * wider one also lets a bare chat-only adapter be wrapped directly, which is
+ * exactly what the unit tests below do without first faking `respond`.
  */
 export function withTranscribeUnsupported<A extends ChatOnlyAdapter>(
   adapter: A,
