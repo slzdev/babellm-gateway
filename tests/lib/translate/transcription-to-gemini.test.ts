@@ -108,10 +108,12 @@ test('a video container type is accepted, since its audio track transcribes', as
 for (const [name, mime] of [
   ['clip.mp3', 'audio/mpeg'],
   ['clip.wav', 'audio/wav'],
-  ['clip.m4a', 'audio/m4a'],
+  ['clip.m4a', 'audio/mp4'],
   ['clip.ogg', 'audio/ogg'],
   ['clip.flac', 'audio/flac'],
   ['clip.webm', 'video/webm'],
+  ['clip.mpga', 'audio/mpeg'],
+  ['clip.oga', 'audio/ogg'],
 ] as const) {
   test(`mime type falls back to the ${name} extension when the type is absent`, async () => {
     const params = await toGeminiRequest(
@@ -147,13 +149,15 @@ test('the instruction asks for a verbatim transcription with nothing else', asyn
   const instruction = parts[0].parts[1].text ?? ''
   expect(instruction.toLowerCase()).toContain('verbatim')
   expect(instruction.toLowerCase()).toContain('do not summarize')
+  expect(instruction.toLowerCase()).toContain('label speakers')
 })
 
-test('the instruction names the language when the client sent one, without translating', async () => {
+test('the instruction names the language when the client sent one, and tells the model not to translate', async () => {
   const params = await toGeminiRequest(req({ language: 'French' }), 'gemini-2.5-flash')
   const parts = params.contents as { role: string; parts: { text?: string }[] }[]
   const instruction = parts[0].parts[1].text ?? ''
   expect(instruction).toContain('French')
+  expect(instruction.toLowerCase()).toContain('do not translate')
 })
 
 test('the instruction has no language framing when none was sent', async () => {

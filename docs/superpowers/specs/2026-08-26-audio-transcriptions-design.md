@@ -280,8 +280,10 @@ is null, never zero — a `duration` it did not measure is no different.
 
 Consequently `timestamp_granularities` is unreachable for a Gemini target (it
 is only valid with `verbose_json`) and needs no drop entry. What is dropped, and
-reported in `x-babellm-dropped-params` and the log: `include`, `logprobs`,
-`chunking_strategy`, `keywords`, and `languages`.
+reported in `x-babellm-dropped-params` and the log: `include`, `chunking_strategy`,
+`keywords`, and `languages`. Not `logprobs`: there is no such top-level field on
+a transcription request — a client asks for it as a value inside `include`
+(`include: ["logprobs"]`), so `logprobs` has no drop entry of its own.
 
 Inline audio is bounded by Gemini's own request ceiling, so a file that would
 exceed roughly 20 MB once base64-encoded is refused with a 400 that names the

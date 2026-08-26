@@ -45,10 +45,18 @@ export const MIME_BY_EXTENSION: Record<string, string> = {
   mpg: 'video/mpg',
   webm: 'video/webm',
   wmv: 'video/wmv',
-  // Audio
+  // Audio. `m4a` is `audio/mp4`, not the unregistered `audio/m4a` some
+  // guessers use — this is the mime-guessing mistake `mimeTypeFor` in
+  // transcription-to-gemini.ts exists to avoid, one level down, and Apple
+  // Voice Memos and iOS recordings default to this extension. `mpga` and
+  // `oga` are added alongside `mp3`/`ogg` so a file that transcribes against
+  // an OpenAI-shaped target (which accepts both) does not 400 here for no
+  // reason a client can see.
   flac: 'audio/flac',
-  m4a: 'audio/m4a',
+  m4a: 'audio/mp4',
   mp3: 'audio/mpeg',
+  mpga: 'audio/mpeg',
+  oga: 'audio/ogg',
   ogg: 'audio/ogg',
   wav: 'audio/wav',
 }
