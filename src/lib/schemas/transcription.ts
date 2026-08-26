@@ -24,23 +24,49 @@ export interface TranscriptionRequest {
   chunking_strategy?: 'auto' | Record<string, unknown>
 }
 
+// A part whose value is empty (after trimming) means the client's form
+// rendered a field it had no value for — "the form said nothing." That is a
+// wire-level fact about the part, not something a field schema should have
+// to notice, and it applies uniformly: an empty `language` or `prompt` part
+// is exactly as much noise as an empty `temperature`, so this is not special-
+// cased to any one field. `z.coerce.number()` would otherwise turn an empty
+// `temperature` part into `0` (`Number('') === 0`) — a real, in-range value,
+// silently invented rather than treated as absent.
+function isBlank(value: FormDataEntryValue): boolean {
+  return typeof value === 'string' && value.trim() === ''
+}
+
 /**
  * FormData → the plain object the schema below validates.
  *
  * A multipart body carries no types of its own: every value is a string (or
  * a `File`), and a repeated field arrives as several parts under one key.
  * This function does only that wire-level shape-fixing — collapsing repeats
- * into an array and stripping the trailing `[]` that is how every HTTP
- * client spells "this key repeats" — and leaves type coercion (numbers,
- * enums, JSON) to the schema, so there is exactly one place that decides
- * what `"0.2"` or `"true"` means.
+ * into an array, stripping the trailing `[]` that is how every HTTP client
+ * spells "this key repeats," and dropping blank parts — and leaves type
+ * coercion (numbers, enums, JSON) to the schema, so there is exactly one
+ * place that decides what `"0.2"` or `"true"` means.
  */
 export function transcriptionFromForm(form: FormData): unknown {
   const result: Record<string, unknown> = {}
   for (const rawKey of new Set(form.keys())) {
     const repeated = rawKey.endsWith('[]')
     const key = repeated ? rawKey.slice(0, -2) : rawKey
-    result[key] = repeated ? form.getAll(rawKey) : form.get(rawKey)
+    if (repeated) {
+      // A single blank part in an otherwise-empty repeated field must leave
+      // the key absent, not `[]` — the schema's `.optional()` array fields
+      // have no case for "present but empty" that means anything different
+      // from "not sent."
+      const values = form.getAll(rawKey).filter((value) => !isBlank(value))
+      if (values.length > 0) result[key] = values
+      continue
+    }
+    // `file` is a `File`, never a string, so `isBlank` never matches it —
+    // a missing file stays missing (`form.get` already returns `null`) and
+    // reaches the schema's own "must be an uploaded file" refusal unchanged.
+    const value = form.get(rawKey)
+    if (value !== null && isBlank(value)) continue
+    result[key] = value
   }
   return result
 }

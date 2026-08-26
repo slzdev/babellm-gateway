@@ -210,6 +210,53 @@ test('transcriptionFromForm passes the File through untouched', () => {
   expect(result.file).toBe(file)
 })
 
+test('transcriptionFromForm drops a blank temperature part rather than handing "" to the schema', () => {
+  const form = new FormData()
+  form.append('model', 'whisper-1')
+  form.append('temperature', '')
+
+  const result = transcriptionFromForm(form) as Record<string, unknown>
+  expect(result).not.toHaveProperty('temperature')
+})
+
+test('transcriptionFromForm drops blank language and prompt parts the same way', () => {
+  const form = new FormData()
+  form.append('model', 'whisper-1')
+  form.append('language', '')
+  form.append('prompt', '   ')
+
+  const result = transcriptionFromForm(form) as Record<string, unknown>
+  expect(result).not.toHaveProperty('language')
+  expect(result).not.toHaveProperty('prompt')
+})
+
+test('transcriptionFromForm drops a repeated field entirely when its only part is blank', () => {
+  const form = new FormData()
+  form.append('model', 'whisper-1')
+  form.append('keywords[]', '')
+
+  const result = transcriptionFromForm(form) as Record<string, unknown>
+  expect(result).not.toHaveProperty('keywords')
+})
+
+test('transcriptionFromForm keeps the non-blank parts of a repeated field and drops only the blank ones', () => {
+  const form = new FormData()
+  form.append('model', 'whisper-1')
+  form.append('keywords[]', 'babellm')
+  form.append('keywords[]', '')
+
+  const result = transcriptionFromForm(form) as Record<string, unknown>
+  expect(result.keywords).toEqual(['babellm'])
+})
+
+test('transcriptionFromForm never treats a missing file as blank', () => {
+  const form = new FormData()
+  form.append('model', 'whisper-1')
+
+  const result = transcriptionFromForm(form) as Record<string, unknown>
+  expect(result).not.toHaveProperty('file')
+})
+
 test('a normalized multipart body round-trips through the schema end to end', () => {
   const form = new FormData()
   form.append('file', audioFile(2048))
@@ -234,4 +281,23 @@ test('a normalized multipart body round-trips through the schema end to end', ()
     keywords: ['babellm'],
   })
   expect(parsed.file).toBeInstanceOf(File)
+})
+
+test('an empty temperature part leaves temperature undefined, not 0, through the full schema', () => {
+  const form = new FormData()
+  form.append('file', audioFile(1024))
+  form.append('model', 'whisper-1')
+  form.append('temperature', '')
+
+  const parsed = transcriptionRequestSchema.parse(transcriptionFromForm(form))
+  expect(parsed.temperature).toBeUndefined()
+})
+
+test('the file survives a full schema parse by reference, unmutated', () => {
+  // Failover-safety proof: `execute` may hand the same request to a second
+  // adapter, so nothing in the schema's transform may clone or re-wrap the
+  // File — it must be the exact object the client uploaded, not a copy.
+  const file = audioFile(1024)
+  const parsed = transcriptionRequestSchema.parse({ file, model: 'whisper-1' })
+  expect(parsed.file).toBe(file)
 })
