@@ -1081,10 +1081,85 @@ test('the catalog is queried once per request, not once for the client and once 
 
 The file already imports `* as pricing from '@/lib/pricing'`.
 
+- [ ] **Step 1b: Rewrite the test this task's premise invalidates**
+
+`tests/gateway/request-logging.test.ts` already has a test named **`a pricing
+failure never reaches the client`** (around line 262). It makes `priceFor`
+reject and then proves two things: the client still gets a 200, and — via its
+comment — that the fire-and-forget `.catch()` at the `log()` call site really
+catches a throw from an await *inside* async `writeLog`, not just one from
+`logRequest`.
+
+Step 4 of this task deletes `writeLog`'s `priceFor` call. After that, nothing
+throws, no stderr is written, `waitFor(() => stderr.mock.calls.length > 0)`
+hangs to the 20s timeout, and `expect(rows).toHaveLength(0)` is false too. The
+test fails for the right reason — its premise is gone — but it must not be
+merely deleted: it is the only coverage of that catch path.
+
+Replace the whole `a pricing failure never reaches the client` test with these
+two. The first asserts the new, correct behaviour; the second re-proves the
+catch path using `resolveRequestLogStore`, which `writeLog` still awaits before
+it calls `logRequest`:
+
+```ts
+test('a pricing failure costs the breakdown, not the request or its log row', async () => {
+  const { apiKey } = await seedGateway()
+  const failure = vi.spyOn(pricing, 'priceFor').mockRejectedValue(new Error('catalog unreachable'))
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
+  )
+  await waitForLogs()
+
+  // The catalog is no longer in writeLog's path, so a rejection there costs
+  // the cost breakdown and nothing else: the client is served, and the row
+  // still lands — with a null cost, exactly like an unpriced model.
+  expect(res.status).toBe(200)
+  expect((await res.json()).usage.cost).toBeNull()
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  expect(row.costUsd).toBeNull()
+  failure.mockRestore()
+})
+
+test('a throw inside writeLog never reaches the client', async () => {
+  const { apiKey } = await seedGateway()
+  // What the old pricing-failure test really guarded: the fire-and-forget
+  // .catch() at the log() call site catches a rejection from an await inside
+  // async writeLog, not merely one from logRequest. priceFor used to be that
+  // await; resolveRequestLogStore is the one that remains.
+  const failure = vi
+    .spyOn(logs, 'resolveRequestLogStore')
+    .mockRejectedValue(new Error('settings unreadable'))
+  const stderr = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
+  )
+  // No row can land, so wait on the side effect that does happen.
+  await waitFor(() => stderr.mock.calls.length > 0)
+
+  expect(res.status).toBe(200)
+  expect(stderr).toHaveBeenCalled()
+  expect((await postgresStore.query({ limit: 10 })).rows).toHaveLength(0)
+  failure.mockRestore()
+  stderr.mockRestore()
+})
+```
+
+Add the namespace import this needs (the file already imports `waitFor`):
+
+```ts
+import * as logs from '@/lib/logs'
+```
+
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `pnpm vitest run tests/gateway/request-logging.test.ts`
-Expected: the first three PASS already (the log path computes its own cost, which happens to agree); the fourth FAILS with `expected 1, received 2` — that is the duplicate this task removes. If the fourth passes, stop and investigate before changing anything: it means Task 2's lookup did not land.
+Expected: the first three of Step 1's tests PASS already (the log path computes its own cost, which happens to agree); the fourth FAILS with `expected 1, received 2` — that is the duplicate this task removes. If the fourth passes, stop and investigate before changing anything: it means Task 2's lookup did not land.
+
+Step 1b's two tests both FAIL at this point: the first because `writeLog` still recomputes the cost (so the row's `costUsd` is not null), the second because `resolveRequestLogStore` is currently awaited *after* the cost block and the assertion ordering has not yet been proven. Both pass after Step 4.
 
 - [ ] **Step 3: Carry the cost into the log**
 
