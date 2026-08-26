@@ -212,8 +212,9 @@ been flushed.
 
 Amounts are strings at nine decimal places — a client summing thousands of
 requests should not inherit float error from the wire format. Cached tokens are
-billed at the cached rate and removed from the input count, so a cache hit is
-never charged twice.
+removed from the input count and billed on their own line — at the catalog's
+cached rate where the model publishes one, otherwise at the same rate as a
+regular input token — so a cache hit is never charged twice.
 
 `"cost": null` means the request could not be priced: the model has no catalog
 entry, or only half of one. It is never `0` — a zero would be indistinguishable

@@ -146,7 +146,14 @@ export function sseResponse<Chunk>(
               // it has long since settled and this costs a microtask. Placing
               // it here rather than before the response is what keeps a
               // catalog query off time-to-first-token.
-              captured.cost = await costFor(usage)
+              //
+              // Guarded with .catch rather than left to the surrounding
+              // try/catch: a costFor rejection is not a broken stream, and
+              // letting it reach the catch below would have
+              // classifyProviderError turn a perfectly healthy stream into a
+              // stream_interrupted error sent to the client. A pricing
+              // failure degrades to a null cost instead.
+              captured.cost = await costFor(usage).catch(() => null)
               outgoing = protocol.attachCost(chunk, costPayload(captured.cost))
             }
           }

@@ -391,16 +391,21 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     )
     dropped = ingress.droppedFor(result.candidate, bodyFor(result.candidate, body))
 
-    // The catalog may never fail a request. A price lookup that throws costs
-    // the client its cost breakdown, not its completion — so the rejection is
+    // Usage is read first so a provider that reports none skips the catalog
+    // lookup entirely — otherwise a SELECT would sit on the client's critical
+    // path to compute a cost that's unconditionally null. The catalog may
+    // never fail a request either way: a price lookup that throws costs the
+    // client its cost breakdown, not its completion, so the rejection is
     // swallowed at creation rather than caught at the await, which also keeps
     // the streaming path (where this promise may never be awaited at all)
     // from raising an unhandled rejection.
-    const prices = await priceFor(
-      result.candidate.provider.id,
-      result.candidate.upstreamModel,
-    ).catch(() => null)
     const usage = ingress.usageOf(result.value)
+    const prices = usage
+      ? await priceFor(
+          result.candidate.provider.id,
+          result.candidate.upstreamModel,
+        ).catch(() => null)
+      : null
     const cost = computeCost(prices, usage)
 
     // Built before logging: logging after the response has been constructed
