@@ -84,19 +84,21 @@ export function createGeminiAdapter(
     listModels: (ctx) => listModels(client, ctx),
 
     async transcribe(req: TranscriptionRequest, ctx: AttemptContext): Promise<TranscriptionResult> {
-      // A refusal here means no upstream call was ever attempted — it is the
-      // client's request that is wrong for this target (a timestamped format,
-      // or audio too large to inline), not a Gemini failure. Left outside the
-      // try/catch below so its GatewayError reaches the routing loop
-      // untouched: routed through toProviderError it would be reclassified
-      // into a ProviderError, and either verdict would be wrong — retryable
-      // would resend the same doomed request to the next target, and
-      // non-retryable would still count as an upstream failure against this
-      // target's circuit breaker for a call that never happened.
+      // Both calls below can refuse the request outright — assertTranscribable
+      // for a timestamped format or oversized audio, toGeminiTranscriptionRequest
+      // (via mimeTypeFor) for a file whose media type cannot be resolved — and
+      // neither refusal is a Gemini failure: no upstream call has happened yet.
+      // Kept outside the try so the try wraps only the upstream call and its
+      // response mapping, which is what can actually fail as an upstream
+      // failure. toProviderError also rethrows a GatewayError untouched if one
+      // ever did reach it (see adapters/gemini/errors.ts), so this is a
+      // structural guarantee, not the only thing standing between a refusal
+      // and a wrongly-retried request — but a reader should not have to go
+      // check the classifier to see that.
       assertTranscribable(req, runtime.name)
+      const params = await toGeminiTranscriptionRequest(req, ctx.upstreamModel)
 
       try {
-        const params = await toGeminiTranscriptionRequest(req, ctx.upstreamModel)
         const result = await client.models.generateContent({
           ...params,
           config: { ...params.config, abortSignal: ctx.signal },

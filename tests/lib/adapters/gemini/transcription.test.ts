@@ -111,6 +111,30 @@ test('an oversized file is refused the same way, before any encoding or upstream
   expect(generateContent).not.toHaveBeenCalled()
 })
 
+test('an unresolvable mime type is refused before any upstream call, and is not retried', async () => {
+  // Unlike assertTranscribable's refusals, transcription-to-gemini.ts's
+  // mimeTypeFor already throws a ProviderError (status 400, retryable:
+  // false) for a file it cannot identify — see
+  // tests/lib/translate/transcription-to-gemini.test.ts's own coverage of
+  // that function. It is built outside transcribe()'s try block for the
+  // same structural reason assertTranscribable is: no upstream call has
+  // happened yet, so it must not be retried against another target — a
+  // non-retryable ProviderError already gets that right without needing to
+  // pass through toProviderError at all.
+  const { generateContent, factory } = fakeClient()
+  const adapter = createGeminiAdapter(runtime, factory as never)
+  const unresolvable = audioFile(4, 'clip.xyz', '')
+
+  const error = await adapter
+    .transcribe(request({ file: unresolvable }), ctx)
+    .catch((err: unknown) => err)
+
+  expect(error).toBeInstanceOf(ProviderError)
+  expect((error as ProviderError).status).toBe(400)
+  expect((error as ProviderError).retryable).toBe(false)
+  expect(generateContent).not.toHaveBeenCalled()
+})
+
 test('an SDK throw arrives already classified', async () => {
   const { factory } = fakeClient({
     models: {
