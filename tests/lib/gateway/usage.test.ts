@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { usageFromResponses } from '@/lib/gateway/usage'
+import { usageFromResponses, usageFromTranscription } from '@/lib/gateway/usage'
 
 test('normalizes Responses usage onto the same LogUsage shape', () => {
   expect(usageFromResponses({
@@ -16,4 +16,28 @@ test('leaves unmeasured Responses counts null rather than zero', () => {
 
 test('returns null when the provider reported no usage at all', () => {
   expect(usageFromResponses(null)).toBeNull()
+})
+
+test('normalizes token-billed transcription usage', () => {
+  expect(usageFromTranscription({
+    type: 'tokens', input_tokens: 14, output_tokens: 6, total_tokens: 20,
+    input_token_details: { audio_tokens: 10, text_tokens: 4 },
+  })).toEqual({ promptTokens: 14, completionTokens: 6, cachedTokens: null, reasoningTokens: null })
+})
+
+test('reports no usage for duration-billed transcription, rather than zero tokens', () => {
+  // `seconds` measures audio, not tokens. Squeezing it into promptTokens would
+  // corrupt every rollup that sums tokens (design doc §3.8), and reporting
+  // zeroes would render real, unpriced spend as free.
+  expect(usageFromTranscription({ type: 'duration', seconds: 12.5 })).toBeNull()
+})
+
+test('returns null when a transcription reported no usage at all', () => {
+  expect(usageFromTranscription(null)).toBeNull()
+  expect(usageFromTranscription(undefined)).toBeNull()
+  // A `text`/`srt`/`vtt` response is a bare string, so there is no usage
+  // object to read — and a clone that sends an unrecognized variant is not
+  // guessed at either.
+  expect(usageFromTranscription('WEBVTT')).toBeNull()
+  expect(usageFromTranscription({ seconds: 12.5 })).toBeNull()
 })

@@ -17,7 +17,12 @@ export const MAX_INLINE_BYTES = 20 * 1024 * 1024
 // gateway's rule is that an unmeasured number is null, never zero — a
 // fabricated `duration` is that mistake with extra steps, so the formats are
 // refused rather than degraded.
-const TIMESTAMPED_FORMATS = new Set<TranscriptionFormat>(['verbose_json', 'srt', 'vtt'])
+// Exported so the ingress's `supports` filter answers the same question from
+// the same list: it steers a chain away from a Gemini target for these three
+// formats, while `assertTranscribable` below refuses them on the one route
+// that has no chain to steer (a direct `provider/model` address). Two copies
+// of the list would be two places for it to drift.
+export const TIMESTAMPED_FORMATS = new Set<TranscriptionFormat>(['verbose_json', 'srt', 'vtt'])
 
 /**
  * Refuses what this target cannot answer, before any work is done — in

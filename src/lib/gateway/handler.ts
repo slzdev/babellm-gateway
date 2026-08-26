@@ -65,8 +65,22 @@ export interface Ingress<Req, Res, Chunk> {
   toResponse(res: Res, headers: HeadersInit): Response
   /** Which candidates can serve this dialect. Absent means "all of them" —
    *  Chat and Responses can be served by any candidate the routing tables
-   *  hand back, so neither implements this. */
-  supports?(candidate: Candidate): boolean
+   *  hand back, so neither implements this.
+   *
+   *  The request is a parameter, not just the candidate, because capability is
+   *  not always a property of the target alone: a Gemini target transcribes,
+   *  but not into `verbose_json`, `srt` or `vtt`. Judging that at attempt time
+   *  instead would let the same request succeed or fail depending on which
+   *  target selection happened to pick, and non-deterministic success is not a
+   *  behaviour a gateway may have. */
+  supports?(candidate: Candidate, req: Req): boolean
+  /** What payload capture stores in place of the request. Absent means the
+   *  parsed request itself, which is right for a JSON dialect — the parsed
+   *  body IS what the client sent. A dialect whose request holds something
+   *  unloggable (transcription's audio `File`) substitutes a description of
+   *  it here, rather than mutating the request the adapters are handed: they
+   *  need it intact, and failover needs it re-readable. */
+  captureRequest?(req: Req): unknown
   /** Absent for a dialect with no response id of its own. */
   newIdentityId?(): string
   /** Streaming support, absent for a dialect this gateway does not stream.
@@ -311,7 +325,10 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     const payload =
       capturePayloads && requestBody
         ? buildPayload(
-            requestBody,
+            // The ingress gets to describe its own request for storage. Only
+            // called when capture is on, so a dialect that has to build a
+            // substitute pays for it on the keys that asked for one.
+            ingress.captureRequest ? ingress.captureRequest(requestBody) : requestBody,
             extra.response ?? null,
             settings.payloadMaxBytes,
             extra.responseTruncated ?? false,
@@ -381,7 +398,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     // endpoint, and a filter there would make the breaker's open-target
     // bookkeeping depend on which ingress asked.
     const supports = ingress.supports
-    const eligible = supports ? candidates.filter((candidate) => supports(candidate)) : candidates
+    const eligible = supports ? candidates.filter((candidate) => supports(candidate, body)) : candidates
     const open = await openTargetsFor(eligible)
     const chain = selectOrder(eligible, model, { open })
 

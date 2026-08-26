@@ -16,6 +16,9 @@ import { resetDb } from '../../helpers/db'
  */
 interface FakeReq {
   model: string
+  /** Stands in for anything request-dependent an ingress might judge a
+   *  candidate against — transcription's `response_format`, in practice. */
+  format?: string
 }
 type FakeRes = Record<string, unknown>
 
@@ -144,6 +147,47 @@ test('maxAttempts does not starve a viable target sitting behind unsupported one
 
   expect(response.status).toBe(200)
   expect(p3Chat).toHaveBeenCalledTimes(1)
+})
+
+// `supports` is handed the request as well as the candidate, because whether
+// a target can serve a request is not always a property of the target alone —
+// a Gemini target transcribes, but not into the timestamp formats. Judging
+// that at attempt time instead would make the same request succeed or fail
+// depending on which target selection happened to pick, and non-deterministic
+// success is not a behaviour a gateway may have (design doc §3.5).
+test('supports is judged per request, not per target', async () => {
+  const { apiKey } = await seedTargets({ targets: [{ name: 'p1' }, { name: 'p2' }] })
+  const p1Chat = vi.fn()
+  const p2Chat = vi.fn().mockResolvedValue({ ok: true })
+  const seen: Array<[string, string | undefined]> = []
+
+  const ingress = makeIngress({
+    read: async (request) => ({
+      model: 'house-model',
+      format: request.headers.get('x-format') ?? undefined,
+    }),
+    // Only p2 can serve the 'fancy' format. p1 is otherwise perfectly capable
+    // and sits first in the chain, so it can only be skipped by a decision
+    // that read the request.
+    supports: (candidate, req) => {
+      seen.push([candidate.provider.name, req.format])
+      return req.format !== 'fancy' || candidate.provider.name === 'p2'
+    },
+    run: (adapter, ctx, req) => adapter.chat(req as never, ctx) as unknown as Promise<FakeRes>,
+  })
+
+  const response = await runGatewayRequest(
+    fakeRequest(apiKey, { 'x-format': 'fancy' }),
+    ingress,
+    fakeAdapterByProvider({ p1: { chat: p1Chat }, p2: { chat: p2Chat } }),
+  )
+
+  expect(response.status).toBe(200)
+  expect(p1Chat).not.toHaveBeenCalled()
+  expect(p2Chat).toHaveBeenCalledTimes(1)
+  // Every candidate was judged against this request's own format, not against
+  // the candidate alone.
+  expect(seen).toEqual([['p1', 'fancy'], ['p2', 'fancy']])
 })
 
 test('supports rejecting everything answers 501 with no upstream call', async () => {
