@@ -44,15 +44,10 @@ export function createAdapter(
       // Gemini speaks neither OpenAI dialect natively, so flavor says nothing
       // about it: the adapter translates from Chat Completions either way,
       // and gets `respond`/`respondStream` from the same wrapper any
-      // chat-only adapter does. `transcribe` is a placeholder until Task 6
-      // gives Gemini a real translated implementation (design doc §3.6) —
-      // until then this keeps the interface honest rather than throwing a
-      // TypeScript error at every other adapter's expense.
-      return withTranscribeUnsupported(
-        withRespondViaChat(createGeminiAdapter(runtime), runtime.name),
-        runtime.name,
-        'Gemini transcription support is not implemented yet',
-      )
+      // chat-only adapter does. `transcribe` is real and translated (design
+      // doc §3.6) — createGeminiAdapter supplies it directly, so no
+      // `withTranscribeUnsupported` wrapper belongs here any more.
+      return withRespondViaChat(createGeminiAdapter(runtime), runtime.name)
     case 'bedrock':
       throw new UnsupportedOperationError(
         `The "${runtime.adapter}" adapter is not available yet.`,

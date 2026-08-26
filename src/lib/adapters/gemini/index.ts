@@ -4,13 +4,21 @@ import {
   fromGenerateContentStream,
   toGeminiRequest,
 } from '@/lib/translate/chat-to-gemini'
+import {
+  assertTranscribable,
+  fromGenerateContent as fromGenerateContentTranscription,
+  toGeminiRequest as toGeminiTranscriptionRequest,
+} from '@/lib/translate/transcription-to-gemini'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
+import type { TranscriptionRequest } from '@/lib/schemas/transcription'
 import type {
   AttemptContext,
   ChatCompletion,
   ChatCompletionChunk,
   ChatOnlyAdapter,
+  ProviderAdapter,
   ProviderRuntime,
+  TranscriptionResult,
 } from '../types'
 import { createGeminiClient, listModels, type GeminiClientFactory } from './client'
 import { toProviderError } from './errors'
@@ -29,7 +37,7 @@ export type { GeminiClientFactory }
 export function createGeminiAdapter(
   runtime: ProviderRuntime,
   createClient?: GeminiClientFactory,
-): ChatOnlyAdapter {
+): ChatOnlyAdapter & Pick<ProviderAdapter, 'transcribe'> {
   const client = createGeminiClient(runtime, createClient)
 
   /**
@@ -74,5 +82,29 @@ export function createGeminiAdapter(
     },
 
     listModels: (ctx) => listModels(client, ctx),
+
+    async transcribe(req: TranscriptionRequest, ctx: AttemptContext): Promise<TranscriptionResult> {
+      // A refusal here means no upstream call was ever attempted — it is the
+      // client's request that is wrong for this target (a timestamped format,
+      // or audio too large to inline), not a Gemini failure. Left outside the
+      // try/catch below so its GatewayError reaches the routing loop
+      // untouched: routed through toProviderError it would be reclassified
+      // into a ProviderError, and either verdict would be wrong — retryable
+      // would resend the same doomed request to the next target, and
+      // non-retryable would still count as an upstream failure against this
+      // target's circuit breaker for a call that never happened.
+      assertTranscribable(req, runtime.name)
+
+      try {
+        const params = await toGeminiTranscriptionRequest(req, ctx.upstreamModel)
+        const result = await client.models.generateContent({
+          ...params,
+          config: { ...params.config, abortSignal: ctx.signal },
+        })
+        return fromGenerateContentTranscription(result, req)
+      } catch (err) {
+        throw toProviderError(err)
+      }
+    },
   }
 }

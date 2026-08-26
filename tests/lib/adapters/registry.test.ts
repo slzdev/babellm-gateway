@@ -341,8 +341,8 @@ test('withModelPaths is a no-op when only audioTranscriptionsPath is null alongs
 
 // transcribe: /audio/transcriptions is a sibling endpoint on the same host,
 // not a dialect of chat (design doc §3.4), so both OpenAI-shaped flavors must
-// reach it — and only the anthropic_messages flavor and the still-unbuilt
-// Gemini translator (Task 6) may not.
+// reach it — and only the anthropic_messages flavor, whose host has no
+// transcription endpoint at all, may not.
 
 const transcribeCtx = {
   upstreamModel: 'whisper-upstream',
@@ -396,11 +396,24 @@ test('an anthropic_messages target cannot transcribe', async () => {
     .rejects.toThrow(UnsupportedOperationError)
 })
 
-test('gemini cannot transcribe yet — Task 6 replaces this placeholder', async () => {
+test('gemini now serves a real translated transcription, not the withTranscribeUnsupported placeholder', async () => {
+  const fetchSpy = stubFetch()
   const adapter = createAdapter(
     provider({ adapter: 'gemini', credentials: encryptJson({ apiKey: 'g-key' }) }),
   )
 
-  await expect(adapter.transcribe(transcribeRequest(), transcribeCtx))
-    .rejects.toThrow(UnsupportedOperationError)
+  // Task 6 replaced the withTranscribeUnsupported wrapper with a real,
+  // translated implementation (tests/lib/adapters/gemini/transcription.test.ts
+  // covers its params, mapping and error handling in isolation). What
+  // matters here is only that the registry wires it up: the call reaches
+  // Gemini's generateContent endpoint at all, rather than throwing
+  // UnsupportedOperationError before any upstream attempt. The stub returns
+  // an empty body, so the translator's own "no transcription text" check
+  // surfaces as a ProviderError — never the placeholder's error.
+  const error = await adapter
+    .transcribe(transcribeRequest(), transcribeCtx)
+    .catch((err: unknown) => err)
+
+  expect(error).not.toBeInstanceOf(UnsupportedOperationError)
+  expect(fetchSpy).toHaveBeenCalled()
 })
