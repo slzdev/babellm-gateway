@@ -86,6 +86,28 @@ export function classifyProviderError(err: unknown): ClassifiedError {
     }
   }
 
+  // A GatewayError is the gateway's own verdict that the client's request is
+  // wrong, reached before any upstream call was made — e.g.
+  // assertTranscribable refusing a timestamped response_format or an
+  // oversized file (transcription-to-gemini.ts), thrown deliberately outside
+  // an adapter's own try/catch so it arrives here, at the routing loop's
+  // classifier, unwrapped. Always non-retryable regardless of `status`: no
+  // upstream attempt happened, so there is nothing a retry against the same
+  // or a different target could fix, and falling through to the generic
+  // branch below would otherwise discard the gateway's own status/type/code
+  // and answer with a fabricated retryable 502 — sending the same doomed
+  // request to the next target and charging a target's circuit breaker for
+  // a call it never received.
+  if (err instanceof GatewayError) {
+    return {
+      retryable: false,
+      status: err.status,
+      type: err.type,
+      code: err.code,
+      message: err.message,
+    }
+  }
+
   if (err instanceof UnsupportedOperationError) {
     return {
       retryable: false,

@@ -107,6 +107,35 @@ test('a retryable ProviderError stays retryable even at a 4xx status', () => {
   expect(classified.status).toBe(400)
 })
 
+test('a GatewayError classifies as itself, non-retryable, without falling to the generic fallback', () => {
+  // The routing loop's own classifier, distinct from any adapter's
+  // toProviderError. assertTranscribable (transcription-to-gemini.ts) throws
+  // a raw GatewayError from outside transcribe()'s try block specifically so
+  // it reaches execute() unwrapped — this is what execute()'s per-attempt
+  // catch actually classifies it with. Before this test, a GatewayError fell
+  // through every branch here and came back as { retryable: true, status:
+  // 502, type: 'api_error', code: 'upstream_error' } — discarding the
+  // gateway's own 400 verdict and making a refused, never-attempted request
+  // look like a retryable upstream failure.
+  const classified = classifyProviderError(
+    new GatewayError({
+      status: 400,
+      type: 'invalid_request_error',
+      code: 'unsupported_parameter',
+      param: 'response_format',
+      message: 'this target returns no timestamps',
+    }),
+  )
+
+  expect(classified).toEqual({
+    retryable: false,
+    status: 400,
+    type: 'invalid_request_error',
+    code: 'unsupported_parameter',
+    message: 'this target returns no timestamps',
+  })
+})
+
 test('a ProviderError defaults its type from retryability', () => {
   expect(new ProviderError({ status: 503, message: 'x', retryable: true }).type)
     .toBe('api_error')

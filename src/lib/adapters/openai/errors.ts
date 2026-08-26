@@ -21,10 +21,14 @@ const RETRYABLE_STATUSES = new Set([408, 409, 429, 498])
  * happened, and the generic branch below would otherwise turn it into a
  * retryable 502 `upstream_error` — resending a doomed request and charging a
  * healthy provider's circuit breaker for a call it never received. Nothing
- * in this adapter's try blocks throws a `GatewayError` today, but the guard
- * belongs here rather than at each call site so the next one that does is
- * already safe — see the Gemini counterpart of this file, which does throw
- * one from inside a try block (an unresolvable audio mime type).
+ * in this adapter's try blocks throws a `GatewayError` today — the Gemini
+ * counterpart's transcribe() throws one too (assertTranscribable, for a
+ * refused response_format or an oversized file), but deliberately from
+ * outside its own try block, so this classifier never actually sees it
+ * either. The guard belongs here anyway, at the classifier rather than at
+ * each call site, so the next adapter method that does throw a
+ * `GatewayError` from inside a try is already safe without having to
+ * rediscover this rule.
  */
 export function toProviderError(err: unknown, hint?: string): ProviderError {
   if (err instanceof GatewayError) throw err
