@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
-import { chatRequest, fakeAdapterDeps, seedGateway } from '../helpers/gateway'
+import { chatRequest, fakeAdapterDeps, seedGateway, seedPrices } from '../helpers/gateway'
 import { parseSse, parseSseChunks, sseTerminated } from '../helpers/sse'
 import { resetDb } from '../helpers/db'
+import { clearPriceCache } from '@/lib/pricing'
+import * as pricing from '@/lib/pricing'
 import fixture from '../fixtures/openai-tool-call-stream.json'
 
 const body = {
@@ -21,6 +23,7 @@ function streamOf(chunks: unknown[]) {
 beforeEach(async () => {
   process.env.ENCRYPTION_KEY = 'e'.repeat(64)
   await resetDb()
+  clearPriceCache()
   vi.spyOn(console, 'log').mockImplementation(() => {})
 })
 
@@ -173,4 +176,112 @@ test('a non-streaming request is unaffected by the streaming path', async () => 
     fakeAdapterDeps({ chat }),
   )
   expect(res.headers.get('content-type')).toContain('application/json')
+})
+
+const usageChunk = {
+  id: 'chatcmpl-upstream',
+  object: 'chat.completion.chunk',
+  created: 1,
+  model: 'gpt-4o-mini',
+  choices: [],
+  usage: {
+    prompt_tokens: 1_000_000,
+    completion_tokens: 1_000_000,
+    total_tokens: 2_000_000,
+    prompt_tokens_details: { cached_tokens: 0 },
+  },
+}
+
+const contentChunk = {
+  id: 'chatcmpl-upstream',
+  object: 'chat.completion.chunk',
+  created: 1,
+  model: 'gpt-4o-mini',
+  choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }],
+}
+
+test('the final usage chunk carries the cost breakdown', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chatStream: streamOf([contentChunk, usageChunk]) as never }),
+  )
+  const chunks = parseSseChunks(await res.text()) as Array<{
+    usage?: { cost?: unknown }
+  }>
+
+  const withUsage = chunks.filter((c) => c.usage)
+  expect(withUsage).toHaveLength(1)
+  expect(withUsage[0].usage!.cost).toEqual({
+    currency: 'USD',
+    input_usd: '1.000000000',
+    cached_usd: '0.000000000',
+    output_usd: '3.000000000',
+    total_usd: '4.000000000',
+  })
+})
+
+test('content chunks are not given a usage object just to carry a cost', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chatStream: streamOf([contentChunk, usageChunk]) as never }),
+  )
+  const chunks = parseSseChunks(await res.text()) as Array<{ usage?: unknown }>
+
+  expect(chunks[0].usage).toBeUndefined()
+})
+
+test('a stream whose provider reports no usage carries no cost anywhere', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chatStream: streamOf([contentChunk]) as never }),
+  )
+  const text = await res.text()
+
+  expect(text).not.toContain('"cost"')
+  expect(sseTerminated(text)).toBe(true)
+})
+
+test('an unpriced streaming model reports an explicit null cost', async () => {
+  const { apiKey } = await seedGateway()
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chatStream: streamOf([contentChunk, usageChunk]) as never }),
+  )
+  const chunks = parseSseChunks(await res.text()) as Array<{
+    usage?: { cost?: unknown }
+  }>
+
+  const withUsage = chunks.filter((c) => c.usage)
+  expect(withUsage[0].usage!.cost).toBeNull()
+})
+
+test('a catalog failure costs the breakdown, not the stream', async () => {
+  const { apiKey } = await seedGateway()
+  vi.spyOn(pricing, 'priceFor').mockRejectedValue(new Error('catalog is down'))
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chatStream: streamOf([contentChunk, usageChunk]) as never }),
+  )
+  const text = await res.text()
+  const chunks = parseSseChunks(text) as Array<{ usage?: { cost?: unknown } }>
+
+  expect(sseTerminated(text)).toBe(true)
+  expect(chunks.filter((c) => c.usage)[0].usage!.cost).toBeNull()
 })

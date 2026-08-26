@@ -349,6 +349,20 @@ export async function runGatewayRequest<Req, Res, Chunk>(
         ? { maxBytes: (await resolveRequestLogStore()).settings.payloadMaxBytes }
         : undefined
 
+      // Started, deliberately not awaited: handler.ts must put nothing
+      // between execute() and the response, or it lands on
+      // time-to-first-token. The relay awaits this only on the chunk that
+      // carries usage — the last one — by which point it has long resolved.
+      //
+      // The .catch is attached here rather than at the await because a stream
+      // that ends without usage never awaits it at all, and an unattended
+      // rejection would take down the process precisely when the database is
+      // already in trouble.
+      const prices = priceFor(
+        result.candidate.provider.id,
+        result.candidate.upstreamModel,
+      ).catch(() => null)
+
       return sseResponse(
         result.value,
         ingress.stream,
@@ -364,6 +378,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
             responseTruncated: capture.truncated,
           }),
         captureOptions,
+        async (usage) => computeCost(await prices, usage),
       )
     }
 

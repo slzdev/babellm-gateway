@@ -66,6 +66,17 @@ export const responsesStreamProtocol: StreamProtocol<ResponseStreamEvent> = {
     return usageFromResponses((event.response as { usage?: unknown }).usage as never)
   },
 
+  attachCost: (event, cost) => {
+    // Usage hangs off the response object, not the event, so this reaches one
+    // level deeper than chat's. Events with no response — the deltas — are
+    // returned untouched.
+    if (!('response' in event) || !event.response) return event
+    return {
+      ...event,
+      response: withUsageCost(event.response as { usage?: unknown }, cost),
+    } as ResponseStreamEvent
+  },
+
   isContentDelta: (event) => CONTENT_DELTAS.has(event.type),
 }
 

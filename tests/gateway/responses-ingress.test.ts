@@ -124,6 +124,50 @@ test('streams named events and never sends [DONE]', async () => {
   expect(body).not.toContain('[DONE]')
 })
 
+test('the response.completed event carries the cost breakdown', async () => {
+  const { apiKey, targets } = await seedTargets({
+    targets: [{ name: 'p1', apiFlavor: 'responses' }],
+  })
+  await seedPrices(targets[0].provider.id, 'p1-model', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+
+  async function* respondStream() {
+    yield { type: 'response.output_text.delta', sequence_number: 1, delta: 'hi' }
+    yield {
+      type: 'response.completed',
+      sequence_number: 2,
+      response: {
+        id: 'resp_1', model: 'up', output: [], status: 'completed',
+        usage: { input_tokens: 1_000_000, output_tokens: 1_000_000, total_tokens: 2_000_000 },
+      },
+    }
+  }
+
+  const res = await handleResponses(
+    responsesRequest({ model: 'house-model', input: 'hi', stream: true }, apiKey),
+    fakeAdapterByProvider({ p1: { respondStream: respondStream as never } }),
+  )
+  const text = await res.text()
+
+  const completed = text
+    .split('\n\n')
+    .find((block) => block.startsWith('event: response.completed'))!
+  const payload = JSON.parse(
+    completed.split('\n').find((line) => line.startsWith('data:'))!.slice(5).trim(),
+  )
+
+  expect(payload.response.usage.cost).toEqual({
+    currency: 'USD',
+    input_usd: '1.000000000',
+    cached_usd: '0.000000000',
+    output_usd: '3.000000000',
+    total_usd: '4.000000000',
+  })
+  // The virtual model rewrite still happens; attaching cost must not undo it.
+  expect(payload.response.model).toBe('house-model')
+})
+
 test('retrieval says why it is unsupported rather than 404ing blankly', async () => {
   const { GET } = await import('@/app/v1/responses/[...rest]/route')
 

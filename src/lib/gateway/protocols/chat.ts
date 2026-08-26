@@ -46,6 +46,7 @@ export const chatStreamProtocol: StreamProtocol<ChatCompletionChunk> = {
     })}\n\n`),
   accumulate,
   usageOf: (chunk) => (chunk.usage ? usageFrom(chunk.usage) : null),
+  attachCost: (chunk, cost) => withUsageCost(chunk, cost),
   // A chunk carrying reasoning but no content is still the first token from the
   // client's point of view: something generated arrived.
   isContentDelta: (chunk) => {
