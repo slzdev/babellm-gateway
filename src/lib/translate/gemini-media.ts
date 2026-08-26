@@ -11,12 +11,20 @@ const DATA_URI = /^data:([^;,]+)(;base64)?,([\s\S]*)$/
 
 /**
  * Extension to MIME type, covering what Gemini documents as accepted for URL
- * input. The map exists because `fileData` requires a mimeType next to the uri
- * — an empty one is a documented 400 — while a Chat Completions content part
- * carries only a url. A caller who has a url this cannot type can say so
- * directly with `mime_type` on the part.
+ * input, plus the audio extensions `transcription-to-gemini.ts` resolves the
+ * same way for an uploaded file's name. The map exists because `fileData`
+ * requires a mimeType next to the uri — an empty one is a documented 400 —
+ * while a Chat Completions content part carries only a url. A caller who has
+ * a url this cannot type can say so directly with `mime_type` on the part.
+ *
+ * Exported for reuse: an uploaded transcription file's mime resolution is the
+ * same "trust the caller's type, else fall back to the extension" rule this
+ * module already applies to a media url, so the map is shared rather than
+ * forked. No `webm` entry of its own for audio — the existing video/webm
+ * entry already resolves it, and a video container's audio track transcribes
+ * fine (see the mime-type note in transcription-to-gemini.ts).
  */
-const MIME_BY_EXTENSION: Record<string, string> = {
+export const MIME_BY_EXTENSION: Record<string, string> = {
   // Images
   bmp: 'image/bmp',
   gif: 'image/gif',
@@ -37,6 +45,12 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   mpg: 'video/mpg',
   webm: 'video/webm',
   wmv: 'video/wmv',
+  // Audio
+  flac: 'audio/flac',
+  m4a: 'audio/m4a',
+  mp3: 'audio/mpeg',
+  ogg: 'audio/ogg',
+  wav: 'audio/wav',
 }
 
 export type MediaKind = 'image' | 'video'
