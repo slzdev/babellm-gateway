@@ -230,8 +230,9 @@ supports?(candidate: Candidate): boolean
 
 Optional on `Ingress`, absent for Chat and Responses (every candidate can serve
 those), and implemented by the transcription ingress as "not
-`anthropic_messages`". The handler filters the selected chain through it, and
-answers 501 `unsupported_operation` naming the model when nothing remains.
+`anthropic_messages`". The handler filters the candidate list through it
+*before* `selectOrder` runs, and answers 501 `unsupported_operation` naming
+the model when nothing remains.
 
 This is deliberately *not* the treatment the Responses ingress gives hosted
 tools, which are refused with a 400 rather than failed over. The difference is
@@ -240,10 +241,17 @@ a chat target, so quietly answering it from a later target would be answering a
 different question. A transcription is a transcription whichever target
 performs it, so preferring one that can is what failover is *for*.
 
-Filtering after `selectOrder` rather than inside `resolveModel`: resolution
-answers "what does this name route to", which is the same answer for every
-endpoint, and a filter there would make the breaker's open-target bookkeeping
-depend on which ingress asked.
+Filtering feeds `selectOrder` rather than following it: `selectOrder`
+truncates its ordered chain to `model.maxAttempts`, so a filter applied
+downstream of that truncation could throw away a candidate the client's
+dialect could actually have used, sitting behind ones it never could —
+`maxAttempts: 2` is an operator's promise of two real attempts, not two
+candidates chosen before anyone asked whether they could serve. Policy and
+breaker demotion still own ordering; only which candidates are eligible to be
+ordered at all moves earlier. Filtering still does not move into
+`resolveModel`: resolution answers "what does this name route to", which is
+the same answer for every endpoint, and a filter there would make the
+breaker's open-target bookkeeping depend on which ingress asked.
 
 ### 3.6 Gemini transcribes inline, in two formats
 

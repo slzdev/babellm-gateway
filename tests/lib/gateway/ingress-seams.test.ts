@@ -117,6 +117,35 @@ test('supports filters the chain: the rejected target is never attempted', async
   expect(detail?.attempts).toHaveLength(1)
 })
 
+// Pins the fix for a real defect: filtering has to feed selectOrder, not
+// follow it. selectOrder truncates its ordered chain to model.maxAttempts
+// BEFORE anyone can know which candidates this dialect can even use — so
+// filtering downstream of that truncation would slice off p1 and p2 (an
+// unsupported flavor), see both rejected, and 501 with a perfectly capable
+// p3 sitting untried one slot further down. maxAttempts: 2 has to mean "two
+// real attempts", not "look at the first two candidates, whatever they are".
+test('maxAttempts does not starve a viable target sitting behind unsupported ones', async () => {
+  const { apiKey } = await seedTargets({
+    maxAttempts: 2,
+    targets: [{ name: 'p1' }, { name: 'p2' }, { name: 'p3' }],
+  })
+  const p3Chat = vi.fn().mockResolvedValue({ ok: true })
+
+  const ingress = makeIngress({
+    supports: (candidate) => candidate.provider.name === 'p3',
+    run: (adapter, ctx, req) => adapter.chat(req as never, ctx) as unknown as Promise<FakeRes>,
+  })
+
+  const response = await runGatewayRequest(
+    fakeRequest(apiKey),
+    ingress,
+    fakeAdapterByProvider({ p1: { chat: vi.fn() }, p2: { chat: vi.fn() }, p3: { chat: p3Chat } }),
+  )
+
+  expect(response.status).toBe(200)
+  expect(p3Chat).toHaveBeenCalledTimes(1)
+})
+
 test('supports rejecting everything answers 501 with no upstream call', async () => {
   const { apiKey } = await seedGateway()
   const chat = vi.fn()

@@ -88,6 +88,12 @@ export interface Ingress<Req, Res, Chunk> {
  * so that fact is enforced by a thrown error instead of relied upon — a
  * dialect that got the refusal wrong would otherwise fail with "cannot read
  * properties of undefined" deep inside the SSE relay.
+ *
+ * An ordinary `Error`, not a `GatewayError`: this is the gateway's own
+ * inconsistency, not something a client did wrong. `errorResponse` sanitizes
+ * anything that is not a `GatewayError` to the generic internal-error
+ * envelope and logs the real message via `console.error` — a `GatewayError`
+ * here would instead hand the client this file's internal commentary.
  */
 type StreamableIngress<Req, Res, Chunk> =
   Ingress<Req, Res, Chunk> & Required<Pick<Ingress<Req, Res, Chunk>, 'runStream' | 'stream' | 'captureResponse'>>
@@ -96,12 +102,7 @@ function assertStreamable<Req, Res, Chunk>(
   ingress: Ingress<Req, Res, Chunk>,
 ): StreamableIngress<Req, Res, Chunk> {
   if (!ingress.runStream || !ingress.stream || !ingress.captureResponse) {
-    throw new GatewayError({
-      status: 500,
-      type: 'internal_error',
-      code: 'internal_error',
-      message: 'This dialect has no streaming implementation, but the request reached the streaming branch.',
-    })
+    throw new Error('This dialect has no streaming implementation, but the request reached the streaming branch.')
   }
   return ingress as StreamableIngress<Req, Res, Chunk>
 }
@@ -368,14 +369,21 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     limits = await checkLimits(apiKey)
 
     const { model, candidates } = await resolveModel(modelName)
-    const open = await openTargetsFor(candidates)
-    // Filtered after selectOrder, not before: selection owns policy and
-    // breaker demotion, and filtering upstream of it would change which
-    // target a weighted or round-robin model picks for OTHER endpoints that
-    // model also serves.
-    const chain = ingress.supports
-      ? selectOrder(candidates, model, { open }).filter(ingress.supports)
-      : selectOrder(candidates, model, { open })
+    // Filtered before selectOrder, not after: selectOrder truncates its
+    // ordered chain to model.maxAttempts, so filtering downstream of that
+    // truncation could starve a viable target sitting behind ones this
+    // dialect could never have used — an operator's "try at most N" is meant
+    // to count attempts that could succeed, not candidates a later step was
+    // always going to throw away. Policy and breaker demotion still own
+    // ordering; only which candidates are eligible to be ordered at all moves
+    // earlier. This still does not belong in resolveModel: resolution
+    // answers "what does this name route to", the same answer for every
+    // endpoint, and a filter there would make the breaker's open-target
+    // bookkeeping depend on which ingress asked.
+    const supports = ingress.supports
+    const eligible = supports ? candidates.filter((candidate) => supports(candidate)) : candidates
+    const open = await openTargetsFor(eligible)
+    const chain = selectOrder(eligible, model, { open })
 
     if (chain.length === 0) {
       throw new GatewayError({

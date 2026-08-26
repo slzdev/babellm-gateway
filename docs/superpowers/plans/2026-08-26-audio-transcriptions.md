@@ -51,7 +51,7 @@ export interface Ingress<Req, Res, Chunk> {
   supports?(candidate: Candidate): boolean
   /** Absent for a dialect with no response id of its own. */
   newIdentityId?(): string
-  /** The four streaming members, absent for a dialect this gateway does not
+  /** The three streaming members, absent for a dialect this gateway does not
    *  stream. Reachable only when `isStream()` returns true. */
   runStream?(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): AsyncIterable<Chunk>
   stream?: StreamProtocol<Chunk>
@@ -63,12 +63,12 @@ Handler changes, all inside `runGatewayRequest`:
 
 1. `const body = await ingress.read(request)` replaces `ingress.parse(await readJson(request))`. Keep `readJson` and `parseWith` exported — the two JSON ingresses call them, and their error envelopes must not change.
 2. `identity` becomes `{ id: ingress.newIdentityId?.() ?? '', model: modelName }`. Document that `''` means "this dialect has no response id"; nothing reads it in that case.
-3. After `selectOrder`, filter the chain:
+3. Before `selectOrder`, filter the candidates:
 
 ```ts
-const chain = ingress.supports
-  ? selectOrder(candidates, model, { open }).filter(ingress.supports)
-  : selectOrder(candidates, model, { open })
+const supports = ingress.supports
+const eligible = supports ? candidates.filter((candidate) => supports(candidate)) : candidates
+const chain = selectOrder(eligible, model, { open })
 
 if (chain.length === 0) {
   throw new GatewayError({
@@ -80,9 +80,9 @@ if (chain.length === 0) {
 }
 ```
 
-  Filter after selection, not before: `selectOrder` owns policy and breaker demotion, and a filter upstream of it would change which target a weighted or round-robin model picks for *other* endpoints.
+  Filter before selection, not after: `selectOrder` truncates its ordered chain to `model.maxAttempts`, so filtering downstream of that truncation could starve a candidate this dialect could actually use behind ones it never could — `maxAttempts: 2` has to mean two real attempts, not two candidates chosen before eligibility was known. Policy and breaker demotion still own ordering; only which candidates are eligible to be ordered at all moves earlier.
 
-4. The streaming branch asserts its four members are present before use — one narrow helper, throwing an internal `GatewayError` (500, `internal_error`) if not. Unreachable in practice: an ingress with no streaming members refuses `stream: true` in `read`.
+4. The streaming branch asserts its three members are present before use — one narrow helper, throwing a plain `Error` (not a `GatewayError`) if not, so `errorResponse` sanitizes it to the standard internal-error envelope and logs the real message instead of handing a client this file's internal commentary. Unreachable in practice: an ingress with no streaming members refuses `stream: true` in `read`.
 5. The buffered branch's `Response.json(completion, { headers })` becomes `ingress.toResponse(completion, headers)`. The order stays `finish` → build response → `log`, so a throw while rendering cannot race a second log line for one request id.
 
 **Chat and Responses:** add `read` (wrapping their existing schema parse) and `toResponse` (`Response.json`). `parse` is removed from both, along with the field on the interface. Nothing else moves.
