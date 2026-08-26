@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { createAdapter, resolveProviderRuntime } from '@/lib/adapters/registry'
+import { createAdapter, resolveProviderRuntime, withModelPaths } from '@/lib/adapters/registry'
 import { UnsupportedOperationError } from '@/lib/gateway/errors'
 import { encryptJson } from '@/lib/crypto'
 import type { ProviderRow } from '@/lib/db/schema'
+import type { ProviderRuntime } from '@/lib/adapters/types'
 
 beforeEach(() => {
   process.env.ENCRYPTION_KEY = 'b'.repeat(64)
@@ -284,4 +285,39 @@ test('an openai_compatible provider with no base URL is still refused', () => {
     provider({ adapter: 'openai_compatible', baseUrl: null }),
     'anthropic_messages',
   )).toThrow(/no base URL/)
+})
+
+function runtime(overrides: Partial<ProviderRuntime> = {}): ProviderRuntime {
+  return {
+    id: '00000000-0000-0000-0000-000000000001',
+    name: 'p',
+    adapter: 'openai',
+    baseUrl: null,
+    credentials: { apiKey: 'sk-test' },
+    config: {},
+    ...overrides,
+  }
+}
+
+test('withModelPaths copies a set audioTranscriptionsPath onto the config', () => {
+  const layered = withModelPaths(runtime(), { audioTranscriptionsPath: '/api/v2/audio' })
+  expect(layered.config.audioTranscriptionsPath).toBe('/api/v2/audio')
+})
+
+test('withModelPaths leaves the provider\'s audioTranscriptionsPath standing when the model names none', () => {
+  const layered = withModelPaths(
+    runtime({ config: { audioTranscriptionsPath: '/provider/audio' } }),
+    { audioTranscriptionsPath: null },
+  )
+  // null is "this model says nothing", which must not erase the provider's
+  // value — the same rule the other three path keys already follow.
+  expect(layered.config.audioTranscriptionsPath).toBe('/provider/audio')
+})
+
+test('withModelPaths is a no-op when only audioTranscriptionsPath is null alongside the rest', () => {
+  const original = runtime({ config: { audioTranscriptionsPath: '/provider/audio' } })
+  const layered = withModelPaths(original, {
+    chatCompletionsPath: null, responsesPath: null, messagesPath: null, audioTranscriptionsPath: null,
+  })
+  expect(layered).toBe(original)
 })

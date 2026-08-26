@@ -143,6 +143,7 @@ export interface TargetSpec {
   chatCompletionsPath?: string | null
   responsesPath?: string | null
   messagesPath?: string | null
+  audioTranscriptionsPath?: string | null
   adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
 }
 
@@ -191,7 +192,10 @@ export async function seedTargets(options: SeedTargetsOptions) {
       enabled: spec.enabled ?? true,
     }).returning()
 
-    if (spec.apiFlavor || spec.chatCompletionsPath || spec.responsesPath || spec.messagesPath) {
+    if (
+      spec.apiFlavor || spec.chatCompletionsPath || spec.responsesPath || spec.messagesPath
+      || spec.audioTranscriptionsPath
+    ) {
       await db.insert(catalogModels).values({
         providerId: provider.id,
         modelId: `${spec.name}-model`,
@@ -199,6 +203,7 @@ export async function seedTargets(options: SeedTargetsOptions) {
         chatCompletionsPath: spec.chatCompletionsPath ?? null,
         responsesPath: spec.responsesPath ?? null,
         messagesPath: spec.messagesPath ?? null,
+        audioTranscriptionsPath: spec.audioTranscriptionsPath ?? null,
       })
     }
 

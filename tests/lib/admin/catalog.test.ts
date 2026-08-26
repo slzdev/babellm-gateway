@@ -252,12 +252,14 @@ test('gateway settings are stored on the model and leave the layers alone', asyn
     apiFlavor: 'responses',
     chatCompletionsPath: '/api/chat',
     responsesPath: '/api/v2/responses',
+    audioTranscriptionsPath: '/api/v2/audio/transcriptions',
   })
 
   const [item] = await listCatalog()
   expect(item.apiFlavor).toBe('responses')
   expect(item.chatCompletionsPath).toBe('/api/chat')
   expect(item.responsesPath).toBe('/api/v2/responses')
+  expect(item.audioTranscriptionsPath).toBe('/api/v2/audio/transcriptions')
   // These are not layer fields: the override and the value merged from it
   // must come through untouched.
   expect(item.override.contextWindow).toBe(999)
@@ -388,4 +390,46 @@ test('the list item reports the provider messages path as the inherited placehol
   await seedCatalog(['gpt-4o'])
   const [item] = await listCatalog()
   expect(item.providerPaths.messagesPath).toBe('/messages')
+})
+
+test('the audio transcriptions path is stored on the model', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [before] = await listCatalog()
+
+  await setModelGateway(before.id, {
+    audioTranscriptionsPath: 'audio/v2/transcriptions/',
+  })
+
+  const [item] = await listCatalog()
+  // parseProviderPath normalizes the missing leading slash and the trailing one.
+  expect(item.audioTranscriptionsPath).toBe('/audio/v2/transcriptions')
+})
+
+test('a blank audio transcriptions path clears back to inheriting the provider', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [before] = await listCatalog()
+  await setModelGateway(before.id, { audioTranscriptionsPath: '/audio' })
+
+  await setModelGateway(before.id, { audioTranscriptionsPath: '' })
+
+  const [item] = await listCatalog()
+  expect(item.audioTranscriptionsPath).toBeNull()
+})
+
+test('a full URL in the audio transcriptions path is refused rather than saved', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [before] = await listCatalog()
+
+  await expect(setModelGateway(before.id, {
+    audioTranscriptionsPath: 'https://elsewhere.test/v1/audio/transcriptions',
+  })).rejects.toThrow(/not a valid path/)
+
+  const [item] = await listCatalog()
+  expect(item.audioTranscriptionsPath).toBeNull()
+})
+
+test('the list item reports the provider audio transcriptions path as the inherited placeholder', async () => {
+  await seedCatalog(['gpt-4o'])
+  const [item] = await listCatalog()
+  expect(item.providerPaths.audioTranscriptionsPath).toBe('/audio/transcriptions')
 })

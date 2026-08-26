@@ -38,6 +38,7 @@ export interface ProviderConfig {
   chatCompletionsPath?: string
   responsesPath?: string
   messagesPath?: string
+  audioTranscriptionsPath?: string
   [key: string]: unknown
 }
 
@@ -54,6 +55,7 @@ export interface ModelPathOverrides {
   chatCompletionsPath?: string | null
   responsesPath?: string | null
   messagesPath?: string | null
+  audioTranscriptionsPath?: string | null
 }
 
 export interface ProviderRuntime {

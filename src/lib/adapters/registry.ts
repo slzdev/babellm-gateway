@@ -59,16 +59,20 @@ export function createAdapter(
  * `modelsPath` is not among them, because listing models is a provider
  * operation that happens with no model in hand.
  */
-function withModelPaths(
+export function withModelPaths(
   runtime: ProviderRuntime,
   paths: ModelPathOverrides | null | undefined,
 ): ProviderRuntime {
-  if (!paths?.chatCompletionsPath && !paths?.responsesPath && !paths?.messagesPath) return runtime
+  if (
+    !paths?.chatCompletionsPath && !paths?.responsesPath && !paths?.messagesPath
+    && !paths?.audioTranscriptionsPath
+  ) return runtime
 
   const config: ProviderConfig = { ...runtime.config }
   if (paths.chatCompletionsPath) config.chatCompletionsPath = paths.chatCompletionsPath
   if (paths.responsesPath) config.responsesPath = paths.responsesPath
   if (paths.messagesPath) config.messagesPath = paths.messagesPath
+  if (paths.audioTranscriptionsPath) config.audioTranscriptionsPath = paths.audioTranscriptionsPath
   return { ...runtime, config }
 }
 

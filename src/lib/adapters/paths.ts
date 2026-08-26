@@ -18,6 +18,7 @@ export const DEFAULT_PATHS = {
   // absolute `/v1/messages`; the adapter always passes an explicit path,
   // so that default never applies and cannot double the prefix.
   messages: '/messages',
+  audioTranscriptions: '/audio/transcriptions',
 } as const
 
 export type ProviderPaths = { -readonly [K in keyof typeof DEFAULT_PATHS]: string }
@@ -28,6 +29,7 @@ const CONFIG_KEYS: Record<keyof ProviderPaths, string> = {
   chatCompletions: 'chatCompletionsPath',
   responses: 'responsesPath',
   messages: 'messagesPath',
+  audioTranscriptions: 'audioTranscriptionsPath',
 }
 
 /**
@@ -61,6 +63,12 @@ export const PATH_FIELDS = [
     placeholder: DEFAULT_PATHS.messages,
     help: 'Where this provider serves the Anthropic Messages API.',
   },
+  {
+    name: 'audioTranscriptionsPath',
+    label: 'Audio transcriptions path',
+    placeholder: DEFAULT_PATHS.audioTranscriptions,
+    help: 'Where this provider transcribes audio.',
+  },
 ] as const
 
 /**
@@ -87,6 +95,12 @@ export const MODEL_PATH_FIELDS = [
     label: 'Messages path',
     placeholder: DEFAULT_PATHS.messages,
     help: 'Where this one model answers the Anthropic Messages API.',
+  },
+  {
+    name: 'audioTranscriptionsPath',
+    label: 'Audio transcriptions path',
+    placeholder: DEFAULT_PATHS.audioTranscriptions,
+    help: 'Where this one model is transcribed, if not where the provider serves the rest.',
   },
 ] as const
 
@@ -173,6 +187,7 @@ export function resolveProviderPaths(config: ProviderConfig): ProviderPaths {
     chatCompletions: resolveOne(config, 'chatCompletions').path,
     responses: resolveOne(config, 'responses').path,
     messages: resolveOne(config, 'messages').path,
+    audioTranscriptions: resolveOne(config, 'audioTranscriptions').path,
   }
 }
 
@@ -212,6 +227,7 @@ export function resolveRequestPaths(
     chatCompletions: resolve('chatCompletions'),
     responses: resolve('responses'),
     messages: resolve('messages'),
+    audioTranscriptions: resolve('audioTranscriptions'),
   }
 }
 

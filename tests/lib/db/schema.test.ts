@@ -131,6 +131,7 @@ test('a catalog model inherits its provider flavor and paths by default', async 
   expect(row.apiFlavor).toBeNull()
   expect(row.chatCompletionsPath).toBeNull()
   expect(row.responsesPath).toBeNull()
+  expect(row.audioTranscriptionsPath).toBeNull()
 })
 
 test('a catalog model can pin its own flavor and paths', async () => {
@@ -144,11 +145,13 @@ test('a catalog model can pin its own flavor and paths', async () => {
     apiFlavor: 'responses',
     chatCompletionsPath: '/api/chat',
     responsesPath: '/api/responses',
+    audioTranscriptionsPath: '/api/audio/transcriptions',
   }).returning()
 
   expect(row.apiFlavor).toBe('responses')
   expect(row.chatCompletionsPath).toBe('/api/chat')
   expect(row.responsesPath).toBe('/api/responses')
+  expect(row.audioTranscriptionsPath).toBe('/api/audio/transcriptions')
 })
 
 test('route targets carry nullable breaker overrides', async () => {
@@ -206,4 +209,35 @@ test('a model that names no messages path inherits by storing null', async () =>
   }).returning()
 
   expect(model.messagesPath).toBeNull()
+})
+
+test('a model can pin its own audio transcriptions path', async () => {
+  const [provider] = await db.insert(providers).values({
+    name: 'audio-test',
+    adapter: 'openai',
+    credentials: encryptJson({ apiKey: 'sk-test' }),
+  }).returning()
+
+  const [model] = await db.insert(catalogModels).values({
+    providerId: provider.id,
+    modelId: 'whisper-1',
+    audioTranscriptionsPath: '/audio/v2/transcriptions',
+  }).returning()
+
+  expect(model.audioTranscriptionsPath).toBe('/audio/v2/transcriptions')
+})
+
+test('a model that names no audio transcriptions path inherits by storing null', async () => {
+  const [provider] = await db.insert(providers).values({
+    name: 'audio-inherits',
+    adapter: 'openai',
+    credentials: encryptJson({ apiKey: 'sk-test' }),
+  }).returning()
+
+  const [model] = await db.insert(catalogModels).values({
+    providerId: provider.id,
+    modelId: 'whisper-1',
+  }).returning()
+
+  expect(model.audioTranscriptionsPath).toBeNull()
 })
