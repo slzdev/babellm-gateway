@@ -3,8 +3,10 @@ import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { db } from '@/lib/db'
 import { apiKeys } from '@/lib/db/schema'
-import { chatRequest, fakeAdapterDeps, seedGateway } from '../helpers/gateway'
+import { chatRequest, fakeAdapterDeps, seedGateway, seedPrices } from '../helpers/gateway'
 import { resetDb } from '../helpers/db'
+import { clearPriceCache } from '@/lib/pricing'
+import * as pricing from '@/lib/pricing'
 
 const body = { model: 'house-model', messages: [{ role: 'user', content: 'hi' }] }
 
@@ -20,6 +22,7 @@ const upstreamCompletion = {
 beforeEach(async () => {
   process.env.ENCRYPTION_KEY = 'd'.repeat(64)
   await resetDb()
+  clearPriceCache()
   vi.spyOn(console, 'log').mockImplementation(() => {})
 })
 
@@ -157,4 +160,151 @@ test('records last_used_at on the key', async () => {
 
   expect(updated!.lastUsedAt).toBeInstanceOf(Date)
   expect(updated!.id).toBe(key.id)
+})
+
+const pricedCompletion = {
+  ...upstreamCompletion,
+  usage: {
+    prompt_tokens: 1_000_000,
+    completion_tokens: 1_000_000,
+    total_tokens: 2_000_000,
+    prompt_tokens_details: { cached_tokens: 0 },
+  },
+}
+
+test('returns the cost breakdown inside usage', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(pricedCompletion) }),
+  )
+  const json = await res.json()
+
+  expect(json.usage.cost).toEqual({
+    currency: 'USD',
+    input_usd: '1.000000000',
+    cached_usd: '0.000000000',
+    output_usd: '3.000000000',
+    total_usd: '4.000000000',
+  })
+})
+
+test('leaves the token counts untouched when attaching cost', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(pricedCompletion) }),
+  )
+  const json = await res.json()
+
+  expect(json.usage.prompt_tokens).toBe(1_000_000)
+  expect(json.usage.completion_tokens).toBe(1_000_000)
+  expect(json.usage.total_tokens).toBe(2_000_000)
+})
+
+test('never publishes the catalog rates to the client', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(pricedCompletion) }),
+  )
+
+  expect(JSON.stringify(await res.json())).not.toContain('per_mtok')
+})
+
+test('bills cached tokens at the cached rate without double-charging the prompt', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', {
+    inputPerMtok: '1.000000', cachedInputPerMtok: '0.250000', outputPerMtok: '0',
+  })
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({
+      chat: vi.fn().mockResolvedValue({
+        ...upstreamCompletion,
+        usage: {
+          prompt_tokens: 1_000_000, completion_tokens: 0, total_tokens: 1_000_000,
+          prompt_tokens_details: { cached_tokens: 400_000 },
+        },
+      }),
+    }),
+  )
+  const json = await res.json()
+
+  // 600k at the full rate + 400k cached — not 1M at full plus a second charge.
+  expect(json.usage.cost.input_usd).toBe('0.600000000')
+  expect(json.usage.cost.cached_usd).toBe('0.100000000')
+  expect(json.usage.cost.total_usd).toBe('0.700000000')
+})
+
+test('an unpriced model returns an explicit null cost, not zeroes', async () => {
+  const { apiKey } = await seedGateway()
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(pricedCompletion) }),
+  )
+  const json = await res.json()
+
+  // Null, not absent: a client must be able to tell "this model has no catalog
+  // price" from "this gateway predates the feature".
+  expect(json.usage).toHaveProperty('cost')
+  expect(json.usage.cost).toBeNull()
+})
+
+test('a half-priced catalog row returns null rather than half a cost', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', { inputPerMtok: '1.000000' })
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(pricedCompletion) }),
+  )
+
+  expect((await res.json()).usage.cost).toBeNull()
+})
+
+test('a response with no usage gets no fabricated usage object', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+  const { usage: _usage, ...noUsage } = upstreamCompletion
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(noUsage) }),
+  )
+  const json = await res.json()
+
+  expect(res.status).toBe(200)
+  expect(json.usage).toBeUndefined()
+})
+
+test('a catalog lookup failure costs the breakdown, not the completion', async () => {
+  const { apiKey } = await seedGateway()
+  vi.spyOn(pricing, 'priceFor').mockRejectedValue(new Error('catalog is down'))
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(pricedCompletion) }),
+  )
+  const json = await res.json()
+
+  expect(res.status).toBe(200)
+  expect(json.choices[0].message.content).toBe('hello')
+  expect(json.usage.cost).toBeNull()
 })

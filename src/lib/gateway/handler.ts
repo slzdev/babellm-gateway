@@ -14,6 +14,7 @@ import {
   type LimitSnapshot,
 } from '@/lib/usage'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
+import { costPayload, type CostPayload } from './cost'
 import { GatewayError, RoutedError, errorResponse, type ClassifiedError } from './errors'
 import { execute, type AttemptRecord } from './execute'
 import type { IdentityOptions } from './identity'
@@ -47,7 +48,10 @@ export interface Ingress<Req, Res, Chunk> {
   droppedFor(candidate: Candidate, req: Req): string[]
   run(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): Promise<Res>
   runStream(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): AsyncIterable<Chunk>
-  finish(res: Res, identity: IdentityOptions): Res
+  /** The last transformation before the client sees the response: gateway
+   *  identity, and the cost this request is being charged. `cost` is already
+   *  serialized, so no ingress has to know how CostBreakdown is rendered. */
+  finish(res: Res, identity: IdentityOptions, cost: CostPayload | null): Res
   usageOf(res: Res): LogUsage | null
   newIdentityId(): string
   stream: StreamProtocol<Chunk>
@@ -369,16 +373,28 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     )
     dropped = ingress.droppedFor(result.candidate, bodyFor(result.candidate, body))
 
+    // The catalog may never fail a request. A price lookup that throws costs
+    // the client its cost breakdown, not its completion — so the rejection is
+    // swallowed at creation rather than caught at the await, which also keeps
+    // the streaming path (where this promise may never be awaited at all)
+    // from raising an unhandled rejection.
+    const prices = await priceFor(
+      result.candidate.provider.id,
+      result.candidate.upstreamModel,
+    ).catch(() => null)
+    const usage = ingress.usageOf(result.value)
+    const cost = computeCost(prices, usage)
+
     // Built before logging: logging after the response has been constructed
     // means a throw building the response can no longer race a second,
     // contradictory log line against this one for the same request_id.
-    const completion = ingress.finish(result.value, identity)
+    const completion = ingress.finish(result.value, identity, costPayload(cost))
     const response = Response.json(completion, {
       headers: attemptHeaders(result.candidate, requestId, dropped, limits),
     })
     log(200, 'ok', result.attempts, {
       candidate: result.candidate,
-      usage: ingress.usageOf(result.value),
+      usage,
       response: completion,
     })
     return response
