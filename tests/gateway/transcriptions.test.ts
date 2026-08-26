@@ -510,6 +510,39 @@ test('a Gemini-only model asked for srt records one 400 attempt and no breaker f
   expect(targetsTouched(health)).toEqual([])
 })
 
+test('a Gemini-only model asked for oversized audio records one 400 attempt and no breaker failure', async () => {
+  // The size twin of the test above, which carries the explanation. Kept as
+  // its own case rather than folded into it because the two refusals travel
+  // the same path for different reasons — a format that cannot be produced
+  // and a file that cannot be sent — and only a test each proves that the
+  // bookkeeping is the path's rather than one refusal's.
+  const { apiKey } = await seedGateway({ adapter: 'gemini' })
+  const upstream = vi.fn()
+  const health = healthSpies()
+
+  const res = await handleTranscriptions(
+    transcriptionRequest(apiKey, { file: audioFile(MAX_INLINE_BYTES + 1) }),
+    fakeAdapterDeps({
+      transcribe: async (req) => {
+        assertTranscribable(req, 'test-provider')
+        return upstream()
+      },
+    }),
+  )
+
+  expect(res.status).toBe(400)
+  expect(upstream).not.toHaveBeenCalled()
+  await waitForLogs()
+  await settleHealth()
+
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  expect(row).toMatchObject({ status: 400, outcome: 'error' })
+  const detail = await postgresStore.get(row.id)
+  expect(detail?.attempts).toHaveLength(1)
+  expect(detail?.attempts[0]).toMatchObject({ n: 1, provider: 'test-provider', status: 400 })
+  expect(targetsTouched(health)).toEqual([])
+})
+
 test('a model whose only target is anthropic_messages answers 501 naming the provider', async () => {
   // Driven through the real registry, because the message is
   // withTranscribeUnsupported's and the point is that the client is told which
@@ -525,6 +558,15 @@ test('a model whose only target is anthropic_messages answers 501 naming the pro
   expect(payload.error.code).toBe('unsupported_operation')
   expect(payload.error.message).toContain('claude')
   expect(payload.error.message).toContain('Anthropic Messages API')
+
+  await waitForLogs()
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  expect(row).toMatchObject({ status: 501, outcome: 'error' })
+  // Asserted rather than inferred from the envelope: one recorded attempt is
+  // what distinguishes the all-ineligible fallback — which ordered the
+  // unfiltered chain so the adapter could name the provider — from an empty
+  // chain, whose only possible answer would have been a generic 503.
+  expect((await postgresStore.get(row.id))?.attempts).toHaveLength(1)
 })
 
 // ---------------------------------------------------------------------------

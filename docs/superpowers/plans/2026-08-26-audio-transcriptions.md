@@ -405,7 +405,8 @@ The task that proves the lifecycle was reused rather than reimplemented.
 Drive `handleTranscriptions` with a real multipart `Request` and a stubbed `createAdapter`, and assert:
 
 1. Each of the five formats: status, content type, body.
-2. `usage.cost` present and correct for token-billed usage; `usage` untouched and cost absent for duration-billed.
+2. `usage.cost` present and correct for token-billed usage; `usage` untouched and `usage.cost: null` for
+duration-billed — present and null, which is spec §3.8's "null rather than zero", not absent and not `0`.
 3. `x-request-id`, `x-babellm-provider`, `x-babellm-upstream-model` and the rate-limit headers on a success.
 4. Failover: first target throws a retryable error, second serves, response comes from the second, log's attempt chain has two entries — and the **same file content** arrives at the second adapter, which is the failover-safety proof.
 5. An `anthropic_messages` target in a two-target model is skipped: one attempt, served by the other.
@@ -443,7 +444,7 @@ Use `tests/helpers/logs.ts` for the log assertions and `resetDb()` between tests
 **Files:**
 - Modify: `tests/contract/openai-client.test.ts` (or a sibling `transcriptions` contract file if that one grows unwieldy)
 
-Point a real `OpenAI` client at an in-process `fetch` that calls `handleTranscriptions`, and call `client.audio.transcriptions.create({ file, model, response_format })`. This is the test that catches what hand-built multipart requests cannot: the SDK's own boundary, filename and part-ordering choices, and its content-type-driven parsing of the `text`/`srt`/`vtt` responses.
+Point a real `OpenAI` client at an in-process `fetch` that calls `handleTranscriptions`, and call `client.audio.transcriptions.create({ file, model, response_format })`. This is the test that catches what hand-built multipart requests cannot: the SDK's own part-name, filename and part-ordering choices, a real multipart encode/parse round trip, and its content-type-driven parsing of the `text`/`srt`/`vtt` responses. (Not the boundary — on a fetch platform `openai-node` hands a `FormData` to `new Request` and undici picks that.)
 
 Cover `json`, `verbose_json` and `text` at minimum, and assert the SDK returns a parsed object for the first two and a string for the third.
 

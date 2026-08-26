@@ -301,3 +301,20 @@ test('captures the form fields and the file metadata, never the audio', () => {
   // audio could reach a stored row (design doc §3.10). What a *row* actually
   // contains is Task 9's, where there is a real one to inspect.
 })
+
+test('describes any File-valued field, not just the one named `file`', () => {
+  // The schema is a `looseObject`, so an unrecognized part reaches the captured
+  // record. A key-name substitution would store this one as `{}` — the shape
+  // `JSON.stringify` gives a `File` — which leaks nothing but loses the
+  // metadata that makes a captured row worth reading. Matching on the value
+  // keeps the guarantee (no audio bytes, ever) true by construction for a part
+  // this ingress has never heard of.
+  const captured = ingress.captureRequest?.({
+    ...req(),
+    stray_upload: audioFile(4096, 'second-take.ogg', 'audio/ogg'),
+  } as unknown as TranscriptionRequest) as Record<string, unknown>
+
+  expect(captured.stray_upload).toEqual({ name: 'second-take.ogg', size: 4096, type: 'audio/ogg' })
+  expect(captured.file).toEqual({ name: 'clip.mp3', size: 1024, type: 'audio/mpeg' })
+  expect(Object.values(captured).some((value) => value instanceof File)).toBe(false)
+})

@@ -245,8 +245,11 @@ test('the openai SDK can stream responses.create against the gateway', async () 
 // The end-to-end suite (tests/gateway/transcriptions.test.ts) builds its own
 // FormData and reads the response with `res.json()` / `res.text()` — it
 // checks the gateway against the gateway's own idea of the wire format. Here
-// the SDK builds the multipart body (its own boundary, its own `Uploadable`
-// handling of a web `File`) and the SDK decides how to parse what comes back:
+// the SDK builds the multipart body — its own part names, part ordering and
+// `Uploadable` handling of a web `File`; the boundary is undici's, chosen when
+// `new Request` serializes the SDK's `FormData`, because `openai-node` on a
+// fetch platform never picks one itself — and the SDK decides how to parse
+// what comes back:
 // `openai-node` hands back a parsed object when the response content type is
 // `application/json` and a bare string otherwise. `toResponse` picks that
 // content type by sniffing the result's shape on our side; these tests prove

@@ -147,9 +147,24 @@ export const transcriptionIngress: Ingress<TranscriptionRequest, TranscriptionRe
    * request the adapters are given — they need it, and failover needs it
    * re-readable — so the substitution happens here, at capture time, rather
    * than by stripping the request.
+   *
+   * Substituted by *value*, not by key name. The schema is a `looseObject`, so
+   * an unknown part travels through to the captured record — and a second
+   * `File` part under any other key would then be stored as `{}`, since that
+   * is what `JSON.stringify` makes of a `File`. No bytes escape either way,
+   * which is why this is defence in depth rather than a fix; matching on the
+   * value means the one property worth guaranteeing on this endpoint holds by
+   * construction, for every field, instead of for the one field this ingress
+   * happens to know the name of.
    */
-  captureRequest: ({ file, ...fields }) => ({
-    ...fields,
-    file: { name: file.name, size: file.size, type: file.type },
-  }),
+  captureRequest: (req) =>
+    Object.fromEntries(
+      // Through `unknown`: `TranscriptionRequest` declares no index signature,
+      // and the fields being walked here include the unknown parts the schema's
+      // `looseObject` let through, which are exactly what it cannot name.
+      Object.entries(req as unknown as Record<string, unknown>).map(([key, value]) => [
+        key,
+        value instanceof File ? { name: value.name, size: value.size, type: value.type } : value,
+      ]),
+    ),
 }

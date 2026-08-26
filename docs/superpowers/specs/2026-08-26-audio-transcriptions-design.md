@@ -68,8 +68,11 @@ Out of scope, each by explicit decision:
   unpriced. Section 3.8.
 - **Gemini's Files API.** Audio reaches Gemini inline or not at all.
   Section 3.6.
-- **`verbose_json`, `srt` and `vtt` against a Gemini target.** Refused, not
-  degraded. Section 3.6.
+- **`verbose_json`, `srt` and `vtt` from a Gemini target.** Never degraded
+  into a response with invented timestamps: a Gemini candidate is skipped for
+  those three formats, so a virtual model that also holds an OpenAI-shaped
+  target answers them from it, and only a model where nothing can serve them
+  refuses — with a 400 naming the format. Section 3.6.
 - **An `endpoint` column on `request_logs`.** Carried forward from the
   Responses ingress design's section 3.7: the log already names the model and
   the target, and a request whose `model` resolved to a Whisper target is a
