@@ -499,7 +499,11 @@ bad request, 401 for the key, 404 for an unknown model, 429 for a limit, 501
 `withTranscribeUnsupported`, naming the provider, per section 3.5 — and the
 classified upstream status otherwise. A request refused for its format or its
 file size is a 400 naming that field, not a 501: the endpoint is available, the
-request is not servable as written.
+request is not servable as written. That naming is machine-readable as well as
+prose — `error.param` is `response_format` or `file` — and it survives a
+refusal raised inside an attempt, because `ClassifiedError` carries `param`
+through the routing loop into `RoutedError`. A refusal caught by the schema and
+the identical refusal raised by a target therefore produce the same envelope.
 
 ## 5. Data model
 

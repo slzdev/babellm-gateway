@@ -3,6 +3,7 @@ import OpenAI from 'openai'
 import {
   GatewayError,
   ProviderError,
+  RoutedError,
   UnsupportedOperationError,
   classifyProviderError,
   errorResponse,
@@ -93,6 +94,9 @@ test('a ProviderError classifies as itself, without re-deriving anything', () =>
     type: 'invalid_request_error',
     code: 'invalid_argument',
     message: 'tools[0].parameters is not valid',
+    // A provider failure is not about one of our request fields, so there is
+    // no field to name — null rather than a guess.
+    param: null,
   })
 })
 
@@ -133,6 +137,11 @@ test('a GatewayError classifies as itself, non-retryable, without falling to the
     type: 'invalid_request_error',
     code: 'unsupported_parameter',
     message: 'this target returns no timestamps',
+    // Carried, not dropped: for a refusal about one named field, `param` is
+    // the machine-readable half of the answer. A refusal caught by the schema
+    // (parseWith) names the field, so the identical refusal reached through a
+    // target has to name it too.
+    param: 'response_format',
   })
 })
 
@@ -141,4 +150,38 @@ test('a ProviderError defaults its type from retryability', () => {
     .toBe('api_error')
   expect(new ProviderError({ status: 400, message: 'x', retryable: false }).type)
     .toBe('invalid_request_error')
+})
+
+test('every other branch reports no param, rather than inventing one', () => {
+  expect(classifyProviderError(apiError(400)).param).toBeNull()
+  expect(classifyProviderError(new UnsupportedOperationError('no endpoint')).param).toBeNull()
+  expect(classifyProviderError(new Error('socket hang up')).param).toBeNull()
+})
+
+test('a RoutedError renders the param the classifier carried, and null when there was none', async () => {
+  // The path a refused attempt actually takes out of execute(): classify ->
+  // routed() -> RoutedError -> errorBody. Both halves matter — the field
+  // survives, and an error that never had one still renders null rather than
+  // undefined (which would drop the key from the JSON envelope entirely).
+  const withParam = errorResponse(new RoutedError({
+    status: 400,
+    type: 'invalid_request_error',
+    code: 'unsupported_parameter',
+    param: 'response_format',
+    message: 'no timestamps',
+    attempts: [],
+  }))
+  expect(await withParam.json()).toEqual({
+    error: {
+      message: 'no timestamps', type: 'invalid_request_error',
+      param: 'response_format', code: 'unsupported_parameter',
+    },
+  })
+
+  const withoutParam = errorResponse(new RoutedError({
+    status: 502, type: 'api_error', code: 'upstream_error', message: 'boom', attempts: [],
+  }))
+  expect(await withoutParam.json()).toEqual({
+    error: { message: 'boom', type: 'api_error', param: null, code: 'upstream_error' },
+  })
 })

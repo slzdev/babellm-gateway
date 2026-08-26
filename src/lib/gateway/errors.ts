@@ -67,6 +67,23 @@ export interface ClassifiedError {
   type: string
   code: string | null
   message: string
+  /**
+   * The request field the error is about, for the branches that know one.
+   *
+   * Only a GatewayError carries this: it is the gateway's own verdict on the
+   * client's request, so it can name the field it refused. Every other branch
+   * reports null — a provider failure or an SDK error is not about one of our
+   * request fields, and inventing a `param` for it would be worse than
+   * omitting one.
+   *
+   * It exists here because a refusal thrown by an adapter travels out through
+   * `routed()` and `RoutedError`, and without this field it arrived at the
+   * client with `param: null` — so the same refusal named its field when the
+   * schema caught it (parseWith sets `param`) and did not when a target raised
+   * it. `response_format` and `file` are exactly the fields transcription's
+   * 400s are about, which makes that half of the answer worth carrying.
+   */
+  param: string | null
 }
 
 // Kept in step with the per-adapter sets in `adapters/*/errors.ts`; see the
@@ -83,6 +100,7 @@ export function classifyProviderError(err: unknown): ClassifiedError {
       type: err.type,
       code: err.code,
       message: err.message,
+      param: null,
     }
   }
 
@@ -105,6 +123,7 @@ export function classifyProviderError(err: unknown): ClassifiedError {
       type: err.type,
       code: err.code,
       message: err.message,
+      param: err.param,
     }
   }
 
@@ -115,6 +134,7 @@ export function classifyProviderError(err: unknown): ClassifiedError {
       type: 'invalid_request_error',
       code: 'unsupported_operation',
       message: err.message,
+      param: null,
     }
   }
 
@@ -128,6 +148,7 @@ export function classifyProviderError(err: unknown): ClassifiedError {
       type: err.type ?? (retryable ? 'api_error' : 'invalid_request_error'),
       code: err.code ?? null,
       message: err.message,
+      param: null,
     }
   }
 
@@ -141,6 +162,7 @@ export function classifyProviderError(err: unknown): ClassifiedError {
     type: 'api_error',
     code: isAbort ? 'upstream_timeout' : 'upstream_error',
     message: err instanceof Error ? err.message : 'Upstream request failed',
+    param: null,
   }
 }
 
