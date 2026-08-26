@@ -3,11 +3,21 @@ import type { AdapterType } from '@/lib/adapters/credentials'
 import type { CatalogFields } from '@/lib/catalog/types'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
 import type { ResponsesRequest } from '@/lib/schemas/responses'
+import type { TranscriptionRequest } from '@/lib/schemas/transcription'
 
 export type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion
 export type ChatCompletionChunk = OpenAI.Chat.Completions.ChatCompletionChunk
 export type ResponsesResult = OpenAI.Responses.Response
 export type ResponseStreamEvent = OpenAI.Responses.ResponseStreamEvent
+export type Transcription = OpenAI.Audio.Transcription
+export type TranscriptionVerbose = OpenAI.Audio.TranscriptionVerbose
+/**
+ * The three shapes the upstream endpoint returns, discriminated by the
+ * `response_format` the ingress already knows it asked for. No wrapper
+ * object carrying the format alongside the body: a second copy of it here
+ * could only ever disagree with the one the ingress already has.
+ */
+export type TranscriptionResult = Transcription | TranscriptionVerbose | string
 
 export interface ProviderConfig {
   /** Skip sending stream_options.include_usage — some clones reject it. */
@@ -111,12 +121,20 @@ export interface ProviderAdapter {
     req: ResponsesRequest,
     ctx: AttemptContext,
   ): AsyncIterable<ResponseStreamEvent>
+  /**
+   * No streaming twin: section 3.7 of the design doc refuses `stream: true`
+   * for this endpoint entirely, and a method whose only implementation
+   * throws would put a lie in the interface.
+   */
+  transcribe(req: TranscriptionRequest, ctx: AttemptContext): Promise<TranscriptionResult>
 }
 
 /**
- * What `createOpenAIAdapter` and `createGeminiAdapter` build: chat-native,
- * with no opinion about the Responses API. Each is upgraded to a full
- * `ProviderAdapter` by `withRespondViaChat` in registry.ts, which is the only
- * place that is allowed to know these two methods are missing.
+ * What `createGeminiAdapter` builds (and what `createOpenAIAdapter` builds
+ * before it layers on its own native `transcribe` — see openai/audio.ts):
+ * chat-native, with no opinion about the Responses API or transcription.
+ * `respond`/`respondStream` are supplied by `withRespondViaChat` and
+ * `transcribe` by `withTranscribeUnsupported`, both in wrappers.ts — the only
+ * places allowed to know these methods are missing.
  */
-export type ChatOnlyAdapter = Omit<ProviderAdapter, 'respond' | 'respondStream'>
+export type ChatOnlyAdapter = Omit<ProviderAdapter, 'respond' | 'respondStream' | 'transcribe'>

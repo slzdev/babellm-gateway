@@ -9,7 +9,7 @@ import { createResponsesAdapter } from './openai/responses'
 import type {
   ModelPathOverrides, ProviderAdapter, ProviderConfig, ProviderRuntime,
 } from './types'
-import { withRespondViaChat } from './wrappers'
+import { withRespondViaChat, withTranscribeUnsupported } from './wrappers'
 
 export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
   return {
@@ -44,8 +44,15 @@ export function createAdapter(
       // Gemini speaks neither OpenAI dialect natively, so flavor says nothing
       // about it: the adapter translates from Chat Completions either way,
       // and gets `respond`/`respondStream` from the same wrapper any
-      // chat-only adapter does.
-      return withRespondViaChat(createGeminiAdapter(runtime), runtime.name)
+      // chat-only adapter does. `transcribe` is a placeholder until Task 6
+      // gives Gemini a real translated implementation (design doc §3.6) —
+      // until then this keeps the interface honest rather than throwing a
+      // TypeScript error at every other adapter's expense.
+      return withTranscribeUnsupported(
+        withRespondViaChat(createGeminiAdapter(runtime), runtime.name),
+        runtime.name,
+        'Gemini transcription support is not implemented yet',
+      )
     case 'bedrock':
       throw new UnsupportedOperationError(
         `The "${runtime.adapter}" adapter is not available yet.`,
@@ -88,7 +95,16 @@ function flavoredAdapter(
 ): ProviderAdapter {
   if (flavor === 'responses') return createResponsesAdapter(runtime)
   if (flavor === 'anthropic_messages') {
-    return withRespondViaChat(createAnthropicAdapter(runtime, maxOutputTokens), runtime.name)
+    // The one true exception (design doc §3.4): Anthropic's own API has no
+    // transcription endpoint and no audio input at all, regardless of which
+    // adapter reaches it. Unlike the Gemini branch above, this is not a
+    // placeholder — the throw is permanent, just unreachable through the
+    // gateway once §3.5's routing filter is in place.
+    return withTranscribeUnsupported(
+      withRespondViaChat(createAnthropicAdapter(runtime, maxOutputTokens), runtime.name),
+      runtime.name,
+      'the Anthropic Messages API has no transcription endpoint and no audio input at all',
+    )
   }
   return withRespondViaChat(createOpenAIAdapter(runtime), runtime.name)
 }

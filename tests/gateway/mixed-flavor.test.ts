@@ -4,9 +4,9 @@ import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { handleResponses } from '@/lib/gateway/responses-handler'
 import { createResponsesAdapter } from '@/lib/adapters/openai/responses'
 import { createAnthropicAdapter } from '@/lib/adapters/anthropic'
-import { withRespondViaChat } from '@/lib/adapters/wrappers'
+import { withRespondViaChat, withTranscribeUnsupported } from '@/lib/adapters/wrappers'
 import type {
-  ChatCompletion, ChatCompletionChunk, ProviderAdapter, ProviderRuntime,
+  ChatCompletion, ChatCompletionChunk, ChatOnlyAdapter, ProviderAdapter, ProviderRuntime,
 } from '@/lib/adapters/types'
 import {
   chatRequest, fakeAdapterByProvider, responsesRequest, seedTargets,
@@ -49,13 +49,17 @@ function responseResult(text: string) {
  *  registry wraps it, so both ingresses exercise the real crossings. */
 function anthropicAdapter(name: string, create: unknown): ProviderAdapter {
   const factory = vi.fn().mockReturnValue({ messages: { create } })
-  return withRespondViaChat(
-    createAnthropicAdapter(
-      { ...runtime(name), baseUrl: 'https://api.anthropic.com/v1' },
-      null,
-      factory as never,
+  return withTranscribeUnsupported(
+    withRespondViaChat(
+      createAnthropicAdapter(
+        { ...runtime(name), baseUrl: 'https://api.anthropic.com/v1' },
+        null,
+        factory as never,
+      ),
+      name,
     ),
     name,
+    'the Anthropic Messages API has no transcription endpoint and no audio input at all',
   )
 }
 
@@ -86,14 +90,17 @@ function chatOnlyRespondingVia(
   providerName: string,
   chat: (req: unknown, ctx: unknown) => Promise<ChatCompletion>,
 ): ProviderAdapter {
-  return withRespondViaChat(
-    {
-      chat: chat as ProviderAdapter['chat'],
-      async *chatStream(): AsyncIterable<never> {
-        throw new Error(`chatStream not used in this test for ${providerName}`)
-      },
+  const chatOnly: ChatOnlyAdapter = {
+    chat: chat as ProviderAdapter['chat'],
+    async *chatStream(): AsyncIterable<never> {
+      throw new Error(`chatStream not used in this test for ${providerName}`)
     },
+  }
+  const respondable = withRespondViaChat(chatOnly, providerName)
+  return withTranscribeUnsupported(
+    respondable,
     providerName,
+    'this test fixture has no transcription implementation',
   )
 }
 
@@ -110,14 +117,17 @@ function chatOnlyStreamingVia(
   providerName: string,
   chatStream: () => AsyncIterable<ChatCompletionChunk>,
 ): ProviderAdapter {
-  return withRespondViaChat(
-    {
-      async chat(): Promise<ChatCompletion> {
-        throw new Error(`chat not used in this test for ${providerName}`)
-      },
-      chatStream: chatStream as ProviderAdapter['chatStream'],
+  const chatOnly: ChatOnlyAdapter = {
+    async chat(): Promise<ChatCompletion> {
+      throw new Error(`chat not used in this test for ${providerName}`)
     },
+    chatStream: chatStream as ProviderAdapter['chatStream'],
+  }
+  const respondable = withRespondViaChat(chatOnly, providerName)
+  return withTranscribeUnsupported(
+    respondable,
     providerName,
+    'this test fixture has no transcription implementation',
   )
 }
 
