@@ -454,9 +454,15 @@ The file part is rejected above 25 MB with a 400 naming the limit — the same
 ceiling the upstream API enforces, so a request that would fail there fails
 here without a round trip, and one that would succeed is not blocked.
 
-Next.js route handlers have no body size limit of their own (only server
-actions do), so without this the gateway would happily buffer an arbitrarily
-large upload before the provider rejected it.
+What the cap does **not** do is bound what the gateway reads. The size is
+knowable only after `request.formData()` has parsed the body, so this rejects
+what would be *forwarded*, not what was received: a client can still make the
+gateway buffer an arbitrarily large upload before the check fires. Next.js
+route handlers have no body size limit of their own (only server actions do),
+so bounding the read would take a guard at the edge — a `Content-Length`
+refusal before parsing, or a limit in whatever proxy fronts the deployment.
+That is a follow-up, and worth one: it is the difference between refusing a
+27 MB file and refusing a 27 GB one.
 
 ### 3.12 One more endpoint path, everywhere paths already are
 
@@ -563,6 +569,8 @@ from a Gemini target, and duration-billed models logging as unpriced.
 ## 9. Follow-ups this deliberately leaves
 
 - Per-minute pricing, which would make Whisper spend visible (section 3.8).
+- An edge guard on request body size, so an oversized upload is refused before
+  it is buffered rather than after (section 3.11).
 - Streaming transcription (section 3.7).
 - `/v1/audio/translations`, the same shape with a fixed target language.
 - `/v1/audio/speech`, which is the reverse direction and a different problem:
