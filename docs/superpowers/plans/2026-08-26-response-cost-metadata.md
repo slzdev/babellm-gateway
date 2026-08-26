@@ -10,6 +10,12 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-26-response-cost-metadata-design.md`
 
+> **Superseded in one detail.** After this plan was executed, the wire keys lost
+> their `_usd` suffix — `input_usd` → `input`, and likewise for `cached`,
+> `output` and `total` — because the sibling `currency` field already says what
+> the unit is. The code samples below still show the original names. The spec
+> and `README.md` carry the shipped shape; prefer them.
+
 ## Global Constraints
 
 - **Test database:** this worktree's `.env.test` points at `babellm_test_cost_metadata` on **port 5434**. Never repoint it at 5432. Never run `pnpm test:db:down` — it destroys sibling worktrees' containers. The container is already running.

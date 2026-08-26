@@ -17,10 +17,10 @@ const breakdown: CostBreakdown = {
 test('renders the breakdown in snake_case with a currency', () => {
   expect(costPayload(breakdown)).toEqual({
     currency: 'USD',
-    input_usd: '0.003000000',
-    cached_usd: '0.000000000',
-    output_usd: '0.005100000',
-    total_usd: '0.008100000',
+    input: '0.003000000',
+    cached: '0.000000000',
+    output: '0.005100000',
+    total: '0.008100000',
   })
 })
 
@@ -29,7 +29,7 @@ test('never leaks the catalog rates to the client', () => {
   // directly. An exact key list, not a `pricing` check: a future field added
   // to CostBreakdown must fail here rather than silently reach every caller.
   expect(Object.keys(costPayload(breakdown)!).sort()).toEqual([
-    'cached_usd', 'currency', 'input_usd', 'output_usd', 'total_usd',
+    'cached', 'currency', 'input', 'output', 'total',
   ])
 })
 
@@ -39,8 +39,8 @@ test('an unpriceable request serializes to null, not to zeroes', () => {
 
 test('keeps money as strings at nine decimals', () => {
   const payload = costPayload(breakdown)!
-  expect(typeof payload.total_usd).toBe('string')
-  expect(payload.total_usd).toBe('0.008100000')
+  expect(typeof payload.total).toBe('string')
+  expect(payload.total).toBe('0.008100000')
 })
 
 test('attaches the cost inside the usage object', () => {
@@ -52,10 +52,10 @@ test('attaches the cost inside the usage object', () => {
       completion_tokens: 2,
       cost: {
         currency: 'USD',
-        input_usd: '0.003000000',
-        cached_usd: '0.000000000',
-        output_usd: '0.005100000',
-        total_usd: '0.008100000',
+        input: '0.003000000',
+        cached: '0.000000000',
+        output: '0.005100000',
+        total: '0.008100000',
       },
     },
   })

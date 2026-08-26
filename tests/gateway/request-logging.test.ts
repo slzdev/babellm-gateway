@@ -137,7 +137,7 @@ test('the logged cost is the same number the client was given', async () => {
     chatRequest(body, apiKey),
     fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
   )
-  const clientTotal = (await res.json()).usage.cost.total_usd
+  const clientTotal = (await res.json()).usage.cost.total
   await waitForLogs()
 
   const [row] = (await postgresStore.query({ limit: 1 })).rows

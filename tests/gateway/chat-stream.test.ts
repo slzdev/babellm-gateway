@@ -218,10 +218,10 @@ test('the final usage chunk carries the cost breakdown', async () => {
   expect(withUsage).toHaveLength(1)
   expect(withUsage[0].usage!.cost).toEqual({
     currency: 'USD',
-    input_usd: '1.000000000',
-    cached_usd: '0.000000000',
-    output_usd: '3.000000000',
-    total_usd: '4.000000000',
+    input: '1.000000000',
+    cached: '0.000000000',
+    output: '3.000000000',
+    total: '4.000000000',
   })
 })
 

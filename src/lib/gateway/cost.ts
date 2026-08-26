@@ -14,10 +14,10 @@ import type { CostBreakdown } from '@/lib/logs/types'
  */
 export interface CostPayload {
   currency: 'USD'
-  input_usd: string | null
-  cached_usd: string | null
-  output_usd: string | null
-  total_usd: string | null
+  input: string | null
+  cached: string | null
+  output: string | null
+  total: string | null
 }
 
 /**
@@ -32,10 +32,10 @@ export function costPayload(cost: CostBreakdown | null): CostPayload | null {
   if (!cost) return null
   return {
     currency: 'USD',
-    input_usd: cost.inputUsd,
-    cached_usd: cost.cachedUsd,
-    output_usd: cost.outputUsd,
-    total_usd: cost.totalUsd,
+    input: cost.inputUsd,
+    cached: cost.cachedUsd,
+    output: cost.outputUsd,
+    total: cost.totalUsd,
   }
 }
 

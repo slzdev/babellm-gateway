@@ -186,10 +186,10 @@ test('returns the cost breakdown inside usage', async () => {
 
   expect(json.usage.cost).toEqual({
     currency: 'USD',
-    input_usd: '1.000000000',
-    cached_usd: '0.000000000',
-    output_usd: '3.000000000',
-    total_usd: '4.000000000',
+    input: '1.000000000',
+    cached: '0.000000000',
+    output: '3.000000000',
+    total: '4.000000000',
   })
 })
 
@@ -245,9 +245,9 @@ test('bills cached tokens at the cached rate without double-charging the prompt'
   const json = await res.json()
 
   // 600k at the full rate + 400k cached — not 1M at full plus a second charge.
-  expect(json.usage.cost.input_usd).toBe('0.600000000')
-  expect(json.usage.cost.cached_usd).toBe('0.100000000')
-  expect(json.usage.cost.total_usd).toBe('0.700000000')
+  expect(json.usage.cost.input).toBe('0.600000000')
+  expect(json.usage.cost.cached).toBe('0.100000000')
+  expect(json.usage.cost.total).toBe('0.700000000')
 })
 
 test('an unpriced model returns an explicit null cost, not zeroes', async () => {

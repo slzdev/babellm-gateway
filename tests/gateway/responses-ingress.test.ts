@@ -159,10 +159,10 @@ test('the response.completed event carries the cost breakdown', async () => {
 
   expect(payload.response.usage.cost).toEqual({
     currency: 'USD',
-    input_usd: '1.000000000',
-    cached_usd: '0.000000000',
-    output_usd: '3.000000000',
-    total_usd: '4.000000000',
+    input: '1.000000000',
+    cached: '0.000000000',
+    output: '3.000000000',
+    total: '4.000000000',
   })
   // The virtual model rewrite still happens; attaching cost must not undo it.
   expect(payload.response.model).toBe('house-model')
@@ -217,10 +217,10 @@ test('returns the cost breakdown inside usage', async () => {
 
   expect(body.usage.cost).toEqual({
     currency: 'USD',
-    input_usd: '1.000000000',
-    cached_usd: '0.000000000',
-    output_usd: '3.000000000',
-    total_usd: '4.000000000',
+    input: '1.000000000',
+    cached: '0.000000000',
+    output: '3.000000000',
+    total: '4.000000000',
   })
   // The Responses dialect's own token spelling survives untouched.
   expect(body.usage.input_tokens).toBe(1_000_000)

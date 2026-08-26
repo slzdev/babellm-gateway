@@ -196,10 +196,10 @@ the way the gateway billed it:
     "completion_tokens": 340,
     "cost": {
       "currency": "USD",
-      "input_usd": "0.003000000",
-      "cached_usd": "0.000000000",
-      "output_usd": "0.005100000",
-      "total_usd": "0.008100000"
+      "input": "0.003000000",
+      "cached": "0.000000000",
+      "output": "0.005100000",
+      "total": "0.008100000"
     }
   }
 }

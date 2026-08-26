@@ -34,10 +34,10 @@ Every response whose usage can be priced carries a `cost` object nested inside
     "prompt_tokens_details": { "cached_tokens": 0 },
     "cost": {
       "currency": "USD",
-      "input_usd": "0.003000000",
-      "cached_usd": "0.000000000",
-      "output_usd": "0.005100000",
-      "total_usd": "0.008100000"
+      "input": "0.003000000",
+      "cached": "0.000000000",
+      "output": "0.005100000",
+      "total": "0.008100000"
     }
   }
 }
@@ -110,10 +110,10 @@ snapshot this design withholds. A single function produces the wire shape:
 // src/lib/gateway/cost.ts
 export interface CostPayload {
   currency: 'USD'
-  input_usd: string | null
-  cached_usd: string | null
-  output_usd: string | null
-  total_usd: string | null
+  input: string | null
+  cached: string | null
+  output: string | null
+  total: string | null
 }
 
 export function costPayload(cost: CostBreakdown | null): CostPayload | null
@@ -180,7 +180,7 @@ Extends the existing suites rather than adding new files:
 
 - `tests/gateway/chat.test.ts` — breakdown present and arithmetically correct;
   unpriced model yields `cost: null`; a cached-token request splits into
-  `cached_usd` with the cached rate and does not double-charge the prompt.
+  `cached` with the cached rate and does not double-charge the prompt.
 - `tests/gateway/chat-stream.test.ts` — final chunk carries `usage.cost`; a
   provider with `disableStreamUsage` produces no usage object and no cost; an
   interrupted stream that never reached usage logs `cost: null`.
