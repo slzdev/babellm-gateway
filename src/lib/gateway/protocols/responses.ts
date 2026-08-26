@@ -2,6 +2,7 @@ import type { ResponseStreamEvent, ResponsesResult } from '@/lib/adapters/types'
 import type { LogUsage } from '@/lib/logs/types'
 import { droppedParams, toChatRequest } from '@/lib/translate/responses-to-chat'
 import { responsesRequestSchema, type ResponsesRequest } from '@/lib/schemas/responses'
+import { withUsageCost } from '../cost'
 import type { ClassifiedError } from '../errors'
 import { parseWith, type Ingress } from '../handler'
 import { newResponseId, rewriteResponse } from '../identity'
@@ -65,6 +66,17 @@ export const responsesStreamProtocol: StreamProtocol<ResponseStreamEvent> = {
     return usageFromResponses((event.response as { usage?: unknown }).usage as never)
   },
 
+  attachCost: (event, cost) => {
+    // Usage hangs off the response object, not the event, so this reaches one
+    // level deeper than chat's. Events with no response — the deltas — are
+    // returned untouched.
+    if (!('response' in event) || !event.response) return event
+    return {
+      ...event,
+      response: withUsageCost(event.response as { usage?: unknown }, cost),
+    } as ResponseStreamEvent
+  },
+
   isContentDelta: (event) => CONTENT_DELTAS.has(event.type),
 }
 
@@ -81,7 +93,7 @@ export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, Respon
   },
   run: (adapter, ctx, req) => adapter.respond(req, ctx),
   runStream: (adapter, ctx, req) => adapter.respondStream(req, ctx),
-  finish: (res, identity) => rewriteResponse(res, identity),
+  finish: (res, identity, cost) => withUsageCost(rewriteResponse(res, identity), cost),
   usageOf: (res) => usageFromResponses(res.usage as never),
   newIdentityId: newResponseId,
   stream: responsesStreamProtocol,

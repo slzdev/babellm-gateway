@@ -52,6 +52,32 @@ export async function seedGateway(options: SeedOptions = {}) {
   return { provider, model, target, key, apiKey: generated.key, virtualModel, upstreamModel }
 }
 
+/**
+ * Gives a provider's model catalog prices.
+ *
+ * An upsert rather than an insert because seedTargets already writes a
+ * catalog_models row whenever a target declares an apiFlavor, and
+ * catalog_models_provider_model_idx makes a second insert a constraint
+ * violation. Callers should not have to know which seeder they used.
+ */
+export async function seedPrices(
+  providerId: string,
+  modelId: string,
+  prices: {
+    inputPerMtok?: string
+    cachedInputPerMtok?: string
+    outputPerMtok?: string
+  },
+) {
+  await db
+    .insert(catalogModels)
+    .values({ providerId, modelId, ...prices })
+    .onConflictDoUpdate({
+      target: [catalogModels.providerId, catalogModels.modelId],
+      set: prices,
+    })
+}
+
 export function chatRequest(
   body: unknown,
   apiKey: string | null,

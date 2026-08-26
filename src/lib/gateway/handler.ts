@@ -6,7 +6,7 @@ import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ProviderRow } from '@/lib/db/schema'
 import { logRequest, resolveRequestLogStore } from '@/lib/logs'
 import { capPayload } from '@/lib/logs/payload'
-import type { LogPayload, LogUsage, RequestOutcome } from '@/lib/logs/types'
+import type { CostBreakdown, LogPayload, LogUsage, RequestOutcome } from '@/lib/logs/types'
 import { computeCost, priceFor } from '@/lib/pricing'
 import { uuidv7 } from '@/lib/uuid'
 import {
@@ -14,6 +14,7 @@ import {
   type LimitSnapshot,
 } from '@/lib/usage'
 import { extractBearerToken, resolveApiKey, touchApiKey } from './auth'
+import { costPayload, type CostPayload } from './cost'
 import { GatewayError, RoutedError, errorResponse, type ClassifiedError } from './errors'
 import { execute, type AttemptRecord } from './execute'
 import type { IdentityOptions } from './identity'
@@ -47,7 +48,10 @@ export interface Ingress<Req, Res, Chunk> {
   droppedFor(candidate: Candidate, req: Req): string[]
   run(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): Promise<Res>
   runStream(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): AsyncIterable<Chunk>
-  finish(res: Res, identity: IdentityOptions): Res
+  /** The last transformation before the client sees the response: gateway
+   *  identity, and the cost this request is being charged. `cost` is already
+   *  serialized, so no ingress has to know how CostBreakdown is rendered. */
+  finish(res: Res, identity: IdentityOptions, cost: CostPayload | null): Res
   usageOf(res: Res): LogUsage | null
   newIdentityId(): string
   stream: StreamProtocol<Chunk>
@@ -208,6 +212,10 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     /** The target that actually served, which is what gets priced. */
     candidate?: Candidate
     usage?: LogUsage | null
+    /** The cost the client was given, so the log, the client, and the key's
+     *  billed spend cannot disagree. Absent on paths that never priced
+     *  anything — errors, and streams that ended before usage arrived. */
+    cost?: CostBreakdown | null
     /** What the client received, for payload capture. */
     response?: unknown
     responseTruncated?: boolean
@@ -234,13 +242,11 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     extra: LogExtra,
   ) {
     const usage = extra.usage ?? null
-    const cost =
-      extra.candidate && usage
-        ? computeCost(
-            await priceFor(extra.candidate.provider.id, extra.candidate.upstreamModel),
-            usage,
-          )
-        : null
+    // Computed on the response path, not here. Recomputing would issue a
+    // second catalog lookup that could straddle a price change or the price
+    // cache's TTL, and a client reconciling its own tally against this row
+    // would have no guarantee the two came from the same snapshot.
+    const cost = extra.cost ?? null
 
     // Charge the key's counters here because this is the one place that has
     // both the measured usage and the priced cost. Never awaited by the
@@ -345,6 +351,20 @@ export async function runGatewayRequest<Req, Res, Chunk>(
         ? { maxBytes: (await resolveRequestLogStore()).settings.payloadMaxBytes }
         : undefined
 
+      // Started, deliberately not awaited: handler.ts must put nothing
+      // between execute() and the response, or it lands on
+      // time-to-first-token. The relay awaits this only on the chunk that
+      // carries usage — the last one — by which point it has long resolved.
+      //
+      // The .catch is attached here rather than at the await because a stream
+      // that ends without usage never awaits it at all, and an unattended
+      // rejection would take down the process precisely when the database is
+      // already in trouble.
+      const prices = priceFor(
+        result.candidate.provider.id,
+        result.candidate.upstreamModel,
+      ).catch(() => null)
+
       return sseResponse(
         result.value,
         ingress.stream,
@@ -355,11 +375,13 @@ export async function runGatewayRequest<Req, Res, Chunk>(
             ...(capture.firstDeltaAt === null ? {} : { ttftMs: capture.firstDeltaAt - startedAt }),
             candidate: result.candidate,
             usage: capture.usage,
+            cost: capture.cost,
             error: capture.error ?? undefined,
             response: capturePayloads ? ingress.captureResponse(identity, capture, outcome) : null,
             responseTruncated: capture.truncated,
           }),
         captureOptions,
+        async (usage) => computeCost(await prices, usage),
       )
     }
 
@@ -369,16 +391,34 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     )
     dropped = ingress.droppedFor(result.candidate, bodyFor(result.candidate, body))
 
+    // Usage is read first so a provider that reports none skips the catalog
+    // lookup entirely — otherwise a SELECT would sit on the client's critical
+    // path to compute a cost that's unconditionally null. The catalog may
+    // never fail a request either way: a price lookup that throws costs the
+    // client its cost breakdown, not its completion, so the rejection is
+    // swallowed at creation rather than caught at the await, which also keeps
+    // the streaming path (where this promise may never be awaited at all)
+    // from raising an unhandled rejection.
+    const usage = ingress.usageOf(result.value)
+    const prices = usage
+      ? await priceFor(
+          result.candidate.provider.id,
+          result.candidate.upstreamModel,
+        ).catch(() => null)
+      : null
+    const cost = computeCost(prices, usage)
+
     // Built before logging: logging after the response has been constructed
     // means a throw building the response can no longer race a second,
     // contradictory log line against this one for the same request_id.
-    const completion = ingress.finish(result.value, identity)
+    const completion = ingress.finish(result.value, identity, costPayload(cost))
     const response = Response.json(completion, {
       headers: attemptHeaders(result.candidate, requestId, dropped, limits),
     })
     log(200, 'ok', result.attempts, {
       candidate: result.candidate,
-      usage: ingress.usageOf(result.value),
+      usage,
+      cost,
       response: completion,
     })
     return response

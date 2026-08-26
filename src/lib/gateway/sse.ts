@@ -1,4 +1,5 @@
-import type { LogUsage } from '@/lib/logs/types'
+import type { CostBreakdown, LogUsage } from '@/lib/logs/types'
+import { costPayload, type CostPayload } from './cost'
 import { classifyProviderError, type ClassifiedError } from './errors'
 import type { IdentityOptions } from './identity'
 
@@ -14,6 +15,10 @@ export interface StreamProtocol<Chunk> {
   errorEvent(err: ClassifiedError): Uint8Array
   accumulate(captured: StreamCapture, chunk: Chunk, maxBytes: number): void
   usageOf(chunk: Chunk): LogUsage | null
+  /** Writes the cost into a chunk that carries usage. Called only for chunks
+   *  whose usageOf() returned non-null, so an implementation never has to
+   *  invent a usage object. */
+  attachCost(chunk: Chunk, cost: CostPayload | null): Chunk
   /** True for an event that carries generated content, which is what TTFT measures. */
   isContentDelta(chunk: Chunk): boolean
 }
@@ -55,6 +60,13 @@ export type StreamOutcome = 'ok' | 'client_closed' | 'stream_interrupted'
 
 export interface StreamCapture {
   usage: LogUsage | null
+  /** The cost of `usage`, as the client was told it.
+   *
+   * The internal CostBreakdown, not the wire CostPayload: the request log
+   * stores the catalog rates in their own column (logs/postgres.ts), so
+   * narrowing this to the client's shape would silently strip `pricing` out
+   * of every logged row. */
+  cost: CostBreakdown | null
   /** Assembled assistant text. Empty unless payload capture was requested. */
   text: string
   /** Byte length of `text`, tracked incrementally rather than recomputed. */
@@ -81,6 +93,7 @@ export function sseResponse<Chunk>(
   headers: HeadersInit,
   onSettle?: (outcome: StreamOutcome, capture: StreamCapture) => void,
   capture?: CaptureOptions,
+  costFor?: (usage: LogUsage) => Promise<CostBreakdown | null>,
 ): Response {
   // Set the moment the client disconnects. The `for await` below may still
   // be mid-pull when that happens (it does not know the controller is gone
@@ -99,7 +112,8 @@ export function sseResponse<Chunk>(
   // Accumulated as the stream is relayed, so the settle callback — whichever
   // of the three paths reaches it — reports what actually got through.
   const captured: StreamCapture = {
-    usage: null, text: '', bytes: 0, truncated: false, error: null, firstDeltaAt: null,
+    usage: null, cost: null, text: '', bytes: 0, truncated: false,
+    error: null, firstDeltaAt: null,
   }
 
   function settle(outcome: StreamOutcome) {
@@ -120,7 +134,29 @@ export function sseResponse<Chunk>(
           // include_usage puts this on the final chunk; a provider that omits
           // it simply leaves captured.usage null.
           const usage = protocol.usageOf(chunk)
-          if (usage) captured.usage = usage
+          // The chunk actually framed. Reassigned only for a usage-bearing
+          // chunk, so a content delta is relayed as the identical object.
+          let outgoing: Chunk = chunk
+          if (usage) {
+            captured.usage = usage
+            if (costFor) {
+              // The only await in this loop that is not pulling from upstream.
+              // It resolves a promise the handler started before the response
+              // was returned, so by the time usage arrives — the last chunk —
+              // it has long since settled and this costs a microtask. Placing
+              // it here rather than before the response is what keeps a
+              // catalog query off time-to-first-token.
+              //
+              // Guarded with .catch rather than left to the surrounding
+              // try/catch: a costFor rejection is not a broken stream, and
+              // letting it reach the catch below would have
+              // classifyProviderError turn a perfectly healthy stream into a
+              // stream_interrupted error sent to the client. A pricing
+              // failure degrades to a null cost instead.
+              captured.cost = await costFor(usage).catch(() => null)
+              outgoing = protocol.attachCost(chunk, costPayload(captured.cost))
+            }
+          }
           // Recorded on the first content-bearing event rather than the first event
           // at all: a Responses stream opens with response.created, which upstream
           // emits instantly, and a chat stream opens with the role delta. Neither is
@@ -129,7 +165,7 @@ export function sseResponse<Chunk>(
             captured.firstDeltaAt = Date.now()
           }
           if (capture && !captured.truncated) protocol.accumulate(captured, chunk, capture.maxBytes)
-          controller.enqueue(protocol.frame(chunk, identity))
+          controller.enqueue(protocol.frame(outgoing, identity))
         }
       } catch (err) {
         if (cancelled) return

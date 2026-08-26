@@ -63,7 +63,7 @@ test('frames a mid-stream failure as a named error event', () => {
 })
 
 test('accumulates only output text for payload capture', () => {
-  const captured = { usage: null, text: '', bytes: 0, truncated: false, error: null, firstDeltaAt: null }
+  const captured = { usage: null, cost: null, text: '', bytes: 0, truncated: false, error: null, firstDeltaAt: null }
   p.accumulate(captured, { type: 'response.output_text.delta', sequence_number: 1, delta: 'ab' } as never, 100)
   p.accumulate(captured, { type: 'response.reasoning_summary_text.delta', sequence_number: 2, delta: 'zz' } as never, 100)
 
@@ -72,7 +72,7 @@ test('accumulates only output text for payload capture', () => {
 })
 
 test('stops accumulating at the byte cap', () => {
-  const captured = { usage: null, text: '', bytes: 0, truncated: false, error: null, firstDeltaAt: null }
+  const captured = { usage: null, cost: null, text: '', bytes: 0, truncated: false, error: null, firstDeltaAt: null }
   p.accumulate(captured, { type: 'response.output_text.delta', sequence_number: 1, delta: 'abcdef' } as never, 3)
 
   expect(captured.truncated).toBe(true)

@@ -1,6 +1,7 @@
 import type { ChatCompletion, ChatCompletionChunk } from '@/lib/adapters/types'
 import { chatCompletionRequestSchema, type ChatCompletionRequest } from '@/lib/schemas/chat'
 import type { ClassifiedError } from '../errors'
+import { withUsageCost } from '../cost'
 import { parseWith, type Ingress } from '../handler'
 import { newCompletionId, rewriteChunk, rewriteCompletion } from '../identity'
 import { droppedForChat } from './dropped'
@@ -45,6 +46,7 @@ export const chatStreamProtocol: StreamProtocol<ChatCompletionChunk> = {
     })}\n\n`),
   accumulate,
   usageOf: (chunk) => (chunk.usage ? usageFrom(chunk.usage) : null),
+  attachCost: (chunk, cost) => withUsageCost(chunk, cost),
   // A chunk carrying reasoning but no content is still the first token from the
   // client's point of view: something generated arrived.
   isContentDelta: (chunk) => {
@@ -61,7 +63,7 @@ export const chatIngress: Ingress<ChatCompletionRequest, ChatCompletion, ChatCom
   droppedFor: (candidate, req) => droppedForChat(candidate, req),
   run: (adapter, ctx, req) => adapter.chat(req, ctx),
   runStream: (adapter, ctx, req) => adapter.chatStream(req, ctx),
-  finish: (res, identity) => rewriteCompletion(res, identity),
+  finish: (res, identity, cost) => withUsageCost(rewriteCompletion(res, identity), cost),
   usageOf: (res) => usageFrom(res.usage),
   newIdentityId: newCompletionId,
   stream: chatStreamProtocol,

@@ -2,9 +2,10 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleResponses } from '@/lib/gateway/responses-handler'
 import {
-  responsesRequest, fakeAdapterByProvider, seedGateway, seedTargets,
+  responsesRequest, fakeAdapterByProvider, seedGateway, seedPrices, seedTargets,
 } from '../helpers/gateway'
 import { resetDb } from '../helpers/db'
+import { clearPriceCache } from '@/lib/pricing'
 
 function response(id: string) {
   return {
@@ -18,6 +19,7 @@ function response(id: string) {
 beforeEach(async () => {
   process.env.ENCRYPTION_KEY = 'c'.repeat(64)
   await resetDb()
+  clearPriceCache()
   vi.spyOn(console, 'log').mockImplementation(() => {})
 })
 
@@ -122,6 +124,50 @@ test('streams named events and never sends [DONE]', async () => {
   expect(body).not.toContain('[DONE]')
 })
 
+test('the response.completed event carries the cost breakdown', async () => {
+  const { apiKey, targets } = await seedTargets({
+    targets: [{ name: 'p1', apiFlavor: 'responses' }],
+  })
+  await seedPrices(targets[0].provider.id, 'p1-model', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+
+  async function* respondStream() {
+    yield { type: 'response.output_text.delta', sequence_number: 1, delta: 'hi' }
+    yield {
+      type: 'response.completed',
+      sequence_number: 2,
+      response: {
+        id: 'resp_1', model: 'up', output: [], status: 'completed',
+        usage: { input_tokens: 1_000_000, output_tokens: 1_000_000, total_tokens: 2_000_000 },
+      },
+    }
+  }
+
+  const res = await handleResponses(
+    responsesRequest({ model: 'house-model', input: 'hi', stream: true }, apiKey),
+    fakeAdapterByProvider({ p1: { respondStream: respondStream as never } }),
+  )
+  const text = await res.text()
+
+  const completed = text
+    .split('\n\n')
+    .find((block) => block.startsWith('event: response.completed'))!
+  const payload = JSON.parse(
+    completed.split('\n').find((line) => line.startsWith('data:'))!.slice(5).trim(),
+  )
+
+  expect(payload.response.usage.cost).toEqual({
+    currency: 'USD',
+    input: '1.000000000',
+    cached: '0.000000000',
+    output: '3.000000000',
+    total: '4.000000000',
+  })
+  // The virtual model rewrite still happens; attaching cost must not undo it.
+  expect(payload.response.model).toBe('house-model')
+})
+
 test('retrieval says why it is unsupported rather than 404ing blankly', async () => {
   const { GET } = await import('@/app/v1/responses/[...rest]/route')
 
@@ -146,4 +192,49 @@ test('cancel and input_items get the same explanation, not a bare 404', async ()
     expect(body.error.code).toBe('unsupported_endpoint')
     expect(body.error.message).toContain('POST /v1/responses only')
   }
+})
+
+test('returns the cost breakdown inside usage', async () => {
+  const { apiKey, targets } = await seedTargets({
+    targets: [{ name: 'p1', apiFlavor: 'responses' }],
+  })
+  await seedPrices(targets[0].provider.id, 'p1-model', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+
+  const res = await handleResponses(
+    responsesRequest({ model: 'house-model', input: 'hi' }, apiKey),
+    fakeAdapterByProvider({
+      p1: {
+        respond: vi.fn().mockResolvedValue({
+          ...response('resp_upstream'),
+          usage: { input_tokens: 1_000_000, output_tokens: 1_000_000, total_tokens: 2_000_000 },
+        }),
+      },
+    }),
+  )
+  const body = await res.json()
+
+  expect(body.usage.cost).toEqual({
+    currency: 'USD',
+    input: '1.000000000',
+    cached: '0.000000000',
+    output: '3.000000000',
+    total: '4.000000000',
+  })
+  // The Responses dialect's own token spelling survives untouched.
+  expect(body.usage.input_tokens).toBe(1_000_000)
+})
+
+test('an unpriced Responses model returns an explicit null cost', async () => {
+  const { apiKey } = await seedTargets({ targets: [{ name: 'p1', apiFlavor: 'responses' }] })
+
+  const res = await handleResponses(
+    responsesRequest({ model: 'house-model', input: 'hi' }, apiKey),
+    fakeAdapterByProvider({
+      p1: { respond: vi.fn().mockResolvedValue(response('resp_upstream')) },
+    }),
+  )
+
+  expect((await res.json()).usage.cost).toBeNull()
 })
