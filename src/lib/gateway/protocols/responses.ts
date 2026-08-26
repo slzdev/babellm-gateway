@@ -4,7 +4,7 @@ import { droppedParams, toChatRequest } from '@/lib/translate/responses-to-chat'
 import { responsesRequestSchema, type ResponsesRequest } from '@/lib/schemas/responses'
 import { withUsageCost } from '../cost'
 import type { ClassifiedError } from '../errors'
-import { parseWith, type Ingress } from '../handler'
+import { parseWith, readJson, type Ingress } from '../handler'
 import { newResponseId, rewriteResponse } from '../identity'
 import { droppedForChat } from './dropped'
 import type { StreamCapture, StreamProtocol } from '../sse'
@@ -81,7 +81,7 @@ export const responsesStreamProtocol: StreamProtocol<ResponseStreamEvent> = {
 }
 
 export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, ResponseStreamEvent> = {
-  parse: (raw) => parseWith(responsesRequestSchema, raw),
+  read: async (request) => parseWith(responsesRequestSchema, await readJson(request)),
   modelOf: (req) => req.model,
   isStream: (req) => req.stream === true,
   droppedFor: (candidate, req) => {
@@ -95,6 +95,7 @@ export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, Respon
   runStream: (adapter, ctx, req) => adapter.respondStream(req, ctx),
   finish: (res, identity, cost) => withUsageCost(rewriteResponse(res, identity), cost),
   usageOf: (res) => usageFromResponses(res.usage as never),
+  toResponse: (res, headers) => Response.json(res, { headers }),
   newIdentityId: newResponseId,
   stream: responsesStreamProtocol,
   captureResponse: (identity, capture, outcome) => ({

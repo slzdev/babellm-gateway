@@ -37,26 +37,73 @@ const defaultDeps: GatewayDeps = { createAdapter: defaultCreateAdapter }
 
 /**
  * The shape-specific behaviour `runGatewayRequest` needs from an ingress
- * (Chat, and later Responses) to run the shared lifecycle: bookkeeping,
- * limits, model resolution, failover and logging live once in the handler;
- * only what differs between wire formats lives behind this interface.
+ * (Chat, Responses, and later transcription) to run the shared lifecycle:
+ * bookkeeping, limits, model resolution, failover and logging live once in
+ * the handler; only what differs between wire formats lives behind this
+ * interface.
+ *
+ * Chat and Responses are both JSON in, JSON out, and always streamable —
+ * which is why the members below split into a required core and an optional
+ * remainder. The optional members exist so a dialect that is *not* JSON, or
+ * cannot stream, or mints no id of its own (transcription is all three) can
+ * say so honestly instead of a stub that throws or lies.
  */
 export interface Ingress<Req, Res, Chunk> {
-  parse(raw: unknown): Req
+  /** Reads AND validates the body. Replaces `parse(raw: unknown)`: the wire
+   *  format decides how the body arrives, not just what it contains. */
+  read(request: Request): Promise<Req>
   modelOf(req: Req): string
   isStream(req: Req): boolean
   droppedFor(candidate: Candidate, req: Req): string[]
   run(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): Promise<Res>
-  runStream(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): AsyncIterable<Chunk>
   /** The last transformation before the client sees the response: gateway
    *  identity, and the cost this request is being charged. `cost` is already
    *  serialized, so no ingress has to know how CostBreakdown is rendered. */
   finish(res: Res, identity: IdentityOptions, cost: CostPayload | null): Res
   usageOf(res: Res): LogUsage | null
-  newIdentityId(): string
-  stream: StreamProtocol<Chunk>
+  /** Renders the finished result. Both JSON dialects pass `Response.json`. */
+  toResponse(res: Res, headers: HeadersInit): Response
+  /** Which candidates can serve this dialect. Absent means "all of them" —
+   *  Chat and Responses can be served by any candidate the routing tables
+   *  hand back, so neither implements this. */
+  supports?(candidate: Candidate): boolean
+  /** Absent for a dialect with no response id of its own. */
+  newIdentityId?(): string
+  /** Streaming support, absent for a dialect this gateway does not stream.
+   *  The three members always arrive together — reachable only when
+   *  `isStream()` has returned true for the request in hand. */
+  runStream?(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): AsyncIterable<Chunk>
+  stream?: StreamProtocol<Chunk>
   /** What payload capture stores for an interrupted or completed stream. */
-  captureResponse(identity: IdentityOptions, capture: StreamCapture, outcome: StreamOutcome): unknown
+  captureResponse?(identity: IdentityOptions, capture: StreamCapture, outcome: StreamOutcome): unknown
+}
+
+/**
+ * Narrows an `Ingress` to its streaming members before the streaming branch
+ * uses them.
+ *
+ * Unreachable in practice: an ingress with no streaming members must refuse
+ * `stream: true` from its own `read` (the transcription ingress does, with a
+ * 400), so `isStream()` can never come back true for one. This guard exists
+ * so that fact is enforced by a thrown error instead of relied upon — a
+ * dialect that got the refusal wrong would otherwise fail with "cannot read
+ * properties of undefined" deep inside the SSE relay.
+ */
+type StreamableIngress<Req, Res, Chunk> =
+  Ingress<Req, Res, Chunk> & Required<Pick<Ingress<Req, Res, Chunk>, 'runStream' | 'stream' | 'captureResponse'>>
+
+function assertStreamable<Req, Res, Chunk>(
+  ingress: Ingress<Req, Res, Chunk>,
+): StreamableIngress<Req, Res, Chunk> {
+  if (!ingress.runStream || !ingress.stream || !ingress.captureResponse) {
+    throw new GatewayError({
+      status: 500,
+      type: 'internal_error',
+      code: 'internal_error',
+      message: 'This dialect has no streaming implementation, but the request reached the streaming branch.',
+    })
+  }
+  return ingress as StreamableIngress<Req, Res, Chunk>
 }
 
 export function parseWith<T>(schema: z.ZodType<T>, raw: unknown): T {
@@ -74,7 +121,7 @@ export function parseWith<T>(schema: z.ZodType<T>, raw: unknown): T {
   return result.data
 }
 
-async function readJson(request: Request): Promise<unknown> {
+export async function readJson(request: Request): Promise<unknown> {
   try {
     return await request.json()
   } catch {
@@ -308,7 +355,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     // scope. Before the body parse because it is the cheaper check, and
     // because it puts the tags in scope for every failure path after it.
     tags = tagsFromRequest(request)
-    const body = ingress.parse(await readJson(request))
+    const body = await ingress.read(request)
     requestBody = body
     modelName = ingress.modelOf(body)
     stream = ingress.isStream(body)
@@ -322,22 +369,40 @@ export async function runGatewayRequest<Req, Res, Chunk>(
 
     const { model, candidates } = await resolveModel(modelName)
     const open = await openTargetsFor(candidates)
-    const chain = selectOrder(candidates, model, { open })
+    // Filtered after selectOrder, not before: selection owns policy and
+    // breaker demotion, and filtering upstream of it would change which
+    // target a weighted or round-robin model picks for OTHER endpoints that
+    // model also serves.
+    const chain = ingress.supports
+      ? selectOrder(candidates, model, { open }).filter(ingress.supports)
+      : selectOrder(candidates, model, { open })
+
+    if (chain.length === 0) {
+      throw new GatewayError({
+        status: 501,
+        type: 'invalid_request_error',
+        code: 'unsupported_operation',
+        message: `No target of \`${modelName}\` can serve this endpoint.`,
+      })
+    }
 
     void touchApiKey(apiKey.id).catch((err) =>
       console.error(`[gateway] failed to update last_used_at request_id=${requestId}`, err),
     )
 
-    const identity = { id: ingress.newIdentityId(), model: modelName }
+    // '' stands for "this dialect mints no response id of its own" — nothing
+    // reads identity.id in that case, so there is no value worth fabricating.
+    const identity = { id: ingress.newIdentityId?.() ?? '', model: modelName }
 
     if (stream) {
+      const streaming = assertStreamable(ingress)
       // startStream pulls the first chunk, so a failure inside `run` is
       // still a failure before the response is committed — which is what
       // makes failover safe for streams.
       const result = await execute(
         chain, requestId, request.signal, { ...deps, recordHealth },
         (adapter, ctx, candidate) =>
-          startStream(ingress.runStream(adapter, ctx, bodyFor(candidate, body))),
+          startStream(streaming.runStream(adapter, ctx, bodyFor(candidate, body))),
       )
       // Against the body the winning target was actually sent, not the client's
       // — otherwise a tier this gateway added would be dropped by a Gemini
@@ -367,7 +432,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
 
       return sseResponse(
         result.value,
-        ingress.stream,
+        streaming.stream,
         identity,
         attemptHeaders(result.candidate, requestId, dropped, limits),
         (outcome, capture) =>
@@ -377,7 +442,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
             usage: capture.usage,
             cost: capture.cost,
             error: capture.error ?? undefined,
-            response: capturePayloads ? ingress.captureResponse(identity, capture, outcome) : null,
+            response: capturePayloads ? streaming.captureResponse(identity, capture, outcome) : null,
             responseTruncated: capture.truncated,
           }),
         captureOptions,
@@ -412,9 +477,10 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     // means a throw building the response can no longer race a second,
     // contradictory log line against this one for the same request_id.
     const completion = ingress.finish(result.value, identity, costPayload(cost))
-    const response = Response.json(completion, {
-      headers: attemptHeaders(result.candidate, requestId, dropped, limits),
-    })
+    const response = ingress.toResponse(
+      completion,
+      attemptHeaders(result.candidate, requestId, dropped, limits),
+    )
     log(200, 'ok', result.attempts, {
       candidate: result.candidate,
       usage,
