@@ -282,7 +282,8 @@ test('a response with no usage gets no fabricated usage object', async () => {
   await seedPrices(provider.id, 'gpt-4o-mini', {
     inputPerMtok: '1.000000', outputPerMtok: '3.000000',
   })
-  const { usage: _usage, ...noUsage } = upstreamCompletion
+  const noUsage: Record<string, unknown> = { ...upstreamCompletion }
+  delete noUsage.usage
 
   const res = await handleChatCompletions(
     chatRequest(body, apiKey),

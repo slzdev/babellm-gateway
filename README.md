@@ -184,6 +184,45 @@ fails over on the same loop until its first chunk lands.
 actually served. Targets can pin a service tier (`flex`, `priority`,
 `ultrafast`, …) where the provider supports one.
 
+### Costs on the response
+
+Every response prices itself. `usage.cost` carries what the request cost, split
+the way the gateway billed it:
+
+```json
+{
+  "usage": {
+    "prompt_tokens": 1200,
+    "completion_tokens": 340,
+    "cost": {
+      "currency": "USD",
+      "input_usd": "0.003000000",
+      "cached_usd": "0.000000000",
+      "output_usd": "0.005100000",
+      "total_usd": "0.008100000"
+    }
+  }
+}
+```
+
+Same field on `/v1/chat/completions` and `/v1/responses`. Streaming puts it on
+the final usage chunk (chat) or the `response.completed` event (Responses), so
+it arrives with the tokens it prices rather than in a header that has already
+been flushed.
+
+Amounts are strings at nine decimal places — a client summing thousands of
+requests should not inherit float error from the wire format. Cached tokens are
+billed at the cached rate and removed from the input count, so a cache hit is
+never charged twice.
+
+`"cost": null` means the request could not be priced: the model has no catalog
+entry, or only half of one. It is never `0` — a zero would be indistinguishable
+from a free request. When a provider reports no usage at all, there is no
+`usage` object and no cost.
+
+The per-million rates behind the numbers stay in the request log and the admin
+UI; they are not published to clients.
+
 ### A breaker per target
 
 A target that fails retryably — 429, 5xx, timeout, connection error — five
