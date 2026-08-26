@@ -72,8 +72,24 @@ export interface Ingress<Req, Res, Chunk> {
    *  but not into `verbose_json`, `srt` or `vtt`. Judging that at attempt time
    *  instead would let the same request succeed or fail depending on which
    *  target selection happened to pick, and non-deterministic success is not a
-   *  behaviour a gateway may have. */
+   *  behaviour a gateway may have.
+   *
+   *  This hook **steers**, it does not refuse. When it rejects every
+   *  candidate the handler falls back to the unfiltered list, so the answer
+   *  comes from the adapter that knows why — see the fallback below. That
+   *  makes one invariant binding on every implementation: **`supports` may
+   *  never encode a rule the adapter cannot also refuse.** All three of
+   *  transcription's rules satisfy it (`assertTranscribable` refuses the
+   *  timestamp formats and the oversized file; `withTranscribeUnsupported`
+   *  refuses the Anthropic flavor). A rule that did not would send a doomed
+   *  request upstream instead of refusing it. */
   supports?(candidate: Candidate, req: Req): boolean
+  /** The body to send to one particular target, when a dialect has anything
+   *  per-target to say. Absent means the client's request reaches every
+   *  candidate unchanged — which is what a dialect with no `service_tier`
+   *  field needs, since injecting one would send a parameter the endpoint does
+   *  not accept. Chat and Responses both pass `withServiceTier`. */
+  bodyFor?(candidate: Candidate, req: Req): Req
   /** What payload capture stores in place of the request. Absent means the
    *  parsed request itself, which is right for a JSON dialect — the parsed
    *  body IS what the client sent. A dialect whose request holds something
@@ -150,7 +166,8 @@ export async function readJson(request: Request): Promise<unknown> {
 }
 
 /**
- * The body to send to one particular target.
+ * The `bodyFor` both JSON ingresses use: the body to send to one particular
+ * target, with that target's service tier pinned.
  *
  * A target with no tier gets the client's own object back, unchanged and
  * un-copied: "(none)" has to mean the request is not touched, which includes
@@ -158,10 +175,14 @@ export async function readJson(request: Request): Promise<unknown> {
  * overwrites whatever the client asked for — it is an operator's routing
  * decision, not a default.
  *
- * Shared by both ingresses because both dialects spell it `service_tier` at
- * the top level, so there is nothing per-shape to decide.
+ * One implementation shared by Chat and Responses because both dialects spell
+ * it `service_tier` at the top level, so there is nothing per-shape to decide.
+ * It is *not* the handler's default, though: `service_tier` is a chat concept,
+ * and a dialect that has no such field must not have one injected — the
+ * transcription form would carry it upstream as an unknown multipart part and
+ * earn a 400 from a provider that was going to answer fine.
  */
-function bodyFor<Req>(candidate: Candidate, body: Req): Req {
+export function withServiceTier<Req>(candidate: Candidate, body: Req): Req {
   if (!candidate.serviceTier) return body
   return { ...body, service_tier: candidate.serviceTier }
 }
@@ -399,17 +420,30 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     // bookkeeping depend on which ingress asked.
     const supports = ingress.supports
     const eligible = supports ? candidates.filter((candidate) => supports(candidate, body)) : candidates
-    const open = await openTargetsFor(eligible)
-    const chain = selectOrder(eligible, model, { open })
-
-    if (chain.length === 0) {
-      throw new GatewayError({
-        status: 501,
-        type: 'invalid_request_error',
-        code: 'unsupported_operation',
-        message: `No target of \`${modelName}\` can serve this endpoint.`,
-      })
-    }
+    // `supports` steers; it does not refuse. When it leaves nothing, the
+    // unfiltered chain is ordered instead, so the request reaches the adapter
+    // and is refused by the code that knows *why* — a Gemini target asked for
+    // `srt` answers assertTranscribable's 400 naming the format and the
+    // remedy, an Anthropic one answers withTranscribeUnsupported's 501 naming
+    // the provider. The alternative, a generic "no target of X can serve this
+    // endpoint", is false for a target that serves the endpoint perfectly
+    // well in another format, and it tells a client whose request is one field
+    // away from working that the server does not implement it at all.
+    //
+    // Nothing is retried or charged to a breaker by falling back: both
+    // refusals are non-retryable and raised before any upstream call, which
+    // `classifyProviderError` preserves. This is exactly why `supports` may
+    // never encode a rule the adapter cannot also refuse — see its docblock.
+    //
+    // No empty-chain guard follows: resolveModel already answers 503
+    // `no_targets_available` for a model with no enabled target, a direct
+    // address resolves to exactly one candidate, and selectOrder slices with
+    // `Math.max(1, maxAttempts)` — so a non-empty candidate list cannot order
+    // to an empty chain. Were that ever to change, `execute` ends on the same
+    // 503 rather than on silence.
+    const ordered = eligible.length > 0 ? eligible : candidates
+    const open = await openTargetsFor(ordered)
+    const chain = selectOrder(ordered, model, { open })
 
     void touchApiKey(apiKey.id).catch((err) =>
       console.error(`[gateway] failed to update last_used_at request_id=${requestId}`, err),
@@ -418,6 +452,13 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     // '' stands for "this dialect mints no response id of its own" — nothing
     // reads identity.id in that case, so there is no value worth fabricating.
     const identity = { id: ingress.newIdentityId?.() ?? '', model: modelName }
+
+    // Falls back to handing every candidate the client's own object, which is
+    // the only correct default: a per-target rewrite can only be spelled by an
+    // ingress that knows its dialect has a field for it. Chat and Responses
+    // pass `withServiceTier`; transcription passes nothing.
+    const bodyFor = (candidate: Candidate, req: Req): Req =>
+      ingress.bodyFor ? ingress.bodyFor(candidate, req) : req
 
     if (stream) {
       const streaming = assertStreamable(ingress)

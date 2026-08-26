@@ -4,7 +4,7 @@ import { droppedParams, toChatRequest } from '@/lib/translate/responses-to-chat'
 import { responsesRequestSchema, type ResponsesRequest } from '@/lib/schemas/responses'
 import { withUsageCost } from '../cost'
 import type { ClassifiedError } from '../errors'
-import { parseWith, readJson, type Ingress } from '../handler'
+import { parseWith, readJson, withServiceTier, type Ingress } from '../handler'
 import { newResponseId, rewriteResponse } from '../identity'
 import { droppedForChat } from './dropped'
 import type { StreamCapture, StreamProtocol } from '../sse'
@@ -84,6 +84,7 @@ export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, Respon
   read: async (request) => parseWith(responsesRequestSchema, await readJson(request)),
   modelOf: (req) => req.model,
   isStream: (req) => req.stream === true,
+  bodyFor: withServiceTier,
   droppedFor: (candidate, req) => {
     // A Responses-native candidate expresses everything it is sent; every
     // other one loses whatever responses-to-chat cannot carry, plus whatever

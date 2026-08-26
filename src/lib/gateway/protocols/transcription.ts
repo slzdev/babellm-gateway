@@ -87,8 +87,17 @@ export const transcriptionIngress: Ingress<TranscriptionRequest, TranscriptionRe
   // streaming branch is unreachable for it.
   isStream: () => false,
   supports,
-  droppedFor: (candidate, req) =>
-    candidate.provider.adapter === 'gemini' ? droppedParams(req) : [],
+  // No `bodyFor`: `service_tier` is a chat concept with no counterpart on this
+  // endpoint, and the OpenAI adapter spreads the request straight into the
+  // upstream multipart form — so a tier injected here would travel as an
+  // unknown part and earn a 400 from a provider that was going to answer fine.
+  droppedFor: (candidate, req) => [
+    ...(candidate.provider.adapter === 'gemini' ? droppedParams(req) : []),
+    // A tier the operator pinned on this target had no effect on this request.
+    // Reported rather than silently ignored: an operator's routing decision
+    // that the gateway cannot honour is exactly what this header is for.
+    ...(candidate.serviceTier ? ['service_tier'] : []),
+  ],
   run: (adapter, ctx, req) => adapter.transcribe(req, ctx),
   usageOf: (res) => (typeof res === 'string' ? null : usageFromTranscription(res.usage)),
   finish: (res, _identity, cost) => {

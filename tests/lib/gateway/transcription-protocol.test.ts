@@ -13,6 +13,11 @@ function candidate(adapter: string, apiFlavor: string): Candidate {
   } as Candidate
 }
 
+/** The same candidate with a service tier pinned on its target. */
+function tiered(adapter: string, apiFlavor: string): Candidate {
+  return { ...candidate(adapter, apiFlavor), serviceTier: 'priority' } as Candidate
+}
+
 function audioFile(bytes = 1024, name = 'clip.mp3', type = 'audio/mpeg') {
   return new File([new Uint8Array(bytes)], name, { type })
 }
@@ -160,6 +165,25 @@ test('an OpenAI-shaped target is sent the request as it arrived', () => {
   )).toEqual([])
 })
 
+test('reports a pinned service tier as dropped, whatever the target', () => {
+  // This dialect has no `service_tier` field, so a tier the operator pinned on
+  // the target cannot be honoured — and an operator's routing decision the
+  // gateway silently ignores is exactly what this header exists to surface.
+  expect(ingress.droppedFor(tiered('openai', 'chat_completions'), req()))
+    .toEqual(['service_tier'])
+  expect(ingress.droppedFor(tiered('gemini', 'chat_completions'), req({ keywords: ['acme'] })))
+    .toEqual(['keywords', 'service_tier'])
+})
+
+test('injects nothing per target, so no tier reaches the upstream form', () => {
+  // No `bodyFor` at all: the handler's default hands the client's own request
+  // to every candidate. A `service_tier` added here would be spread into the
+  // multipart form by the OpenAI adapter and rejected upstream as an unknown
+  // parameter — a request that was going to succeed, failed by a routing
+  // setting that has no meaning on this endpoint.
+  expect(ingress.bodyFor).toBeUndefined()
+})
+
 // --- usageOf ---------------------------------------------------------------
 
 test('maps token-billed usage onto the log shape', () => {
@@ -272,7 +296,8 @@ test('captures the form fields and the file metadata, never the audio', () => {
     temperature: 0.2,
     file: { name: 'meeting.wav', size: 2048, type: 'audio/wav' },
   })
-  // No File, no bytes, nowhere in the record — audio is the largest and most
-  // sensitive thing this endpoint handles (design doc §3.10).
-  expect(JSON.stringify(captured)).not.toContain('\\u0000')
+  // The exact-shape assertion above is the whole proof: the record holds those
+  // fields and nothing else, so there is no `File` in it and no route by which
+  // audio could reach a stored row (design doc §3.10). What a *row* actually
+  // contains is Task 9's, where there is a real one to inspect.
 })

@@ -116,6 +116,24 @@ What this costs is three new seams on `Ingress`, sections 3.2, 3.3 and 3.5.
 Each is a genuine wire-format difference — which is what `Ingress` is for — and
 each is written so the two existing ingresses change by one line or not at all.
 
+Two more members turn out to be wire format rather than lifecycle, and both
+move behind the interface for the same reason: the handler was doing something
+to the request that only makes sense for a JSON chat.
+
+- **Payload capture's stored request** (`captureRequest`, section 3.10). The
+  handler stores the parsed request; this one holds a `File`.
+- **The per-target body** (`bodyFor`). The handler pinned a target's
+  `service_tier` onto every request, for every ingress. A transcription form
+  has no such field, and the OpenAI adapter spreads the request straight into
+  the multipart body — so an operator who set a tier on a target that also
+  serves transcriptions would earn an upstream 400 for an unknown parameter on
+  every transcription. Chat and Responses keep the existing behaviour through
+  one shared implementation (both spell it `service_tier` at the top level);
+  transcription omits the member, so a tier has no effect on it instead of
+  breaking it, and reports `service_tier` in `x-babellm-dropped-params` and the
+  log. A routing decision the gateway cannot honour is stated, not silently
+  discarded — that is what the dropped-params header is for.
+
 ### 3.2 Reading the body is part of the wire format
 
 Today the handler reads the body itself:
@@ -230,8 +248,36 @@ supports?(candidate: Candidate, req: Req): boolean
 
 Optional on `Ingress`, absent for Chat and Responses (every candidate can serve
 those), and implemented by the transcription ingress. The handler filters the
-candidate list through it *before* `selectOrder` runs, and answers 501
-`unsupported_operation` naming the model when nothing remains.
+candidate list through it *before* `selectOrder` runs.
+
+**The hook steers; it does not refuse.** When it rejects every candidate, the
+handler orders the *unfiltered* list instead:
+
+```ts
+const eligible = supports ? candidates.filter(…) : candidates
+const chain = selectOrder(eligible.length > 0 ? eligible : candidates, model, { open })
+```
+
+so the request reaches an adapter and is refused by the code that knows why. A
+Gemini-only model asked for `srt` gets `assertTranscribable`'s 400, naming the
+format and the two remedies; an Anthropic-only one gets
+`withTranscribeUnsupported`'s 501, naming the provider and the reason. Neither
+makes an upstream call and neither charges a breaker, because both refusals are
+non-retryable and raised before the call — which is what makes the fallback
+free rather than a wasted round trip.
+
+The alternative, a generic 501 from the handler when nothing survives the
+filter, was specified first and is worse in three ways: "no target of X can
+serve this endpoint" is false for a target that serves the endpoint fine in
+another format, it carries no `param` and no remedy for a request that is one
+field away from working, and it makes the translator's two carefully worded
+refusals unreachable on every gateway path.
+
+This is what the filter's steering-only role rests on, and it is binding on
+every future implementation: **`supports` may never encode a rule the adapter
+cannot also refuse.** All three of transcription's rules satisfy it. A rule
+that did not would, in the all-ineligible case, send a doomed request upstream
+instead of refusing it.
 
 **The request is a parameter, not just the candidate**, and that is the
 substantive decision here. Whether a target can serve a transcription is not a
@@ -308,17 +354,22 @@ How that is enforced depends on whether anything else in the chain can serve
 the request, and section 3.5 is what makes the difference invisible to the
 client. A Gemini candidate is filtered out of the chain for these three
 formats before selection, so a virtual model that also holds a Whisper target
-answers normally from it. Only when no candidate survives is the request
-refused, with a 400 naming the format and why it cannot be produced. The
+answers normally from it. When *no* candidate survives the filter, the chain
+falls back to the unfiltered list and the Gemini target is attempted after
+all — which is how the request gets the accurate refusal instead of a generic
+one: `assertTranscribable` throws before any upstream call, and the client
+receives a 400 naming the format and why it cannot be produced. The
 inline-size ceiling below steers the chain exactly the same way, for the same
 reason: it too is knowable from the request alone.
 
-`assertTranscribable` in the translator refuses the same three formats — and
-the same oversized file — a second time. That is not redundancy: `supports`
-steers a chain, while the translator guards the one route that has no chain to
-steer — a direct `provider/model` address to a Gemini model, which resolves to
-a single candidate. Both must refuse, and neither is reachable from the other's
-path.
+So `assertTranscribable` in the translator is not a redundant second copy of
+the rule — it is the only thing that *refuses*. `supports` steers a chain
+towards a target that can serve the request; the translator answers when there
+was no such target to steer towards, which is the one-candidate case (a
+Gemini-only virtual model, or a direct `provider/model` address). The two are
+reached on different paths and neither can substitute for the other: without
+the filter a mixed model would coin-flip, and without the refusal an
+all-ineligible chain would have nothing accurate to say.
 
 Consequently `timestamp_granularities` is unreachable for a Gemini target (it
 is only valid with `verbose_json`) and needs no drop entry. What is dropped, and
@@ -332,8 +383,8 @@ exceed roughly 20 MB once base64-encoded cannot be served by a Gemini target.
 That ceiling is enforced on both paths, like the formats above: a Gemini
 candidate is filtered out of the chain for an oversized file, so a mixed
 virtual model serves it from the Whisper target in a single attempt, and
-`assertTranscribable` refuses it with a 400 naming the limit when the address
-resolved to a Gemini target alone. The Files API is the upstream answer to
+`assertTranscribable` refuses it with a 400 naming the limit when Gemini was
+all there was to steer towards. The Files API is the upstream answer to
 larger audio and is out of scope: it is a stateful two-step upload whose handle
 outlives the request, which is a different feature from a stateless proxy hop.
 
@@ -444,8 +495,11 @@ headers.
 
 **Errors.** The gateway's existing envelope and status conventions: 400 for a
 bad request, 401 for the key, 404 for an unknown model, 429 for a limit, 501
-`unsupported_operation` when no target can transcribe, and the classified
-upstream status otherwise.
+`unsupported_operation` when no target can transcribe at all — from
+`withTranscribeUnsupported`, naming the provider, per section 3.5 — and the
+classified upstream status otherwise. A request refused for its format or its
+file size is a 400 naming that field, not a 501: the endpoint is available, the
+request is not servable as written.
 
 ## 5. Data model
 
@@ -482,8 +536,10 @@ there is no mid-stream failover question to answer here at all.
 - **Gateway, end to end** through `runGatewayRequest` with a stubbed adapter:
   each of the five formats and its content type, `usage.cost` for token-billed
   and its absence for duration-billed, failover, the `anthropic_messages` skip
-  and the "no target can transcribe" 501, limits, tags, the log row, and
-  payload capture proving the audio bytes are absent.
+  and the 501 an Anthropic-only model gets from the adapter, the 400 a
+  Gemini-only model gets for a timestamp format or an oversized file, limits,
+  tags, a pinned service tier reported as dropped rather than forwarded, the
+  log row, and payload capture proving the audio bytes are absent.
 - **Contract.** The real OpenAI SDK's `audio.transcriptions.create` driven
   against the gateway over an in-process fetch, as `tests/contract` already
   does for both other ingresses — the test that would catch a multipart detail

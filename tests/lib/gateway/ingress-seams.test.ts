@@ -1,4 +1,5 @@
 import { beforeEach, expect, test, vi } from 'vitest'
+import { GatewayError } from '@/lib/gateway/errors'
 import { runGatewayRequest, type Ingress } from '@/lib/gateway/handler'
 import { postgresStore } from '@/lib/logs/postgres'
 import { clearRequestLogStoreCache } from '@/lib/logs/registry'
@@ -190,9 +191,17 @@ test('supports is judged per request, not per target', async () => {
   expect(seen).toEqual([['p1', 'fancy'], ['p2', 'fancy']])
 })
 
-test('supports rejecting everything answers 501 with no upstream call', async () => {
+// `supports` steers a chain; it does not refuse one. When it rejects every
+// candidate, the unfiltered chain is ordered instead so the refusal comes from
+// the adapter, which knows *why* — a Gemini target asked for `srt` answers a
+// 400 naming the format and the remedy, an Anthropic one a 501 naming the
+// provider. The generic "no target of X can serve this endpoint" this branch
+// used to answer was false for a target that serves the endpoint fine in
+// another format, and it told a client whose request was one field from
+// working that the server does not implement it.
+test('supports rejecting everything falls back to the unfiltered chain', async () => {
   const { apiKey } = await seedGateway()
-  const chat = vi.fn()
+  const chat = vi.fn().mockResolvedValue({ ok: true })
 
   const ingress = makeIngress({
     supports: () => false,
@@ -201,10 +210,38 @@ test('supports rejecting everything answers 501 with no upstream call', async ()
 
   const response = await runGatewayRequest(fakeRequest(apiKey), ingress, fakeAdapterDeps({ chat }))
 
-  expect(response.status).toBe(501)
+  expect(response.status).toBe(200)
+  expect(chat).toHaveBeenCalledTimes(1)
+})
+
+// The point of the fallback: the adapter's own verdict reaches the client
+// intact — its status, its code, and the message that names the offending
+// field and what to do about it — instead of being flattened into one generic
+// envelope by the handler.
+test('the adapter refusal survives the fallback verbatim', async () => {
+  const { apiKey } = await seedGateway()
+  const chat = vi.fn().mockRejectedValue(new GatewayError({
+    status: 400,
+    type: 'invalid_request_error',
+    code: 'unsupported_parameter',
+    param: 'response_format',
+    message: 'gemini returns no timestamps, so it cannot serve response_format: "srt".',
+  }))
+
+  const ingress = makeIngress({
+    supports: () => false,
+    run: (adapter, ctx, req) => adapter.chat(req as never, ctx) as unknown as Promise<FakeRes>,
+  })
+
+  const response = await runGatewayRequest(fakeRequest(apiKey), ingress, fakeAdapterDeps({ chat }))
+
+  expect(response.status).toBe(400)
   const payload = await response.json()
-  expect(payload.error.code).toBe('unsupported_operation')
-  expect(chat).not.toHaveBeenCalled()
+  expect(payload.error.code).toBe('unsupported_parameter')
+  expect(payload.error.message).toContain('timestamps')
+  // One attempt, and — because the refusal is non-retryable and happened
+  // before any upstream call — no failover and no breaker record.
+  expect(chat).toHaveBeenCalledTimes(1)
 })
 
 test('an ingress with no newIdentityId still serves a buffered response', async () => {

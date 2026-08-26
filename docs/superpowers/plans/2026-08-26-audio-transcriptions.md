@@ -71,24 +71,19 @@ Handler changes, all inside `runGatewayRequest`:
 ```ts
 const supports = ingress.supports
 const eligible = supports ? candidates.filter((candidate) => supports(candidate, body)) : candidates
-const chain = selectOrder(eligible, model, { open })
-
-if (chain.length === 0) {
-  throw new GatewayError({
-    status: 501,
-    type: 'invalid_request_error',
-    code: 'unsupported_operation',
-    message: `No target of \`${modelName}\` can serve this endpoint.`,
-  })
-}
+// Steer, don't refuse: with nothing eligible, order the unfiltered list so the
+// answer comes from the adapter that knows why.
+const chain = selectOrder(eligible.length > 0 ? eligible : candidates, model, { open })
 ```
 
   Filter before selection, not after: `selectOrder` truncates its ordered chain to `model.maxAttempts`, so filtering downstream of that truncation could starve a candidate this dialect could actually use behind ones it never could — `maxAttempts: 2` has to mean two real attempts, not two candidates chosen before eligibility was known. Policy and breaker demotion still own ordering; only which candidates are eligible to be ordered at all moves earlier.
 
+  **No empty-chain 501.** An earlier draft of this plan had the handler answer 501 `unsupported_operation` when nothing survived the filter; the fallback above replaces it, and there is no empty-chain guard at all (`resolveModel` already answers 503 for a model with no enabled target, and `selectOrder` slices with `Math.max(1, maxAttempts)`). The reason is that the generic message is *false* for a target that serves the endpoint fine in another format, carries no `param` and no remedy for a one-field-fixable request, and makes the adapters' own refusals unreachable. With the fallback, an Anthropic-only model gets `withTranscribeUnsupported`'s 501 naming the provider and a Gemini-only model gets `assertTranscribable`'s 400 naming the format or the limit — neither making an upstream call or charging a breaker, because both refusals are non-retryable and raised before the call. This is what makes the invariant in Task 7 binding: **`supports` may never encode a rule the adapter cannot also refuse.**
+
 4. The streaming branch asserts its three members are present before use — one narrow helper, throwing a plain `Error` (not a `GatewayError`) if not, so `errorResponse` sanitizes it to the standard internal-error envelope and logs the real message instead of handing a client this file's internal commentary. Unreachable in practice: an ingress with no streaming members refuses `stream: true` in `read`.
 5. The buffered branch's `Response.json(completion, { headers })` becomes `ingress.toResponse(completion, headers)`. The order stays `finish` → build response → `log`, so a throw while rendering cannot race a second log line for one request id.
 
-**Chat and Responses:** add `read` (wrapping their existing schema parse) and `toResponse` (`Response.json`). `parse` is removed from both, along with the field on the interface. Nothing else moves.
+**Chat and Responses:** add `read` (wrapping their existing schema parse) and `toResponse` (`Response.json`). `parse` is removed from both, along with the field on the interface. Nothing else moves. (Task 7 adds one more line to each: `bodyFor: withServiceTier`, the handler's own tier-pinning helper, now that a dialect with no `service_tier` field must be able to opt out of it. Behaviour for both is unchanged.)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -97,7 +92,7 @@ if (chain.length === 0) {
 - `read` receives the real `Request` — a fake ingress that reads `request.headers.get('content-type')` sees the caller's value, so the hook is not handed a pre-parsed body.
 - `toResponse` decides the response: an ingress returning `new Response('hi', { status: 200, headers: { 'content-type': 'text/plain' } })` produces exactly that content type, and the attempt headers are still merged in.
 - `supports` filters: two seeded targets, a `supports` that rejects the first, and the served provider is the second — with the log's attempt chain showing **one** attempt, proving the rejected target was skipped rather than tried and failed.
-- `supports` rejecting everything answers 501 `unsupported_operation` with no upstream call.
+- `supports` rejecting everything falls back to the unfiltered chain: the adapter *is* called, and its own refusal reaches the client verbatim — status, code and the message naming the offending field — instead of a generic handler envelope.
 - An ingress with no `newIdentityId` still serves a buffered response.
 
 - [ ] **Step 2: Implement**
@@ -351,11 +346,19 @@ Members:
   a mixed model serves timestamps from the target that has them and only a
   model where nothing can serve refuses.
 
-  The translator's own `assertTranscribable` refusal stays exactly as it is.
-  It guards the route that has no chain to steer: a direct `provider/model`
-  address resolves to a single candidate, and the 501 for an empty chain would
-  be a worse answer there than a 400 naming the format.
-- `droppedFor`: the Gemini translator's `droppedParams` for a Gemini candidate, `[]` otherwise — an OpenAI-shaped target is sent the request as it arrived.
+  The translator's own `assertTranscribable` refusal stays exactly as it is,
+  and the handler's filter is what makes it reachable rather than redundant:
+  `supports` **steers** a chain and never refuses one, so when it rejects every
+  candidate the handler falls back to the unfiltered list and the request is
+  answered by the adapter that knows why — a 400 naming the format or the
+  limit, not a 501 saying the endpoint is unavailable. That fallback is what
+  makes this invariant binding on every `supports` implementation, present and
+  future: **`supports` may never encode a rule the adapter cannot also
+  refuse.** All three rules here satisfy it (`assertTranscribable` for the
+  formats and the size, `withTranscribeUnsupported` for the Anthropic flavor);
+  one that did not would send a doomed request upstream instead of refusing it.
+- `droppedFor`: the Gemini translator's `droppedParams` for a Gemini candidate, `[]` otherwise — an OpenAI-shaped target is sent the request as it arrived — plus `service_tier` whenever the candidate's target pins one, since this dialect has no such field and cannot honour it.
+- **No `bodyFor`.** The handler's per-target body rewrite (pinning a target's `service_tier`) becomes an optional `Ingress` member: Chat and Responses pass the existing shared implementation, exported as `withServiceTier`, and transcription omits it. Without this the tier is spread into the upstream multipart form by `openai/audio.ts` and every transcription through a tiered target earns a 400 for an unknown parameter.
 - `run`: `adapter.transcribe(req, ctx)`.
 - `usageOf`: `usageFromTranscription`, which maps `{type:'tokens'}` onto prompt/completion tokens and returns null for `{type:'duration'}` and for a string result.
 - `finish`: `withUsageCost(res, cost)` — which returns a string result untouched, since there is no `usage` to hang cost on, and no identity rewriting happens at all.
@@ -365,7 +368,7 @@ Members:
 
 **Note for the implementer:** the handler stores `requestBody` for payload capture directly. A `File` in that object would be serialized by `capPayload` into something useless at best. Confirm by test that a captured request row contains the metadata and no audio bytes; if the seam does not allow it cleanly, add an optional `captureRequest?(req): unknown` to `Ingress` (defaulting to identity) rather than mutating the request the adapters receive.
 
-- [ ] **Step 1: Write the failing tests** — each member in isolation: the two usage variants and the string case; `supports` for all four flavors; `droppedFor` for Gemini vs OpenAI; the five formats' content types; cost attached for token-billed and absent for duration-billed; the capture shape carrying metadata only.
+- [ ] **Step 1: Write the failing tests** — each member in isolation: the two usage variants and the string case; `supports` for all four flavors, and for the format and size rules; `droppedFor` for Gemini vs OpenAI, and `service_tier` for a tiered target; `bodyFor` absent; the five formats' content types; cost attached for token-billed and absent for duration-billed; the capture shape carrying metadata only. Plus, in `ingress-seams.test.ts`, the all-ineligible fallback: the adapter is called and its own refusal reaches the client verbatim.
 
 - [ ] **Step 2: Implement**
 
@@ -407,7 +410,7 @@ Drive `handleTranscriptions` with a real multipart `Request` and a stubbed `crea
 4. Failover: first target throws a retryable error, second serves, response comes from the second, log's attempt chain has two entries — and the **same file content** arrives at the second adapter, which is the failover-safety proof.
 5. An `anthropic_messages` target in a two-target model is skipped: one attempt, served by the other.
 5b. **Request-dependent eligibility** (spec §3.5): a virtual model holding a Gemini target *before* a Whisper target answers an `srt` request from the Whisper one, in a single attempt, with no Gemini call and no breaker record — and answers a `json` request from the Gemini one, since it is eligible for that format. Assert both directions from the same seeded model: this is the pair that would have been a coin flip if eligibility were judged at attempt time.
-5c. A Gemini-only model asked for `srt` refuses, naming the format, and does not report an upstream failure.
+5c. A Gemini-only model asked for `srt` refuses, naming the format, and does not report an upstream failure. The refusal comes from `assertTranscribable` via the all-ineligible fallback (spec §3.5), so expect one attempt recorded at status 400 with no upstream call and **no breaker record** — not an empty chain and not a 501.
 5d. **The same pair for the inline-size ceiling** (spec §3.5, §3.6): the same
 mixed Gemini-then-Whisper model answers a request whose file exceeds
 `MAX_INLINE_BYTES` from the Whisper target, in a single attempt, with no Gemini
@@ -415,7 +418,7 @@ call and no breaker record — while a Gemini-only model refuses the same file
 with a 400 naming the limit. Size is knowable from the request alone, so it
 steers the chain exactly as the format does; without this the request would be
 a coin flip between the Whisper answer and that 400.
-6. A model whose only target is `anthropic_messages` answers 501 `unsupported_operation`.
+6. A model whose only target is `anthropic_messages` answers 501 `unsupported_operation` — from `withTranscribeUnsupported`, so the message names the provider and why, and again via the fallback rather than an empty chain.
 7. Limits: an rpm-exhausted key gets 429 before any adapter call.
 8. `x-babellm-tags` reaching the log row.
 9. The log row: model, status `200`, outcome `ok`, `stream: false`, latency, final target, usage and cost consistent with the response.
@@ -423,6 +426,7 @@ a coin flip between the Whisper answer and that 400.
 11. `stream: 'true'` in the form: 400, no adapter call.
 12. A 26 MB file: 400, no adapter call.
 13. An unknown model: 404, and a JSON body in the standard error envelope.
+14. A target with a pinned `service_tier`: the request still succeeds, no `service_tier` reaches the adapter (assert on the params the stub received), and `service_tier` appears in `x-babellm-dropped-params` and in the log row's dropped list. The regression this pins is a real one — the tier used to be spread into the upstream multipart form.
 
 Use `tests/helpers/logs.ts` for the log assertions and `resetDb()` between tests, as the sibling gateway tests do.
 
