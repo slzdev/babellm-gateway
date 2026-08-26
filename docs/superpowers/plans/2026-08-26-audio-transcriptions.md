@@ -329,9 +329,17 @@ Members:
 - `modelOf`: `req.model`. `isStream`: always `false` (the schema refuses `stream: true`).
 - `supports`: judged per request, not per target (spec §3.5). An
   `anthropic_messages` candidate never transcribes. A Gemini candidate
-  transcribes, but not into `verbose_json`, `srt` or `vtt` — so it is excluded
-  for exactly those three formats and eligible for the other two. Everything
-  else is eligible.
+  transcribes, but not into `verbose_json`, `srt` or `vtt`, and not from a file
+  over `MAX_INLINE_BYTES` — so it is excluded for those three formats and for
+  oversized audio, and eligible otherwise. Everything else is eligible.
+
+  Both exclusions are the two refusals `assertTranscribable` raises, and the
+  test for why they belong here is the one its own docblock states: each is
+  knowable from the request alone, and anything knowable from the request alone
+  has to be known before ordering or the answer depends on which target
+  selection happened to pick. A 22 MB file against a mixed Gemini+Whisper model
+  is served by the Whisper target, deterministically — not half the time.
+  `MAX_INLINE_BYTES` is read from the translator, so the number keeps one home.
 
   This is the seam widening the coordinator ruled on after Task 6:
   `supports?(candidate: Candidate, req: Req): boolean` now receives the
@@ -400,6 +408,13 @@ Drive `handleTranscriptions` with a real multipart `Request` and a stubbed `crea
 5. An `anthropic_messages` target in a two-target model is skipped: one attempt, served by the other.
 5b. **Request-dependent eligibility** (spec §3.5): a virtual model holding a Gemini target *before* a Whisper target answers an `srt` request from the Whisper one, in a single attempt, with no Gemini call and no breaker record — and answers a `json` request from the Gemini one, since it is eligible for that format. Assert both directions from the same seeded model: this is the pair that would have been a coin flip if eligibility were judged at attempt time.
 5c. A Gemini-only model asked for `srt` refuses, naming the format, and does not report an upstream failure.
+5d. **The same pair for the inline-size ceiling** (spec §3.5, §3.6): the same
+mixed Gemini-then-Whisper model answers a request whose file exceeds
+`MAX_INLINE_BYTES` from the Whisper target, in a single attempt, with no Gemini
+call and no breaker record — while a Gemini-only model refuses the same file
+with a 400 naming the limit. Size is knowable from the request alone, so it
+steers the chain exactly as the format does; without this the request would be
+a coin flip between the Whisper answer and that 400.
 6. A model whose only target is `anthropic_messages` answers 501 `unsupported_operation`.
 7. Limits: an rpm-exhausted key gets 429 before any adapter call.
 8. `x-babellm-tags` reaching the log row.

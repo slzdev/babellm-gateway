@@ -9,6 +9,11 @@ import { MIME_BY_EXTENSION } from './gemini-media'
 // on top of that. 20 MB of raw bytes is comfortably inside the documented
 // ceiling with room for the rest of the request; the Files API is the
 // upstream answer to anything larger and is out of scope (design doc §3.6).
+//
+// Read by the ingress's `supports` filter as well as by `assertTranscribable`
+// below — see the note on TIMESTAMPED_FORMATS for the division of labour. The
+// number keeps one home so the chain and the refusal cannot disagree about
+// what fits.
 export const MAX_INLINE_BYTES = 20 * 1024 * 1024
 
 // Gemini never returns timestamps, and these three formats are nothing else:
@@ -21,7 +26,10 @@ export const MAX_INLINE_BYTES = 20 * 1024 * 1024
 // the same list: it steers a chain away from a Gemini target for these three
 // formats, while `assertTranscribable` below refuses them on the one route
 // that has no chain to steer (a direct `provider/model` address). Two copies
-// of the list would be two places for it to drift.
+// of the list would be two places for it to drift. The same division of
+// labour covers MAX_INLINE_BYTES above: `supports` steers around an oversized
+// file, `assertTranscribable` refuses one that reached a single-candidate
+// chain anyway.
 export const TIMESTAMPED_FORMATS = new Set<TranscriptionFormat>(['verbose_json', 'srt', 'vtt'])
 
 /**

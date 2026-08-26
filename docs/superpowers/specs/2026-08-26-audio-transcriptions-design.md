@@ -235,19 +235,30 @@ candidate list through it *before* `selectOrder` runs, and answers 501
 
 **The request is a parameter, not just the candidate**, and that is the
 substantive decision here. Whether a target can serve a transcription is not a
-property of the target alone: a Gemini target can transcribe, but not into
-`verbose_json`, `srt` or `vtt` (section 3.6). If that were discovered at
-*attempt* time instead, the same request would succeed or fail depending on
+property of the target alone. Two things about a Gemini target depend on what
+was asked for (section 3.6): it can transcribe, but not into `verbose_json`,
+`srt` or `vtt`, and it takes its audio *inline*, so a file over the inline
+ceiling does not fit in one of its requests at all. If either were discovered
+at *attempt* time instead, the same request would succeed or fail depending on
 which target selection happened to choose — a virtual model with one Gemini and
-one Whisper target under a `round_robin` policy would answer an `srt` request
-correctly about half the time. Non-deterministic success is not a behaviour a
-gateway may have, so capability that depends on the request has to be known
-before ordering, where it can steer the chain rather than fail from inside it.
+one Whisper target under a `round_robin` policy would answer an `srt` request,
+or a 22 MB one, correctly about half the time. Non-deterministic success is not
+a behaviour a gateway may have, so capability that depends on the request has
+to be known before ordering, where it can steer the chain rather than fail from
+inside it.
+
+The test for what belongs in `supports` is the one the translator's
+`assertTranscribable` already applies to what it refuses before reading the
+file: **is it knowable from the request alone?** The format the client asked
+for and the size the upload already reported both are, so both are known before
+ordering. A capability that can only be discovered by asking the provider —
+a model that turns out to be withdrawn, a quota that turns out to be spent — is
+not, and stays where it is: an attempt, a classified error, and failover.
 
 The consequence is the desirable one: a mixed virtual model serves an `srt`
-request from the target that can produce timestamps, and only a model where
-*nothing* can serve it refuses. What the client asked for is then answered or
-explained, never coin-flipped.
+request, or an oversized one, from the target that can take it, and only a
+model where *nothing* can serve it refuses. What the client asked for is then
+answered or explained, never coin-flipped.
 
 This is deliberately *not* the treatment the Responses ingress gives hosted
 tools, which are refused with a 400 rather than failed over. The difference is
@@ -298,13 +309,16 @@ the request, and section 3.5 is what makes the difference invisible to the
 client. A Gemini candidate is filtered out of the chain for these three
 formats before selection, so a virtual model that also holds a Whisper target
 answers normally from it. Only when no candidate survives is the request
-refused, with a 400 naming the format and why it cannot be produced.
+refused, with a 400 naming the format and why it cannot be produced. The
+inline-size ceiling below steers the chain exactly the same way, for the same
+reason: it too is knowable from the request alone.
 
-`assertTranscribable` in the translator refuses the same three formats a second
-time. That is not redundancy: `supports` steers a chain, while the translator
-guards the one route that has no chain to steer — a direct `provider/model`
-address to a Gemini model, which resolves to a single candidate. Both must
-refuse, and neither is reachable from the other's path.
+`assertTranscribable` in the translator refuses the same three formats — and
+the same oversized file — a second time. That is not redundancy: `supports`
+steers a chain, while the translator guards the one route that has no chain to
+steer — a direct `provider/model` address to a Gemini model, which resolves to
+a single candidate. Both must refuse, and neither is reachable from the other's
+path.
 
 Consequently `timestamp_granularities` is unreachable for a Gemini target (it
 is only valid with `verbose_json`) and needs no drop entry. What is dropped, and
@@ -314,10 +328,14 @@ a transcription request — a client asks for it as a value inside `include`
 (`include: ["logprobs"]`), so `logprobs` has no drop entry of its own.
 
 Inline audio is bounded by Gemini's own request ceiling, so a file that would
-exceed roughly 20 MB once base64-encoded is refused with a 400 that names the
-limit. The Files API is the upstream answer to larger audio and is out of
-scope: it is a stateful two-step upload whose handle outlives the request,
-which is a different feature from a stateless proxy hop.
+exceed roughly 20 MB once base64-encoded cannot be served by a Gemini target.
+That ceiling is enforced on both paths, like the formats above: a Gemini
+candidate is filtered out of the chain for an oversized file, so a mixed
+virtual model serves it from the Whisper target in a single attempt, and
+`assertTranscribable` refuses it with a 400 naming the limit when the address
+resolved to a Gemini target alone. The Files API is the upstream answer to
+larger audio and is out of scope: it is a stateful two-step upload whose handle
+outlives the request, which is a different feature from a stateless proxy hop.
 
 ### 3.7 Streaming is refused, not ignored
 

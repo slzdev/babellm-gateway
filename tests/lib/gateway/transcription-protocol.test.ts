@@ -4,6 +4,7 @@ import { GatewayError } from '@/lib/gateway/errors'
 import { transcriptionIngress as ingress } from '@/lib/gateway/protocols/transcription'
 import type { Candidate } from '@/lib/gateway/resolve'
 import type { TranscriptionFormat, TranscriptionRequest } from '@/lib/schemas/transcription'
+import { MAX_INLINE_BYTES } from '@/lib/translate/transcription-to-gemini'
 
 function candidate(adapter: string, apiFlavor: string): Candidate {
   return {
@@ -100,6 +101,25 @@ test('a Gemini candidate serves json and text but not the timestamp formats', ()
   expect(ingress.supports?.(gemini, req({ response_format: 'verbose_json' }))).toBe(false)
   expect(ingress.supports?.(gemini, req({ response_format: 'srt' }))).toBe(false)
   expect(ingress.supports?.(gemini, req({ response_format: 'vtt' }))).toBe(false)
+})
+
+test('a Gemini candidate is ineligible for audio over its inline ceiling', () => {
+  // The same rule as the formats above, applied to the other thing
+  // assertTranscribable refuses: both are knowable from the request alone, so
+  // both must be known before ordering. Otherwise a 22 MB file against a mixed
+  // Gemini+Whisper model is served by the Whisper target only when selection
+  // happens to pick it — and refused with a 400 when it does not.
+  const gemini = candidate('gemini', 'chat_completions')
+
+  expect(ingress.supports?.(gemini, req({ file: audioFile(MAX_INLINE_BYTES + 1) }))).toBe(false)
+  expect(ingress.supports?.(gemini, req({ file: audioFile(MAX_INLINE_BYTES) }))).toBe(true)
+  // An OpenAI-shaped target has no inline ceiling — 20 MB is Gemini's request
+  // limit, not the endpoint's, and the schema's own 25 MB cap has already had
+  // its say.
+  expect(ingress.supports?.(
+    candidate('openai', 'chat_completions'),
+    req({ file: audioFile(MAX_INLINE_BYTES + 1) }),
+  )).toBe(true)
 })
 
 test('a Gemini candidate is judged by its adapter, whatever flavor it carries', () => {

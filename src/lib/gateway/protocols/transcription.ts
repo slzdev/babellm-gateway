@@ -4,7 +4,9 @@ import {
   transcriptionRequestSchema,
   type TranscriptionRequest,
 } from '@/lib/schemas/transcription'
-import { droppedParams, TIMESTAMPED_FORMATS } from '@/lib/translate/transcription-to-gemini'
+import {
+  droppedParams, MAX_INLINE_BYTES, TIMESTAMPED_FORMATS,
+} from '@/lib/translate/transcription-to-gemini'
 import { withUsageCost } from '../cost'
 import { GatewayError } from '../errors'
 import { parseWith, type Ingress } from '../handler'
@@ -30,16 +32,25 @@ import { usageFromTranscription } from '../usage'
  * target unable to transcribe at all. `withTranscribeUnsupported` is applied
  * only inside `flavoredAdapter`, i.e. never to Gemini.
  *
- * Judged per request rather than per target because a Gemini target can
- * transcribe but returns no timestamps, and `verbose_json`, `srt` and `vtt`
- * are nothing but timestamps (design doc §3.6). Filtering it out of the chain
- * for exactly those three formats is what makes a mixed virtual model answer
- * an `srt` request from the target that has timestamps instead of coin-flipping
- * on which target selection picked — and what leaves it eligible for the two
- * formats it serves perfectly well.
+ * Judged per request rather than per target, because two things a Gemini
+ * target cannot do are properties of the request rather than of the target:
+ * it returns no timestamps, and `verbose_json`, `srt` and `vtt` are nothing
+ * but timestamps; and it takes its audio inline, so a file over
+ * `MAX_INLINE_BYTES` does not fit in a request at all (design doc §3.6).
+ *
+ * Both are exactly the two refusals `assertTranscribable` raises, and its own
+ * docblock names the reason they belong here too: each is knowable from the
+ * request alone. Anything knowable from the request alone has to be known
+ * *before* ordering, or the answer depends on which target selection happened
+ * to pick — a mixed Gemini+Whisper model would serve a 22 MB `json` request
+ * from the Whisper target only about half the time, and refuse it with a 400
+ * the rest. Filtering the Gemini candidate out instead makes that request
+ * deterministic, and leaves it eligible for everything it does serve.
  */
 function supports(candidate: Candidate, req: TranscriptionRequest): boolean {
-  if (candidate.provider.adapter === 'gemini') return !TIMESTAMPED_FORMATS.has(req.response_format)
+  if (candidate.provider.adapter === 'gemini') {
+    return !TIMESTAMPED_FORMATS.has(req.response_format) && req.file.size <= MAX_INLINE_BYTES
+  }
   // Anthropic's API has no transcription endpoint and no audio input at all,
   // so this target could only ever burn an attempt, a breaker failure and a
   // round trip to report something the gateway already knew from its own
