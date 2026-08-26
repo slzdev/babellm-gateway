@@ -6,7 +6,7 @@ import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ProviderRow } from '@/lib/db/schema'
 import { logRequest, resolveRequestLogStore } from '@/lib/logs'
 import { capPayload } from '@/lib/logs/payload'
-import type { LogPayload, LogUsage, RequestOutcome } from '@/lib/logs/types'
+import type { CostBreakdown, LogPayload, LogUsage, RequestOutcome } from '@/lib/logs/types'
 import { computeCost, priceFor } from '@/lib/pricing'
 import { uuidv7 } from '@/lib/uuid'
 import {
@@ -212,6 +212,10 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     /** The target that actually served, which is what gets priced. */
     candidate?: Candidate
     usage?: LogUsage | null
+    /** The cost the client was given, so the log, the client, and the key's
+     *  billed spend cannot disagree. Absent on paths that never priced
+     *  anything — errors, and streams that ended before usage arrived. */
+    cost?: CostBreakdown | null
     /** What the client received, for payload capture. */
     response?: unknown
     responseTruncated?: boolean
@@ -238,13 +242,11 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     extra: LogExtra,
   ) {
     const usage = extra.usage ?? null
-    const cost =
-      extra.candidate && usage
-        ? computeCost(
-            await priceFor(extra.candidate.provider.id, extra.candidate.upstreamModel),
-            usage,
-          )
-        : null
+    // Computed on the response path, not here. Recomputing would issue a
+    // second catalog lookup that could straddle a price change or the price
+    // cache's TTL, and a client reconciling its own tally against this row
+    // would have no guarantee the two came from the same snapshot.
+    const cost = extra.cost ?? null
 
     // Charge the key's counters here because this is the one place that has
     // both the measured usage and the priced cost. Never awaited by the
@@ -373,6 +375,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
             ...(capture.firstDeltaAt === null ? {} : { ttftMs: capture.firstDeltaAt - startedAt }),
             candidate: result.candidate,
             usage: capture.usage,
+            cost: capture.cost,
             error: capture.error ?? undefined,
             response: capturePayloads ? ingress.captureResponse(identity, capture, outcome) : null,
             responseTruncated: capture.truncated,
@@ -410,6 +413,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     log(200, 'ok', result.attempts, {
       candidate: result.candidate,
       usage,
+      cost,
       response: completion,
     })
     return response

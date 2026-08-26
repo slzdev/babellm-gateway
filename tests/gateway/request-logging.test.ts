@@ -1,6 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
+import * as logs from '@/lib/logs'
 import { postgresStore } from '@/lib/logs/postgres'
 import { clearRequestLogStoreCache } from '@/lib/logs/registry'
 import * as pricing from '@/lib/pricing'
@@ -8,7 +9,7 @@ import { clearPriceCache } from '@/lib/pricing'
 import { db } from '@/lib/db'
 import { catalogModels } from '@/lib/db/schema'
 import {
-  chatRequest, fakeAdapterByProvider, fakeAdapterDeps, seedGateway, seedTargets,
+  chatRequest, fakeAdapterByProvider, fakeAdapterDeps, seedGateway, seedPrices, seedTargets,
 } from '../helpers/gateway'
 import { waitFor, waitForLogs } from '../helpers/logs'
 import { resetDb } from '../helpers/db'
@@ -124,6 +125,95 @@ test('an unpriced model logs a null cost rather than zero', async () => {
   await waitForLogs()
 
   expect((await postgresStore.query({ limit: 1 })).rows[0].costUsd).toBeNull()
+})
+
+test('the logged cost is the same number the client was given', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
+  )
+  const clientTotal = (await res.json()).usage.cost.total_usd
+  await waitForLogs()
+
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  expect(Number(row.costUsd)).toBe(Number(clientTotal))
+})
+
+test('the log keeps the catalog rates the client never sees', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+
+  await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
+  )
+  await waitForLogs()
+
+  // The regression this guards: narrowing StreamCapture.cost or LogExtra.cost
+  // to the client's CostPayload would strip `pricing` out of every row.
+  // Note LogDetail exposes `pricing` at the top level, not under `cost` —
+  // see the read path in src/lib/logs/postgres.ts.
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  const detail = await postgresStore.get(row.id)
+  expect(detail?.pricing).toMatchObject({
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+})
+
+test('a streamed request logs the cost its final chunk carried', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+
+  async function* chatStream() {
+    yield {
+      id: 'chatcmpl-upstream', object: 'chat.completion.chunk', created: 1,
+      model: 'gpt-4o-mini',
+      choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }],
+    }
+    yield {
+      id: 'chatcmpl-upstream', object: 'chat.completion.chunk', created: 1,
+      model: 'gpt-4o-mini', choices: [],
+      usage: {
+        prompt_tokens: 1_000_000, completion_tokens: 1_000_000, total_tokens: 2_000_000,
+        prompt_tokens_details: { cached_tokens: 0 },
+      },
+    }
+  }
+
+  const res = await handleChatCompletions(
+    chatRequest({ ...body, stream: true }, apiKey),
+    fakeAdapterDeps({ chatStream: chatStream as never }),
+  )
+  await res.text()
+  await waitForLogs()
+
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  expect(Number(row.costUsd)).toBeCloseTo(4, 6)
+})
+
+test('the catalog is queried once per request, not once for the client and once for the log', async () => {
+  const { apiKey, provider } = await seedGateway()
+  await seedPrices(provider.id, 'gpt-4o-mini', {
+    inputPerMtok: '1.000000', outputPerMtok: '3.000000',
+  })
+  const priceFor = vi.spyOn(pricing, 'priceFor')
+
+  await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
+  )
+  await waitForLogs()
+
+  expect(priceFor).toHaveBeenCalledTimes(1)
 })
 
 test('a rejected request logs the error without a key or attempts', async () => {
@@ -259,19 +349,42 @@ test('a write failure never reaches the client', async () => {
   stderr.mockRestore()
 })
 
-test('a pricing failure never reaches the client', async () => {
+test('a pricing failure costs the breakdown, not the request or its log row', async () => {
   const { apiKey } = await seedGateway()
   const failure = vi.spyOn(pricing, 'priceFor').mockRejectedValue(new Error('catalog unreachable'))
+
+  const res = await handleChatCompletions(
+    chatRequest(body, apiKey),
+    fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
+  )
+  await waitForLogs()
+
+  // The catalog is no longer in writeLog's path, so a rejection there costs
+  // the cost breakdown and nothing else: the client is served, and the row
+  // still lands — with a null cost, exactly like an unpriced model.
+  expect(res.status).toBe(200)
+  expect((await res.json()).usage.cost).toBeNull()
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  expect(row.costUsd).toBeNull()
+  failure.mockRestore()
+})
+
+test('a throw inside writeLog never reaches the client', async () => {
+  const { apiKey } = await seedGateway()
+  // What the old pricing-failure test really guarded: the fire-and-forget
+  // .catch() at the log() call site catches a rejection from an await inside
+  // async writeLog, not merely one from logRequest. priceFor used to be that
+  // await; resolveRequestLogStore is the one that remains.
+  const failure = vi
+    .spyOn(logs, 'resolveRequestLogStore')
+    .mockRejectedValue(new Error('settings unreadable'))
   const stderr = vi.spyOn(console, 'error').mockImplementation(() => {})
 
   const res = await handleChatCompletions(
     chatRequest(body, apiKey),
     fakeAdapterDeps({ chat: vi.fn().mockResolvedValue(upstreamCompletion) }),
   )
-  // writeLog awaits priceFor before it ever calls logRequest, so a rejection
-  // here means no row lands either — this is the cheapest proof that the
-  // fire-and-forget .catch() at the call site really does catch a throw from
-  // inside the async writeLog, not just from logRequest itself.
+  // No row can land, so wait on the side effect that does happen.
   await waitFor(() => stderr.mock.calls.length > 0)
 
   expect(res.status).toBe(200)
