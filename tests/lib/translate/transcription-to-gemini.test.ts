@@ -91,7 +91,6 @@ test('mime type comes from the uploaded part when it is a real audio type', asyn
   const params = await toGeminiRequest(
     req({ file: file(4, 'clip.bin', 'audio/mpeg') }),
     'gemini-2.5-flash',
-    {},
   )
   const parts = params.contents as { role: string; parts: { inlineData?: { mimeType: string } }[] }[]
   expect(parts[0].parts[0].inlineData?.mimeType).toBe('audio/mpeg')
@@ -101,7 +100,6 @@ test('a video container type is accepted, since its audio track transcribes', as
   const params = await toGeminiRequest(
     req({ file: file(4, 'clip.mov', 'video/quicktime') }),
     'gemini-2.5-flash',
-    {},
   )
   const parts = params.contents as { role: string; parts: { inlineData?: { mimeType: string } }[] }[]
   expect(parts[0].parts[0].inlineData?.mimeType).toBe('video/quicktime')
@@ -119,7 +117,6 @@ for (const [name, mime] of [
     const params = await toGeminiRequest(
       req({ file: file(4, name, '') }),
       'gemini-2.5-flash',
-      {},
     )
     const parts = params.contents as { role: string; parts: { inlineData?: { mimeType: string } }[] }[]
     expect(parts[0].parts[0].inlineData?.mimeType).toBe(mime)
@@ -129,7 +126,6 @@ for (const [name, mime] of [
     const params = await toGeminiRequest(
       req({ file: file(4, name, 'application/octet-stream') }),
       'gemini-2.5-flash',
-      {},
     )
     const parts = params.contents as { role: string; parts: { inlineData?: { mimeType: string } }[] }[]
     expect(parts[0].parts[0].inlineData?.mimeType).toBe(mime)
@@ -138,15 +134,15 @@ for (const [name, mime] of [
 
 test('a type that cannot be determined is a 400, not a guess', async () => {
   await expect(
-    toGeminiRequest(req({ file: file(4, 'clip.xyz', '') }), 'gemini-2.5-flash', {}),
+    toGeminiRequest(req({ file: file(4, 'clip.xyz', '') }), 'gemini-2.5-flash'),
   ).rejects.toThrow(ProviderError)
   await expect(
-    toGeminiRequest(req({ file: file(4, 'clip.xyz', '') }), 'gemini-2.5-flash', {}),
+    toGeminiRequest(req({ file: file(4, 'clip.xyz', '') }), 'gemini-2.5-flash'),
   ).rejects.toMatchObject({ status: 400 })
 })
 
 test('the instruction asks for a verbatim transcription with nothing else', async () => {
-  const params = await toGeminiRequest(req(), 'gemini-2.5-flash', {})
+  const params = await toGeminiRequest(req(), 'gemini-2.5-flash')
   const parts = params.contents as { role: string; parts: { text?: string }[] }[]
   const instruction = parts[0].parts[1].text ?? ''
   expect(instruction.toLowerCase()).toContain('verbatim')
@@ -154,14 +150,14 @@ test('the instruction asks for a verbatim transcription with nothing else', asyn
 })
 
 test('the instruction names the language when the client sent one, without translating', async () => {
-  const params = await toGeminiRequest(req({ language: 'French' }), 'gemini-2.5-flash', {})
+  const params = await toGeminiRequest(req({ language: 'French' }), 'gemini-2.5-flash')
   const parts = params.contents as { role: string; parts: { text?: string }[] }[]
   const instruction = parts[0].parts[1].text ?? ''
   expect(instruction).toContain('French')
 })
 
 test('the instruction has no language framing when none was sent', async () => {
-  const params = await toGeminiRequest(req(), 'gemini-2.5-flash', {})
+  const params = await toGeminiRequest(req(), 'gemini-2.5-flash')
   const parts = params.contents as { role: string; parts: { text?: string }[] }[]
   const instruction = parts[0].parts[1].text ?? ''
   expect(instruction).not.toContain('The audio is in')
@@ -171,7 +167,6 @@ test('the prompt is framed as context, not folded into the transcript instructio
   const params = await toGeminiRequest(
     req({ prompt: 'Acme Corp, ACME-42' }),
     'gemini-2.5-flash',
-    {},
   )
   const parts = params.contents as { role: string; parts: { text?: string }[] }[]
   const instruction = parts[0].parts[1].text ?? ''
@@ -181,7 +176,7 @@ test('the prompt is framed as context, not folded into the transcript instructio
 })
 
 test('no prompt means no context framing', async () => {
-  const params = await toGeminiRequest(req(), 'gemini-2.5-flash', {})
+  const params = await toGeminiRequest(req(), 'gemini-2.5-flash')
   const parts = params.contents as { role: string; parts: { text?: string }[] }[]
   const instruction = parts[0].parts[1].text ?? ''
   expect(instruction.toLowerCase()).not.toContain('context')
@@ -190,24 +185,24 @@ test('no prompt means no context framing', async () => {
 test('the inline part carries the base64 of exactly the bytes uploaded', async () => {
   const bytes = new Uint8Array([1, 2, 3, 4, 250, 251])
   const upload = new File([bytes], 'clip.mp3', { type: 'audio/mpeg' })
-  const params = await toGeminiRequest(req({ file: upload }), 'gemini-2.5-flash', {})
+  const params = await toGeminiRequest(req({ file: upload }), 'gemini-2.5-flash')
   const parts = params.contents as { role: string; parts: { inlineData?: { data: string } }[] }[]
   const data = parts[0].parts[0].inlineData?.data ?? ''
   expect(Buffer.from(data, 'base64')).toEqual(Buffer.from(bytes))
 })
 
 test('temperature reaches the generation config', async () => {
-  const params = await toGeminiRequest(req({ temperature: 0.4 }), 'gemini-2.5-flash', {})
+  const params = await toGeminiRequest(req({ temperature: 0.4 }), 'gemini-2.5-flash')
   expect(params.config?.temperature).toBe(0.4)
 })
 
 test('temperature is omitted from the config when the client did not send one', async () => {
-  const params = await toGeminiRequest(req(), 'gemini-2.5-flash', {})
+  const params = await toGeminiRequest(req(), 'gemini-2.5-flash')
   expect(params.config?.temperature).toBeUndefined()
 })
 
 test('the model id passed through becomes the request model', async () => {
-  const params = await toGeminiRequest(req(), 'gemini-2.5-flash-001', {})
+  const params = await toGeminiRequest(req(), 'gemini-2.5-flash-001')
   expect(params.model).toBe('gemini-2.5-flash-001')
 })
 

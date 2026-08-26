@@ -1,6 +1,6 @@
 import type { GenerateContentParameters, GenerateContentResponse, Part } from '@google/genai'
 import { GatewayError, ProviderError } from '@/lib/gateway/errors'
-import type { ProviderConfig, TranscriptionResult } from '@/lib/adapters/types'
+import type { TranscriptionResult } from '@/lib/adapters/types'
 import type { TranscriptionFormat, TranscriptionRequest } from '@/lib/schemas/transcription'
 import { MIME_BY_EXTENSION } from './gemini-media'
 
@@ -136,7 +136,6 @@ function transcriptionInstruction(req: TranscriptionRequest): string {
 export async function toGeminiRequest(
   req: TranscriptionRequest,
   model: string,
-  config: ProviderConfig,
 ): Promise<GenerateContentParameters> {
   // Resolved before the read, same reasoning as assertTranscribable: a file
   // whose type can never be sent is worth rejecting before it is encoded.

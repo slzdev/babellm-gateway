@@ -253,7 +253,6 @@ export function assertTranscribable(req: TranscriptionRequest, providerName: str
 export async function toGeminiRequest(
   req: TranscriptionRequest,
   model: string,
-  config: ProviderConfig,
 ): Promise<GenerateContentParameters>
 
 export function fromGenerateContent(
@@ -268,7 +267,7 @@ export function droppedParams(req: TranscriptionRequest): string[]
 Behaviour:
 
 - `assertTranscribable` refuses `verbose_json`, `srt` and `vtt` with a 400 explaining that the target returns no timestamps, and refuses audio that would exceed `MAX_INLINE_BYTES` (20 MB) with a 400 naming the limit and saying larger audio needs an OpenAI-shaped target. Called before the file is read, so a refused request never base64-encodes 20 MB.
-- `toGeminiRequest` is async only because it awaits `req.file.arrayBuffer()`. One `user` turn, `inlineData` first (mime type + base64), then a `text` part: a verbatim-transcription instruction, extended with the language when `language` is set and with the client's `prompt` when present, clearly framed as context rather than as something to transcribe. `temperature` goes to `config.temperature`. The `abortSignal` is added by the adapter, not here.
+- `toGeminiRequest` is async only because it awaits `req.file.arrayBuffer()`. One `user` turn, `inlineData` first (mime type + base64), then a `text` part: a verbatim-transcription instruction, extended with the language when `language` is set and with the client's `prompt` when present, clearly framed as context rather than as something to transcribe. `temperature` goes to the returned request's own `config.temperature` — there is no per-provider setting to read, so this takes no `ProviderConfig` parameter, unlike its chat counterpart. The `abortSignal` is added by the adapter, not here.
 - Mime type: `req.file.type` when it is an `audio/*` (or `video/*`, since a video container's audio track transcribes fine) type, else derived from the filename extension via the shared map, else a 400 saying the type could not be determined and to send it on the file part.
 - `fromGenerateContent` concatenates the candidate's text parts; `{ text }` for `json`, the bare string for `text`. A response with no candidate or no text is a `ProviderError` (502, retryable) — an empty transcription from a provider that returned nothing is not a result worth handing a client.
 - `droppedParams` reports whichever of `include`, `chunking_strategy`, `keywords` and `languages` the request actually carried. Never `timestamp_granularities`: it is only legal with `verbose_json`, which `assertTranscribable` has already refused.
