@@ -236,8 +236,10 @@ it twice would be two chances to diverge on error mapping.
 
 `anthropic_messages` is the honest exception: that flavor's host is Anthropic's
 API, which has no transcription endpoint and no audio input at all. The method
-exists and throws, because `ProviderAdapter` requires it — but section 3.5
-means the throw is unreachable through the gateway.
+exists and throws, because `ProviderAdapter` requires it — and section 3.5's
+all-ineligible fallback means the throw *is* reachable through the gateway: a
+model whose only target is `anthropic_messages` reaches the adapter and gets
+this throw as its 501, exactly as section 3.5 and section 4 describe.
 
 ### 3.5 A target that cannot serve this request is skipped, not attempted
 
@@ -575,3 +577,7 @@ from a Gemini target, and duration-billed models logging as unpriced.
 - `/v1/audio/translations`, the same shape with a fixed target language.
 - `/v1/audio/speech`, which is the reverse direction and a different problem:
   the response is the payload.
+- Restructuring `Ingress`'s `runStream`, `stream` and `captureResponse` into
+  one optional `streaming` sub-object, so the invariant that they arrive
+  together is structural rather than enforced by `assertStreamable` at
+  runtime.

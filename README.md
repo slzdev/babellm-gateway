@@ -219,9 +219,10 @@ the way the gateway billed it:
 }
 ```
 
-Same field on `/v1/chat/completions` and `/v1/responses`, and on a `json` or
-`verbose_json` transcription whose provider reported usage it could be priced
-from. Streaming puts it on
+Same field on `/v1/chat/completions` and `/v1/responses`, and on a `json`
+transcription whose provider reported token usage it could be priced from —
+see [Audio transcriptions](#audio-transcriptions) for which providers that is.
+Streaming puts it on
 the final usage chunk (chat) or the `response.completed` event (Responses), so
 it arrives with the tokens it prices rather than in a header that has already
 been flushed.
@@ -339,16 +340,21 @@ reduces but doesn't remove.
   attempt, and only a model where *nothing* can serve refuses — with a `400`
   naming the format or the size. What the client asked for is answered or
   explained, never coin-flipped on which target the policy happened to pick.
-- **Duration-billed models log as unpriced.** `whisper-1` and its clones
-  report `usage: { type: "duration", seconds }` instead of token counts, and
-  the catalog holds per-million-token rates only, so there is nothing to price
-  those seconds against. The response carries `"cost": null`, the log row has
-  no tokens and no cost, and nothing is charged against that key's tpm or
-  budget — **the dashboard will undercount Whisper spend**, and it's worth
-  knowing that before you route it rather than after. The `gpt-4o-transcribe`
-  family reports tokens, so it prices, charges, and rolls up like every other
-  request. Per-minute pricing is a follow-up: a `$0.00` that reads as real
-  spend would be worse than a visible gap.
+- **Only `response_format: json` prices, and only from a model that bills by
+  token.** `text`, `srt` and `vtt` come back as a bare string with no `usage`
+  object to hang a cost on, and `verbose_json`'s usage is duration-only —
+  `{ type: "duration", seconds }` — regardless of which model served it, so it
+  never prices either. `whisper-1` and its clones report that duration usage
+  even for `json`, and the catalog holds per-million-token rates only, so
+  there is nothing to price seconds against. Only a `json` transcription from
+  a token-billed model — the `gpt-4o-transcribe` family — prices, charges, and
+  rolls up like every other request; every other combination logs with no
+  tokens and no cost, and nothing is charged against that key's tpm or
+  budget — **the dashboard will undercount audio spend on four of the five
+  response formats, whichever model served them**, and it's worth knowing
+  that before you route it rather than after. Per-minute pricing is a
+  follow-up: a `$0.00` that reads as real spend would be worse than a visible
+  gap.
 - **25 MB per file**, the ceiling the upstream API enforces, answered with a
   `400` naming the limit — so a request that would be rejected upstream is
   rejected here instead, without the round trip. Route handlers carry no body
