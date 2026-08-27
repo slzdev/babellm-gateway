@@ -140,6 +140,7 @@ export async function setModelGatewayAction(
       chatCompletionsPath: String(formData.get('chatCompletionsPath') ?? ''),
       responsesPath: String(formData.get('responsesPath') ?? ''),
       messagesPath: String(formData.get('messagesPath') ?? ''),
+      audioTranscriptionsPath: String(formData.get('audioTranscriptionsPath') ?? ''),
     })
   } catch (err) {
     return {

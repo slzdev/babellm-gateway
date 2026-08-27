@@ -5,10 +5,12 @@ import type {
   ChatCompletion,
   ChatCompletionChunk,
   ChatOnlyAdapter,
+  ProviderAdapter,
   ProviderRuntime,
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { toProviderError } from './errors'
+import { transcribeVia } from './audio'
 import { resolveRequestPaths } from '../paths'
 
 // Re-exported because tests and the registry import the factory type from the
@@ -21,7 +23,7 @@ const FLAVOR_HINT =
 export function createOpenAIAdapter(
   runtime: ProviderRuntime,
   createClient?: OpenAIClientFactory,
-): ChatOnlyAdapter {
+): ChatOnlyAdapter & Pick<ProviderAdapter, 'transcribe'> {
   const client = createOpenAIClient(runtime, createClient)
   const paths = resolveRequestPaths(runtime.config, runtime.baseUrl)
 
@@ -80,5 +82,10 @@ export function createOpenAIAdapter(
     },
 
     listModels: (ctx) => listModels(client, ctx, paths.models),
+
+    // /audio/transcriptions is a sibling endpoint on the same host, not a
+    // dialect of chat — see design doc §3.4 — so it is served the same way
+    // regardless of which flavor this provider's chat endpoint speaks.
+    transcribe: transcribeVia(client, paths.audioTranscriptions),
   }
 }

@@ -4,13 +4,21 @@ import {
   fromGenerateContentStream,
   toGeminiRequest,
 } from '@/lib/translate/chat-to-gemini'
+import {
+  assertTranscribable,
+  fromGenerateContent as fromGenerateContentTranscription,
+  toGeminiRequest as toGeminiTranscriptionRequest,
+} from '@/lib/translate/transcription-to-gemini'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
+import type { TranscriptionRequest } from '@/lib/schemas/transcription'
 import type {
   AttemptContext,
   ChatCompletion,
   ChatCompletionChunk,
   ChatOnlyAdapter,
+  ProviderAdapter,
   ProviderRuntime,
+  TranscriptionResult,
 } from '../types'
 import { createGeminiClient, listModels, type GeminiClientFactory } from './client'
 import { toProviderError } from './errors'
@@ -29,7 +37,7 @@ export type { GeminiClientFactory }
 export function createGeminiAdapter(
   runtime: ProviderRuntime,
   createClient?: GeminiClientFactory,
-): ChatOnlyAdapter {
+): ChatOnlyAdapter & Pick<ProviderAdapter, 'transcribe'> {
   const client = createGeminiClient(runtime, createClient)
 
   /**
@@ -74,5 +82,31 @@ export function createGeminiAdapter(
     },
 
     listModels: (ctx) => listModels(client, ctx),
+
+    async transcribe(req: TranscriptionRequest, ctx: AttemptContext): Promise<TranscriptionResult> {
+      // Both calls below can refuse the request outright — assertTranscribable
+      // for a timestamped format or oversized audio, toGeminiTranscriptionRequest
+      // (via mimeTypeFor) for a file whose media type cannot be resolved — and
+      // neither refusal is a Gemini failure: no upstream call has happened yet.
+      // Kept outside the try so the try wraps only the upstream call and its
+      // response mapping, which is what can actually fail as an upstream
+      // failure. toProviderError also rethrows a GatewayError untouched if one
+      // ever did reach it (see adapters/gemini/errors.ts), so this is a
+      // structural guarantee, not the only thing standing between a refusal
+      // and a wrongly-retried request — but a reader should not have to go
+      // check the classifier to see that.
+      assertTranscribable(req, runtime.name)
+      const params = await toGeminiTranscriptionRequest(req, ctx.upstreamModel)
+
+      try {
+        const result = await client.models.generateContent({
+          ...params,
+          config: { ...params.config, abortSignal: ctx.signal },
+        })
+        return fromGenerateContentTranscription(result, req)
+      } catch (err) {
+        throw toProviderError(err)
+      }
+    },
   }
 }

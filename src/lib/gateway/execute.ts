@@ -98,6 +98,11 @@ function routed(
     status: classified.status,
     type: classified.type,
     code: classified.code,
+    // Carried so a refusal that names a request field still names it after
+    // travelling the routing loop — RoutedError extends GatewayError, so
+    // errorBody renders this straight into the client's envelope. Null for
+    // every classifier branch that is not about one of our fields.
+    param: classified.param,
     message: classified.message,
     attempts,
     lastProvider: candidate?.provider.name ?? null,

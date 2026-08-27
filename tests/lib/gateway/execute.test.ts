@@ -1,7 +1,7 @@
 import { expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { execute } from '@/lib/gateway/execute'
-import { ProviderError, RoutedError, UnsupportedOperationError } from '@/lib/gateway/errors'
+import { GatewayError, ProviderError, RoutedError, UnsupportedOperationError } from '@/lib/gateway/errors'
 import type { ProviderAdapter } from '@/lib/adapters/types'
 import type { Candidate } from '@/lib/gateway/resolve'
 import type { ProviderRow } from '@/lib/db/schema'
@@ -61,6 +61,34 @@ test('a fatal failure stops immediately without trying the rest', async () => {
 
   await expect(execute([candidate('a'), candidate('b')], 'req_1', live, deps, run))
     .rejects.toMatchObject({ status: 400, code: 'invalid_request' })
+  expect(run).toHaveBeenCalledTimes(1)
+})
+
+test('a GatewayError thrown by an adapter — e.g. a pre-upstream refusal like assertTranscribable\'s — stops immediately with its own status, not a generic 502', async () => {
+  // The case this covers is a request never sent upstream: this task's
+  // Gemini transcribe() throws a raw GatewayError from outside its own
+  // try/catch for exactly this reason (a refused response_format or an
+  // oversized file). Until classifyProviderError gained a GatewayError
+  // branch, this fell through to the fallback and answered as a retryable
+  // 502 upstream_error instead of the 400 the request actually deserves —
+  // and would have moved on to the next target rather than stopping here.
+  const run = vi.fn().mockRejectedValue(
+    new GatewayError({
+      status: 400,
+      type: 'invalid_request_error',
+      code: 'unsupported_parameter',
+      param: 'response_format',
+      message: 'this target returns no timestamps',
+    }),
+  )
+
+  await expect(execute([candidate('a'), candidate('b')], 'req_1', live, deps, run))
+    .rejects.toMatchObject({
+      status: 400,
+      type: 'invalid_request_error',
+      code: 'unsupported_parameter',
+      message: 'this target returns no timestamps',
+    })
   expect(run).toHaveBeenCalledTimes(1)
 })
 
@@ -244,6 +272,24 @@ test('a non-retryable 4xx is recorded in neither direction', async () => {
   const { calls, recordHealth } = recorder()
   const run = vi.fn().mockRejectedValue(
     new ProviderError({ status: 400, message: 'bad', retryable: false }),
+  )
+
+  await expect(
+    execute([candidate('a')], 'req_1', live, { ...deps, recordHealth }, run),
+  ).rejects.toThrow()
+
+  expect(calls).toEqual([])
+})
+
+test('a GatewayError refusal is recorded in neither direction — no upstream call means nothing to charge', async () => {
+  const { calls, recordHealth } = recorder()
+  const run = vi.fn().mockRejectedValue(
+    new GatewayError({
+      status: 400,
+      type: 'invalid_request_error',
+      code: 'unsupported_parameter',
+      message: 'refused',
+    }),
   )
 
   await expect(

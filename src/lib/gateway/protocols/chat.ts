@@ -2,7 +2,7 @@ import type { ChatCompletion, ChatCompletionChunk } from '@/lib/adapters/types'
 import { chatCompletionRequestSchema, type ChatCompletionRequest } from '@/lib/schemas/chat'
 import type { ClassifiedError } from '../errors'
 import { withUsageCost } from '../cost'
-import { parseWith, type Ingress } from '../handler'
+import { parseWith, readJson, withServiceTier, type Ingress } from '../handler'
 import { newCompletionId, rewriteChunk, rewriteCompletion } from '../identity'
 import { droppedForChat } from './dropped'
 import type { StreamCapture, StreamProtocol } from '../sse'
@@ -57,14 +57,16 @@ export const chatStreamProtocol: StreamProtocol<ChatCompletionChunk> = {
 }
 
 export const chatIngress: Ingress<ChatCompletionRequest, ChatCompletion, ChatCompletionChunk> = {
-  parse: (raw) => parseWith(chatCompletionRequestSchema, raw),
+  read: async (request) => parseWith(chatCompletionRequestSchema, await readJson(request)),
   modelOf: (req) => req.model,
   isStream: (req) => req.stream === true,
+  bodyFor: withServiceTier,
   droppedFor: (candidate, req) => droppedForChat(candidate, req),
   run: (adapter, ctx, req) => adapter.chat(req, ctx),
   runStream: (adapter, ctx, req) => adapter.chatStream(req, ctx),
   finish: (res, identity, cost) => withUsageCost(rewriteCompletion(res, identity), cost),
   usageOf: (res) => usageFrom(res.usage),
+  toResponse: (res, headers) => Response.json(res, { headers }),
   newIdentityId: newCompletionId,
   stream: chatStreamProtocol,
   captureResponse: (identity, capture, outcome) => ({

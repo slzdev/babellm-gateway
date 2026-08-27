@@ -1,5 +1,5 @@
 import { ApiError } from '@google/genai'
-import { ProviderError } from '@/lib/gateway/errors'
+import { GatewayError, ProviderError } from '@/lib/gateway/errors'
 
 // The same four statuses the OpenAI classifier treats as worth another
 // provider: transport-ish rather than a rejection of the request, the one
@@ -19,8 +19,20 @@ const MODEL_HINT =
  * Gemini counterpart to `adapters/openai/errors.ts`, and separate from it for
  * the reason that file gives: only the adapter knows which of its provider's
  * statuses are worth retrying.
+ *
+ * A `GatewayError` is rethrown, never reclassified: it is the gateway's own
+ * verdict that the client's request is wrong (assertTranscribable's refusal
+ * of a timestamped response_format or an oversized file — see
+ * transcription-to-gemini.ts), made before any upstream call happened.
+ * Falling through to the generic branch below would turn that verdict into a
+ * retryable 502 `upstream_error` — sending the same doomed request to the
+ * next target and charging a healthy provider's circuit breaker for a call
+ * it never received. This function throws rather than returns for that one
+ * case so the check lives here once, rather than resting on every call site
+ * remembering to guard for it before wrapping a call in try/catch.
  */
 export function toProviderError(err: unknown): ProviderError {
+  if (err instanceof GatewayError) throw err
   if (err instanceof ProviderError) return err
 
   if (err instanceof ApiError) {

@@ -9,7 +9,7 @@ import { createResponsesAdapter } from './openai/responses'
 import type {
   ModelPathOverrides, ProviderAdapter, ProviderConfig, ProviderRuntime,
 } from './types'
-import { withRespondViaChat } from './wrappers'
+import { withRespondViaChat, withTranscribeUnsupported } from './wrappers'
 
 export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
   return {
@@ -44,7 +44,9 @@ export function createAdapter(
       // Gemini speaks neither OpenAI dialect natively, so flavor says nothing
       // about it: the adapter translates from Chat Completions either way,
       // and gets `respond`/`respondStream` from the same wrapper any
-      // chat-only adapter does.
+      // chat-only adapter does. `transcribe` is real and translated (design
+      // doc §3.6) — createGeminiAdapter supplies it directly, so no
+      // `withTranscribeUnsupported` wrapper belongs here any more.
       return withRespondViaChat(createGeminiAdapter(runtime), runtime.name)
     case 'bedrock':
       throw new UnsupportedOperationError(
@@ -59,16 +61,20 @@ export function createAdapter(
  * `modelsPath` is not among them, because listing models is a provider
  * operation that happens with no model in hand.
  */
-function withModelPaths(
+export function withModelPaths(
   runtime: ProviderRuntime,
   paths: ModelPathOverrides | null | undefined,
 ): ProviderRuntime {
-  if (!paths?.chatCompletionsPath && !paths?.responsesPath && !paths?.messagesPath) return runtime
+  if (
+    !paths?.chatCompletionsPath && !paths?.responsesPath && !paths?.messagesPath
+    && !paths?.audioTranscriptionsPath
+  ) return runtime
 
   const config: ProviderConfig = { ...runtime.config }
   if (paths.chatCompletionsPath) config.chatCompletionsPath = paths.chatCompletionsPath
   if (paths.responsesPath) config.responsesPath = paths.responsesPath
   if (paths.messagesPath) config.messagesPath = paths.messagesPath
+  if (paths.audioTranscriptionsPath) config.audioTranscriptionsPath = paths.audioTranscriptionsPath
   return { ...runtime, config }
 }
 
@@ -84,7 +90,18 @@ function flavoredAdapter(
 ): ProviderAdapter {
   if (flavor === 'responses') return createResponsesAdapter(runtime)
   if (flavor === 'anthropic_messages') {
-    return withRespondViaChat(createAnthropicAdapter(runtime, maxOutputTokens), runtime.name)
+    // The one true exception (design doc §3.4): Anthropic's own API has no
+    // transcription endpoint and no audio input at all, regardless of which
+    // adapter reaches it. Unlike the Gemini branch above, this is not a
+    // placeholder — the throw is permanent, and §3.5's all-ineligible
+    // fallback means it is reachable through the gateway too: a model whose
+    // only target is `anthropic_messages` reaches this adapter and gets this
+    // throw as its 501.
+    return withTranscribeUnsupported(
+      withRespondViaChat(createAnthropicAdapter(runtime, maxOutputTokens), runtime.name),
+      runtime.name,
+      'the Anthropic Messages API has no transcription endpoint and no audio input at all',
+    )
   }
   return withRespondViaChat(createOpenAIAdapter(runtime), runtime.name)
 }
