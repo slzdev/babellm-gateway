@@ -93,8 +93,10 @@ function flavoredAdapter(
     // The one true exception (design doc §3.4): Anthropic's own API has no
     // transcription endpoint and no audio input at all, regardless of which
     // adapter reaches it. Unlike the Gemini branch above, this is not a
-    // placeholder — the throw is permanent, just unreachable through the
-    // gateway once §3.5's routing filter is in place.
+    // placeholder — the throw is permanent, and §3.5's all-ineligible
+    // fallback means it is reachable through the gateway too: a model whose
+    // only target is `anthropic_messages` reaches this adapter and gets this
+    // throw as its 501.
     return withTranscribeUnsupported(
       withRespondViaChat(createAnthropicAdapter(runtime, maxOutputTokens), runtime.name),
       runtime.name,

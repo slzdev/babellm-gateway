@@ -141,10 +141,18 @@ export function parseWith<T>(schema: z.ZodType<T>, raw: unknown): T {
   const result = schema.safeParse(raw)
   if (!result.success) {
     const issue = (result.error as z.ZodError).issues[0]
+    // A field's own schema can name a more specific code than the generic
+    // `invalid_request` below by raising a custom issue with
+    // `params: { gatewayCode }` — the transcription schema's oversized-file
+    // check does this so a client branching on `error.code` catches "file too
+    // big" the same way regardless of which cap tripped it.
+    const code = issue.code === 'custom' && typeof issue.params?.gatewayCode === 'string'
+      ? issue.params.gatewayCode
+      : 'invalid_request'
     throw new GatewayError({
       status: 400,
       type: 'invalid_request_error',
-      code: 'invalid_request',
+      code,
       param: issue.path.length > 0 ? String(issue.path[0]) : null,
       message: `${issue.path.join('.') || 'body'}: ${issue.message}`,
     })

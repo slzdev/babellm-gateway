@@ -722,6 +722,10 @@ test('a file over the 25 MB cap is refused with 400 and never reaches a provider
 
   expect(res.status).toBe(400)
   const payload = await res.json()
+  // Same code Gemini's narrower 20 MB inline cap answers with (see
+  // transcription-refusals.test.ts): a client catching "file too big" by
+  // `error.code` should catch both, not just the less common one.
+  expect(payload.error.code).toBe('file_too_large')
   expect(payload.error.param).toBe('file')
   expect(payload.error.message).toContain('25 MB')
   expect(transcribe).not.toHaveBeenCalled()

@@ -48,18 +48,18 @@ export function withRespondViaChat<A extends ChatOnlyAdapter>(
 }
 
 /**
- * Supplies `transcribe` for an adapter that (for now, or permanently) has no
- * transcription implementation of its own. Two callers today: the
- * `anthropic_messages` flavor, whose host is Anthropic's API and accepts no
- * audio input of any kind — permanent, since no future task teaches it to
- * transcribe — and Gemini, temporarily, until Task 6 gives it a real
- * translated implementation (design doc §3.6). For the permanent case,
- * §3.5 filters such a target out of the routing chain before it is ever
- * attempted, so the throw is unreachable through the gateway; it exists
- * because `ProviderAdapter` requires the method and a direct unit call must
- * still behave. `reason` is surfaced verbatim to whoever reads the error — an
- * operator who misconfigured a route — so it should say *why* this provider
- * cannot serve, not just that it can't.
+ * Supplies `transcribe` for an adapter that has no transcription
+ * implementation of its own. One caller: the `anthropic_messages` flavor,
+ * whose host is Anthropic's API and accepts no audio input of any kind — a
+ * permanent gap, not a placeholder. It exists because `ProviderAdapter`
+ * requires the method and a direct unit call must still behave; through the
+ * gateway, §3.5's routing filter steers a mixed model away from a target that
+ * would only throw this, but its all-ineligible fallback still sends a model
+ * whose only target is `anthropic_messages` here, so this throw is what
+ * answers that request as a 501 — reachable by design, not dead code.
+ * `reason` is surfaced verbatim to whoever reads the error — an operator who
+ * misconfigured a route — so it should say *why* this provider cannot serve,
+ * not just that it can't.
  *
  * Bounded by `ChatOnlyAdapter`, not the tighter `Omit<ProviderAdapter,
  * 'transcribe'>`: nothing in this function reads `respond`/`respondStream`,

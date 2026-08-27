@@ -77,8 +77,19 @@ export function transcriptionFromForm(form: FormData): unknown {
 // what lets parseWith name the field without any special-casing here.
 const audioFile = z
   .instanceof(File, { message: 'must be an uploaded file' })
-  .refine((f) => f.size <= MAX_FILE_BYTES, {
-    message: `exceeds the ${MAX_FILE_BYTES / (1024 * 1024)} MB limit`,
+  // `superRefine` rather than `refine`, so the issue can carry a
+  // `gatewayCode` for `parseWith` to surface as `error.code`: a client
+  // catching an oversized upload by code should get `file_too_large` here
+  // exactly as it does from Gemini's narrower inline-size cap, since this is
+  // the far more common way to hit the limit.
+  .superRefine((f, ctx) => {
+    if (f.size > MAX_FILE_BYTES) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `exceeds the ${MAX_FILE_BYTES / (1024 * 1024)} MB limit`,
+        params: { gatewayCode: 'file_too_large' },
+      })
+    }
   })
 
 // multipart has no way to encode a JSON object as its own part, so 'auto'
