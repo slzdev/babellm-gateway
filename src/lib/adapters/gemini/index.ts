@@ -4,12 +4,14 @@ import {
   fromGenerateContentStream,
   toGeminiRequest,
 } from '@/lib/translate/chat-to-gemini'
+import { fromEmbedContent, toEmbedParams } from '@/lib/translate/embeddings-to-gemini'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
 import type {
   AttemptContext,
   ChatCompletion,
   ChatCompletionChunk,
   ChatOnlyAdapter,
+  EmbeddingsResult,
   ProviderRuntime,
 } from '../types'
 import { createGeminiClient, listModels, type GeminiClientFactory } from './client'
@@ -69,6 +71,21 @@ export function createGeminiAdapter(
       try {
         yield* fromGenerateContentStream(stream, req, ctx.upstreamModel)
       } catch (err) {
+        throw toProviderError(err)
+      }
+    },
+
+    async embed(req, ctx): Promise<EmbeddingsResult> {
+      try {
+        const result = await client.models.embedContent(
+          toEmbedParams(req, ctx, runtime.name),
+        )
+        return fromEmbedContent(result, req, ctx.upstreamModel)
+      } catch (err) {
+        // The token-array refusal is thrown from inside this try, which costs
+        // it nothing: toProviderError returns a ProviderError untouched, so the
+        // 400 reaches the routing loop as the adapter meant it rather than
+        // being reclassified as an upstream failure.
         throw toProviderError(err)
       }
     },
