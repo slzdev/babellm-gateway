@@ -8,6 +8,9 @@ export type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion
 export type ChatCompletionChunk = OpenAI.Chat.Completions.ChatCompletionChunk
 export type ResponsesResult = OpenAI.Responses.Response
 export type ResponseStreamEvent = OpenAI.Responses.ResponseStreamEvent
+// No streaming counterpart: the embeddings API has no streaming form at all,
+// which is why this is one type where the others are pairs.
+export type EmbeddingsResult = OpenAI.Embeddings.CreateEmbeddingResponse
 
 export interface ProviderConfig {
   /** Skip sending stream_options.include_usage — some clones reject it. */
