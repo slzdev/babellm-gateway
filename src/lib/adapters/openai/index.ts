@@ -8,6 +8,7 @@ import type {
   ProviderRuntime,
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
+import { embed } from './embeddings'
 import { toProviderError } from './errors'
 import { resolveRequestPaths } from '../paths'
 
@@ -80,5 +81,7 @@ export function createOpenAIAdapter(
     },
 
     listModels: (ctx) => listModels(client, ctx, paths.models),
+
+    embed: (req, ctx) => embed(client, req, ctx, paths.embeddings),
   }
 }

@@ -20,6 +20,12 @@ import type { ChatOnlyAdapter, ProviderAdapter } from './types'
  * rather than implemented per adapter: a Gemini adapter gets
  * `respond`/`respondStream` from the same wrapper the OpenAI chat adapter
  * uses, and never learns that the Responses API exists.
+ *
+ * The spread is what carries everything else through, `embed` included: an
+ * adapter that can embed keeps that ability after wrapping, and one that
+ * cannot stays without it rather than gaining a stub. There is nothing to
+ * supply here in either case — an embedding cannot be derived from a chat
+ * completion the way a Response can.
  */
 export function withRespondViaChat(
   adapter: ChatOnlyAdapter,

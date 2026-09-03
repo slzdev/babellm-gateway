@@ -2,6 +2,7 @@ import type OpenAI from 'openai'
 import type { AdapterType } from '@/lib/adapters/credentials'
 import type { CatalogFields } from '@/lib/catalog/types'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
+import type { EmbeddingsRequest } from '@/lib/schemas/embeddings'
 import type { ResponsesRequest } from '@/lib/schemas/responses'
 
 export type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion
@@ -114,6 +115,17 @@ export interface ProviderAdapter {
     req: ResponsesRequest,
     ctx: AttemptContext,
   ): AsyncIterable<ResponseStreamEvent>
+  /**
+   * Optional by necessity rather than by convenience, which is what makes it
+   * the odd one out beside `respond`. `respond` can be required because
+   * `withRespondViaChat` manufactures it out of `chat`; no wrapper can
+   * manufacture an embedding out of a chat completion, and the Anthropic
+   * Messages API — the shape a Messages-flavored target speaks — has no
+   * embeddings endpoint to reach at all. So an adapter that cannot embed says
+   * so by omission, and the embeddings ingress turns that absence into a
+   * non-retryable 501 naming the provider.
+   */
+  embed?(req: EmbeddingsRequest, ctx: AttemptContext): Promise<EmbeddingsResult>
 }
 
 /**
@@ -121,5 +133,9 @@ export interface ProviderAdapter {
  * with no opinion about the Responses API. Each is upgraded to a full
  * `ProviderAdapter` by `withRespondViaChat` in registry.ts, which is the only
  * place that is allowed to know these two methods are missing.
+ *
+ * Only those two are omitted: `embed` stays, because embeddings are outside
+ * the dialect choice this type is about. A chat-native adapter that can also
+ * embed declares it here and the wrapper carries it through untouched.
  */
 export type ChatOnlyAdapter = Omit<ProviderAdapter, 'respond' | 'respondStream'>
