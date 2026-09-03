@@ -83,7 +83,6 @@ export const responsesStreamProtocol: StreamProtocol<ResponseStreamEvent> = {
 export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, ResponseStreamEvent> = {
   parse: (raw) => parseWith(responsesRequestSchema, raw),
   modelOf: (req) => req.model,
-  isStream: (req) => req.stream === true,
   droppedFor: (candidate, req) => {
     // A Responses-native candidate expresses everything it is sent; every
     // other one loses whatever responses-to-chat cannot carry, plus whatever
@@ -92,25 +91,28 @@ export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, Respon
     return [...droppedParams(req), ...droppedForChat(candidate, toChatRequest(req))]
   },
   run: (adapter, ctx, req) => adapter.respond(req, ctx),
-  runStream: (adapter, ctx, req) => adapter.respondStream(req, ctx),
   finish: (res, identity, cost) => withUsageCost(rewriteResponse(res, identity), cost),
   usageOf: (res) => usageFromResponses(res.usage as never),
   newIdentityId: newResponseId,
-  stream: responsesStreamProtocol,
-  captureResponse: (identity, capture, outcome) => ({
-    // No `id` field: `identity.id` is a `resp_<uuid>` the handler minted for
-    // this ingress, but this ingress never rewrites response ids (unlike
-    // chat's), so the client actually received the upstream id instead.
-    // Logging `identity.id` here would stamp the capture record with an id
-    // nothing ever saw — worst precisely when someone is debugging a
-    // `previous_response_id` complaint. `StreamCapture` carries no upstream
-    // id to use instead, so the field is omitted rather than fabricated.
-    object: 'response',
-    model: identity.model,
-    status: outcome === 'ok' ? 'completed' : 'incomplete',
-    output: [{
-      type: 'message', role: 'assistant', status: outcome === 'ok' ? 'completed' : 'incomplete',
-      content: [{ type: 'output_text', text: capture.text, annotations: [] }],
-    }],
-  }),
+  streaming: {
+    isStream: (req) => req.stream === true,
+    runStream: (adapter, ctx, req) => adapter.respondStream(req, ctx),
+    protocol: responsesStreamProtocol,
+    captureResponse: (identity, capture, outcome) => ({
+      // No `id` field: `identity.id` is a `resp_<uuid>` the handler minted for
+      // this ingress, but this ingress never rewrites response ids (unlike
+      // chat's), so the client actually received the upstream id instead.
+      // Logging `identity.id` here would stamp the capture record with an id
+      // nothing ever saw — worst precisely when someone is debugging a
+      // `previous_response_id` complaint. `StreamCapture` carries no upstream
+      // id to use instead, so the field is omitted rather than fabricated.
+      object: 'response',
+      model: identity.model,
+      status: outcome === 'ok' ? 'completed' : 'incomplete',
+      output: [{
+        type: 'message', role: 'assistant', status: outcome === 'ok' ? 'completed' : 'incomplete',
+        content: [{ type: 'output_text', text: capture.text, annotations: [] }],
+      }],
+    }),
+  },
 }

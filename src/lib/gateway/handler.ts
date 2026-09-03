@@ -41,22 +41,31 @@ const defaultDeps: GatewayDeps = { createAdapter: defaultCreateAdapter }
  * limits, model resolution, failover and logging live once in the handler;
  * only what differs between wire formats lives behind this interface.
  */
-export interface Ingress<Req, Res, Chunk> {
+export interface Ingress<Req, Res, Chunk = never> {
   parse(raw: unknown): Req
   modelOf(req: Req): string
-  isStream(req: Req): boolean
   droppedFor(candidate: Candidate, req: Req): string[]
   run(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): Promise<Res>
-  runStream(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): AsyncIterable<Chunk>
   /** The last transformation before the client sees the response: gateway
    *  identity, and the cost this request is being charged. `cost` is already
    *  serialized, so no ingress has to know how CostBreakdown is rendered. */
   finish(res: Res, identity: IdentityOptions, cost: CostPayload | null): Res
   usageOf(res: Res): LogUsage | null
   newIdentityId(): string
-  stream: StreamProtocol<Chunk>
-  /** What payload capture stores for an interrupted or completed stream. */
-  captureResponse(identity: IdentityOptions, capture: StreamCapture, outcome: StreamOutcome): unknown
+  /** Everything that only exists because a dialect can stream, grouped so a
+   *  dialect that cannot says so by leaving it out. Absence is the honest
+   *  encoding: the alternative — an `isStream` that always returns false plus
+   *  three throwing stubs — is unreachable code that reads as reachable, and
+   *  it leaves the compiler nothing to object to when a later refactor calls
+   *  `runStream` unconditionally. Omitted, the handler's streaming branch is
+   *  unreachable by type rather than by convention. */
+  streaming?: {
+    isStream(req: Req): boolean
+    runStream(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): AsyncIterable<Chunk>
+    protocol: StreamProtocol<Chunk>
+    /** What payload capture stores for an interrupted or completed stream. */
+    captureResponse(identity: IdentityOptions, capture: StreamCapture, outcome: StreamOutcome): unknown
+  }
 }
 
 export function parseWith<T>(schema: z.ZodType<T>, raw: unknown): T {
@@ -187,6 +196,10 @@ export async function runGatewayRequest<Req, Res, Chunk>(
   // out long before the row is written.
   const requestId = uuidv7()
   const startedAt = Date.now()
+  // Hoisted into a local because a property access cannot be narrowed: the
+  // streaming branch below needs TypeScript to know the block is present, and
+  // only a `const` gives it that.
+  const streaming = ingress.streaming
 
   // Tracked outside the try so the log line can still say who was calling
   // and for what when the request never got as far as an attempt.
@@ -311,7 +324,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     const body = ingress.parse(await readJson(request))
     requestBody = body
     modelName = ingress.modelOf(body)
-    stream = ingress.isStream(body)
+    stream = streaming?.isStream(body) ?? false
 
     // After parsing so a malformed body cannot consume rpm, and before
     // resolving the model so a throttled key does not cost a database lookup
@@ -330,14 +343,14 @@ export async function runGatewayRequest<Req, Res, Chunk>(
 
     const identity = { id: ingress.newIdentityId(), model: modelName }
 
-    if (stream) {
+    if (streaming && stream) {
       // startStream pulls the first chunk, so a failure inside `run` is
       // still a failure before the response is committed — which is what
       // makes failover safe for streams.
       const result = await execute(
         chain, requestId, request.signal, { ...deps, recordHealth },
         (adapter, ctx, candidate) =>
-          startStream(ingress.runStream(adapter, ctx, bodyFor(candidate, body))),
+          startStream(streaming.runStream(adapter, ctx, bodyFor(candidate, body))),
       )
       // Against the body the winning target was actually sent, not the client's
       // — otherwise a tier this gateway added would be dropped by a Gemini
@@ -367,7 +380,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
 
       return sseResponse(
         result.value,
-        ingress.stream,
+        streaming.protocol,
         identity,
         attemptHeaders(result.candidate, requestId, dropped, limits),
         (outcome, capture) =>
@@ -377,7 +390,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
             usage: capture.usage,
             cost: capture.cost,
             error: capture.error ?? undefined,
-            response: capturePayloads ? ingress.captureResponse(identity, capture, outcome) : null,
+            response: capturePayloads ? streaming.captureResponse(identity, capture, outcome) : null,
             responseTruncated: capture.truncated,
           }),
         captureOptions,

@@ -59,22 +59,24 @@ export const chatStreamProtocol: StreamProtocol<ChatCompletionChunk> = {
 export const chatIngress: Ingress<ChatCompletionRequest, ChatCompletion, ChatCompletionChunk> = {
   parse: (raw) => parseWith(chatCompletionRequestSchema, raw),
   modelOf: (req) => req.model,
-  isStream: (req) => req.stream === true,
   droppedFor: (candidate, req) => droppedForChat(candidate, req),
   run: (adapter, ctx, req) => adapter.chat(req, ctx),
-  runStream: (adapter, ctx, req) => adapter.chatStream(req, ctx),
   finish: (res, identity, cost) => withUsageCost(rewriteCompletion(res, identity), cost),
   usageOf: (res) => usageFrom(res.usage),
   newIdentityId: newCompletionId,
-  stream: chatStreamProtocol,
-  captureResponse: (identity, capture, outcome) => ({
-    id: identity.id,
-    object: 'chat.completion',
-    model: identity.model,
-    choices: [{
-      index: 0,
-      message: { role: 'assistant', content: capture.text },
-      finish_reason: outcome === 'ok' ? 'stop' : null,
-    }],
-  }),
+  streaming: {
+    isStream: (req) => req.stream === true,
+    runStream: (adapter, ctx, req) => adapter.chatStream(req, ctx),
+    protocol: chatStreamProtocol,
+    captureResponse: (identity, capture, outcome) => ({
+      id: identity.id,
+      object: 'chat.completion',
+      model: identity.model,
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: capture.text },
+        finish_reason: outcome === 'ok' ? 'stop' : null,
+      }],
+    }),
+  },
 }
