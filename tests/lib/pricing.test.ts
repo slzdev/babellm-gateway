@@ -2,7 +2,7 @@ import { beforeEach, expect, test } from 'vitest'
 import { db } from '@/lib/db'
 import { catalogModels, providers } from '@/lib/db/schema'
 import { encryptJson } from '@/lib/crypto'
-import { clearPriceCache, computeCost, priceFor } from '@/lib/pricing'
+import { clearPriceCache, computeCost, computeInputOnlyCost, priceFor } from '@/lib/pricing'
 import type { LogUsage } from '@/lib/logs/types'
 import { resetDb } from '../helpers/db'
 
@@ -134,4 +134,93 @@ test('priceFor reads the catalog by provider and upstream model', async () => {
     inputPerMtok: '0.150000', cachedInputPerMtok: null, outputPerMtok: '0.600000',
   })
   expect(await priceFor(provider.id, 'not-in-catalog')).toBeNull()
+})
+
+test('an input-only request prices on the input rate alone', () => {
+  const cost = computeInputOnlyCost(
+    { inputPerMtok: '0.020000', cachedInputPerMtok: null, outputPerMtok: null },
+    usage({ promptTokens: 1_000_000, completionTokens: 0 }),
+  )
+  expect(cost?.inputUsd).toBe('0.020000000')
+  expect(cost?.totalUsd).toBe('0.020000000')
+})
+
+test('a missing output rate is inapplicable to an input-only request, not a missing price', () => {
+  const prices = { inputPerMtok: '0.020000', cachedInputPerMtok: null, outputPerMtok: null }
+  // The same catalog row, priced by both rules: an embedding model has no
+  // output rate because it has no output, so computeCost is right to refuse it
+  // and computeInputOnlyCost is right to charge it.
+  expect(computeCost(prices, usage({ completionTokens: 0 }))).toBeNull()
+  expect(computeInputOnlyCost(prices, usage({ completionTokens: 0 }))).not.toBeNull()
+})
+
+test('an input-only request records a real zero for output, not an unpriced null', () => {
+  const cost = computeInputOnlyCost(
+    { inputPerMtok: '0.020000', cachedInputPerMtok: null, outputPerMtok: null },
+    usage({ promptTokens: 4, completionTokens: 0 }),
+  )
+  // There were no output tokens — a measurement, not a gap in one — so the
+  // component is priced at zero rather than left null.
+  expect(cost?.outputUsd).toBe('0.000000000')
+  expect(cost?.outputUsd).not.toBeNull()
+})
+
+test('cached tokens on an input-only request follow the same subset invariant', () => {
+  const cost = computeInputOnlyCost(
+    { inputPerMtok: '1.000000', cachedInputPerMtok: '0.250000', outputPerMtok: null },
+    usage({ promptTokens: 1_000_000, cachedTokens: 400_000, completionTokens: 0 }),
+  )
+  expect(cost?.inputUsd).toBe('0.600000000')
+  expect(cost?.cachedUsd).toBe('0.100000000')
+  expect(cost?.totalUsd).toBe('0.700000000')
+})
+
+test('input-only cached tokens fall back to the input rate, and clamp to the prompt count', () => {
+  const cost = computeInputOnlyCost(
+    { inputPerMtok: '2.000000', cachedInputPerMtok: null, outputPerMtok: null },
+    usage({ promptTokens: 100, cachedTokens: 150, completionTokens: 0 }),
+  )
+  expect(cost?.inputUsd).toBe('0.000000000')
+  expect(cost?.cachedUsd).toBe('0.000200000')
+  expect(cost?.totalUsd).toBe('0.000200000')
+})
+
+test('an input-only request with no input rate or no usage is unpriced, not free', () => {
+  expect(computeInputOnlyCost(null, usage({ completionTokens: 0 }))).toBeNull()
+  expect(computeInputOnlyCost(
+    { inputPerMtok: null, cachedInputPerMtok: '0.010000', outputPerMtok: null },
+    usage({ completionTokens: 0 }),
+  )).toBeNull()
+  expect(computeInputOnlyCost(
+    { inputPerMtok: '0.020000', cachedInputPerMtok: null, outputPerMtok: null },
+    null,
+  )).toBeNull()
+  expect(computeInputOnlyCost(
+    { inputPerMtok: '0.020000', cachedInputPerMtok: null, outputPerMtok: null },
+    usage({ promptTokens: null, completionTokens: 0 }),
+  )).toBeNull()
+})
+
+test('a measured zero prompt count still prices as an input-only request', () => {
+  const cost = computeInputOnlyCost(
+    { inputPerMtok: '0.020000', cachedInputPerMtok: null, outputPerMtok: null },
+    usage({ promptTokens: 0, completionTokens: 0 }),
+  )
+  expect(cost).not.toBeNull()
+  expect(cost?.totalUsd).toBe('0.000000000')
+})
+
+test('an unmeasured completion count does not stop an input-only request pricing', () => {
+  // computeCost refuses this, because for chat a null completion count means
+  // half the request went unmeasured. Here there is nothing to measure.
+  const cost = computeInputOnlyCost(
+    { inputPerMtok: '0.020000', cachedInputPerMtok: null, outputPerMtok: null },
+    usage({ promptTokens: 1_000_000, completionTokens: null }),
+  )
+  expect(cost?.totalUsd).toBe('0.020000000')
+})
+
+test('the input-only snapshot records the rates actually used', () => {
+  const prices = { inputPerMtok: '0.020000', cachedInputPerMtok: '0.005000', outputPerMtok: null }
+  expect(computeInputOnlyCost(prices, usage({ completionTokens: 0 }))?.pricing).toEqual(prices)
 })

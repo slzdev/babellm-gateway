@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { usageFromResponses } from '@/lib/gateway/usage'
+import { usageFromEmbeddings, usageFromResponses } from '@/lib/gateway/usage'
 
 test('normalizes Responses usage onto the same LogUsage shape', () => {
   expect(usageFromResponses({
@@ -16,4 +16,23 @@ test('leaves unmeasured Responses counts null rather than zero', () => {
 
 test('returns null when the provider reported no usage at all', () => {
   expect(usageFromResponses(null)).toBeNull()
+})
+
+test('embeddings usage measures zero output tokens rather than leaving them null', () => {
+  // The one place a normalizer invents a number: null would say "unmeasured",
+  // which would make an otherwise fully-measured request unpriceable.
+  expect(usageFromEmbeddings({ prompt_tokens: 4, total_tokens: 4 }))
+    .toEqual({ promptTokens: 4, completionTokens: 0, cachedTokens: null, reasoningTokens: null })
+})
+
+test('embeddings usage leaves an absent prompt count unmeasured', () => {
+  expect(usageFromEmbeddings({ total_tokens: 4 }))
+    .toEqual({ promptTokens: null, completionTokens: 0, cachedTokens: null, reasoningTokens: null })
+})
+
+test('returns null when the provider reported no embeddings usage at all', () => {
+  // Gemini's embedContent measures nothing, so the response carries no usage
+  // object — unpriced, not free.
+  expect(usageFromEmbeddings(null)).toBeNull()
+  expect(usageFromEmbeddings(undefined)).toBeNull()
 })

@@ -6,8 +6,10 @@ import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ProviderRow } from '@/lib/db/schema'
 import { logRequest, resolveRequestLogStore } from '@/lib/logs'
 import { capPayload } from '@/lib/logs/payload'
-import type { CostBreakdown, LogPayload, LogUsage, RequestOutcome } from '@/lib/logs/types'
-import { computeCost, priceFor } from '@/lib/pricing'
+import type {
+  CostBreakdown, LogPayload, LogUsage, PricingSnapshot, RequestOutcome,
+} from '@/lib/logs/types'
+import { priceFor } from '@/lib/pricing'
 import { uuidv7 } from '@/lib/uuid'
 import {
   LimitExceededError, chargeUsage, checkLimits, rateLimitHeaders, type KeyLimits,
@@ -51,6 +53,13 @@ export interface Ingress<Req, Res, Chunk = never> {
    *  serialized, so no ingress has to know how CostBreakdown is rendered. */
   finish(res: Res, identity: IdentityOptions, cost: CostPayload | null): Res
   usageOf(res: Res): LogUsage | null
+  /** How this dialect turns catalog rates into a charge. Chat and Responses
+   *  bill input and output; a dialect with no output tokens is billed on input
+   *  alone, and the rule for that lives with the dialect rather than in a
+   *  handler that would have to sniff which one it is holding. The handler
+   *  calls it at both pricing sites, which is what keeps the client's number,
+   *  the log row and the key's billed spend one value. */
+  cost(prices: PricingSnapshot | null, usage: LogUsage | null): CostBreakdown | null
   newIdentityId(): string
   /** Everything that only exists because a dialect can stream, grouped so a
    *  dialect that cannot says so by leaving it out. Absence is the honest
@@ -394,7 +403,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
             responseTruncated: capture.truncated,
           }),
         captureOptions,
-        async (usage) => computeCost(await prices, usage),
+        async (usage) => ingress.cost(await prices, usage),
       )
     }
 
@@ -419,7 +428,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
           result.candidate.upstreamModel,
         ).catch(() => null)
       : null
-    const cost = computeCost(prices, usage)
+    const cost = ingress.cost(prices, usage)
 
     // Built before logging: logging after the response has been constructed
     // means a throw building the response can no longer race a second,
