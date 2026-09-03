@@ -13,6 +13,16 @@ new adapter method (`embed`). The handler's `Ingress` grows an optional
 rather than by four unreachable stubs, and a `cost` hook, so a dialect with no
 output tokens can be priced on input alone.
 
+> **Superseded in part.** This plan was executed against `c3f6b26` and the
+> result was then reconciled onto `2fc5274`, which had shipped
+> `/v1/audio/transcriptions` and widened the same `Ingress` seam differently.
+> Read the spec's reconciliation note before treating any task below as a
+> description of the code: the `streaming` block, the optional `embed`, the
+> `pinsServiceTier` flag and the no-failover behaviour of task 7 were all
+> replaced by the shipped equivalents. Only `Ingress.cost` survived as
+> written. The tasks are kept as the record of how the work was sequenced, not
+> as a description of the seam.
+
 **Tech Stack:** TypeScript, Next.js 16, Drizzle ORM, Postgres, Vitest, OpenAI
 SDK v7 types, `@google/genai`.
 
