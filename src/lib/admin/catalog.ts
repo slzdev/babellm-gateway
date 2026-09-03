@@ -45,10 +45,21 @@ export interface CatalogListItem {
   chatCompletionsPath: string | null
   responsesPath: string | null
   messagesPath: string | null
+  embeddingsPath: string | null
   /** What a blank field on this row would inherit, so the dialog can show it
    *  as a placeholder instead of sending an operator to the Providers page. */
   providerApiFlavor: ApiFlavor
-  providerPaths: { chatCompletionsPath: string; responsesPath: string; messagesPath: string }
+  providerPaths: ProviderPathDefaults
+}
+
+/** The provider's resolved path for each endpoint a model may override —
+ *  keyed like the columns above so the dialog can pair a row's value with the
+ *  placeholder it would fall back to. */
+interface ProviderPathDefaults {
+  chatCompletionsPath: string
+  responsesPath: string
+  messagesPath: string
+  embeddingsPath: string
 }
 
 export interface CatalogFilter {
@@ -67,7 +78,7 @@ function toItem(
   providerName: string,
   providerAdapter: AdapterType,
   providerApiFlavor: ApiFlavor,
-  providerPaths: { chatCompletionsPath: string; responsesPath: string; messagesPath: string },
+  providerPaths: ProviderPathDefaults,
   routeTargetCount: number,
 ): CatalogListItem {
   return {
@@ -96,6 +107,7 @@ function toItem(
     chatCompletionsPath: row.chatCompletionsPath,
     responsesPath: row.responsesPath,
     messagesPath: row.messagesPath,
+    embeddingsPath: row.embeddingsPath,
     providerApiFlavor,
     providerPaths,
   }
@@ -129,7 +141,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
     .map(({
       model, providerName, providerAdapter, providerApiFlavor, providerConfig,
     }) => {
-      const { chatCompletions, responses, messages } = resolveProviderPaths(
+      const { chatCompletions, responses, messages, embeddings } = resolveProviderPaths(
         JSON.parse(providerConfig) as ProviderConfig,
       )
       return toItem(
@@ -137,7 +149,12 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
         providerName,
         providerAdapter,
         providerApiFlavor,
-        { chatCompletionsPath: chatCompletions, responsesPath: responses, messagesPath: messages },
+        {
+          chatCompletionsPath: chatCompletions,
+          responsesPath: responses,
+          messagesPath: messages,
+          embeddingsPath: embeddings,
+        },
         targets.filter(
           (t) => t.providerId === model.providerId && t.upstreamModel === model.modelId,
         ).length,
@@ -338,6 +355,7 @@ export interface ModelGatewayInput {
   chatCompletionsPath?: string | null
   responsesPath?: string | null
   messagesPath?: string | null
+  embeddingsPath?: string | null
 }
 
 /**
@@ -373,6 +391,9 @@ export async function setModelGateway(
   }
   if (input.messagesPath !== undefined) {
     patch.messagesPath = parseProviderPath(input.messagesPath ?? '')
+  }
+  if (input.embeddingsPath !== undefined) {
+    patch.embeddingsPath = parseProviderPath(input.embeddingsPath ?? '')
   }
 
   await db.update(catalogModels).set(patch).where(eq(catalogModels.id, id))

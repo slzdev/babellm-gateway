@@ -62,6 +62,7 @@ function modelPaths(
     chatCompletionsPath: string | null
     responsesPath: string | null
     messagesPath: string | null
+    embeddingsPath: string | null
   } | null,
 ): ModelPathOverrides | null {
   if (!catalog) return null
@@ -69,6 +70,7 @@ function modelPaths(
     chatCompletionsPath: catalog.chatCompletionsPath,
     responsesPath: catalog.responsesPath,
     messagesPath: catalog.messagesPath,
+    embeddingsPath: catalog.embeddingsPath,
   }
 }
 

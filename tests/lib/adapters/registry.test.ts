@@ -196,7 +196,7 @@ test('a model that names no path leaves the provider config alone', async () => 
       config: JSON.stringify({ chatCompletionsPath: '/provider/chat' }),
     }),
     'chat_completions',
-    { chatCompletionsPath: null, responsesPath: null },
+    { chatCompletionsPath: null, responsesPath: null, embeddingsPath: null },
   )
   await adapter.chat(chatBody, chatCtx)
 
@@ -284,4 +284,22 @@ test('an openai_compatible provider with no base URL is still refused', () => {
     provider({ adapter: 'openai_compatible', baseUrl: null }),
     'anthropic_messages',
   )).toThrow(/no base URL/)
+})
+
+test('a model that names only an embeddings path leaves its other endpoints alone', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(
+    provider({
+      adapter: 'openai_compatible',
+      baseUrl: 'https://api.example/v1',
+      config: JSON.stringify({ chatCompletionsPath: '/provider/chat' }),
+    }),
+    'chat_completions',
+    { embeddingsPath: '/api/v2/embeddings' },
+  )
+  await adapter.chat(chatBody, chatCtx)
+
+  // withModelPaths copies key by key, so an override for an endpoint this
+  // request does not use cannot displace the one it does.
+  expect(calledPath(fetchSpy)).toBe('https://api.example/provider/chat')
 })

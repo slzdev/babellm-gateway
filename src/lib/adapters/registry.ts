@@ -63,12 +63,16 @@ function withModelPaths(
   runtime: ProviderRuntime,
   paths: ModelPathOverrides | null | undefined,
 ): ProviderRuntime {
-  if (!paths?.chatCompletionsPath && !paths?.responsesPath && !paths?.messagesPath) return runtime
+  if (
+    !paths?.chatCompletionsPath && !paths?.responsesPath && !paths?.messagesPath
+    && !paths?.embeddingsPath
+  ) return runtime
 
   const config: ProviderConfig = { ...runtime.config }
   if (paths.chatCompletionsPath) config.chatCompletionsPath = paths.chatCompletionsPath
   if (paths.responsesPath) config.responsesPath = paths.responsesPath
   if (paths.messagesPath) config.messagesPath = paths.messagesPath
+  if (paths.embeddingsPath) config.embeddingsPath = paths.embeddingsPath
   return { ...runtime, config }
 }
 

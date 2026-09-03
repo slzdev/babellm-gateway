@@ -51,12 +51,14 @@ describe('resolveProviderPaths', () => {
       chatCompletions: '/chat/completions',
       responses: '/responses',
       messages: '/messages',
+      embeddings: '/embeddings',
     })
     expect(DEFAULT_PATHS).toEqual({
       models: '/models',
       chatCompletions: '/chat/completions',
       responses: '/responses',
       messages: '/messages',
+      embeddings: '/embeddings',
     })
   })
 
@@ -66,19 +68,23 @@ describe('resolveProviderPaths', () => {
       chatCompletions: '/api/v2/chat',
       responses: '/responses',
       messages: '/messages',
+      embeddings: '/embeddings',
     })
   })
 
-  test('reads all three overrides together', () => {
+  test('reads every endpoint override together', () => {
     expect(resolveProviderPaths({
       modelsPath: '/api/models',
       chatCompletionsPath: '/api/chat',
       responsesPath: '/api/responses',
+      messagesPath: '/api/messages',
+      embeddingsPath: '/api/embeddings',
     })).toEqual({
       models: '/api/models',
       chatCompletions: '/api/chat',
       responses: '/api/responses',
-      messages: '/messages',
+      messages: '/api/messages',
+      embeddings: '/api/embeddings',
     })
   })
 
@@ -102,6 +108,7 @@ describe('resolveRequestPaths', () => {
       chatCompletions: '/chat/completions',
       responses: '/responses',
       messages: '/messages',
+      embeddings: '/embeddings',
     })
   })
 
@@ -118,6 +125,7 @@ describe('resolveRequestPaths', () => {
       chatCompletions: '/chat/completions',
       responses: 'https://example.com/openai/v1/responses',
       messages: '/messages',
+      embeddings: '/embeddings',
     })
   })
 
@@ -170,12 +178,13 @@ describe('PATH_FIELDS', () => {
   test('describes each endpoint once, keyed by the config key it writes', () => {
     expect(PATH_FIELDS.map((f) => f.name)).toEqual([
       'modelsPath', 'chatCompletionsPath', 'responsesPath', 'messagesPath',
+      'embeddingsPath',
     ])
   })
 
   test('carries the default as the placeholder, so a blank box reads as "default"', () => {
     expect(PATH_FIELDS.map((f) => f.placeholder)).toEqual([
-      '/models', '/chat/completions', '/responses', '/messages',
+      '/models', '/chat/completions', '/responses', '/messages', '/embeddings',
     ])
   })
 })
@@ -238,4 +247,22 @@ test('a configured messages path resolves against the base URL origin', () => {
 test('the messages path is offered on both the provider and the model forms', () => {
   expect(PATH_FIELDS.map((f) => f.name)).toContain('messagesPath')
   expect(MODEL_PATH_FIELDS.map((f) => f.name)).toContain('messagesPath')
+})
+
+test('embeddings defaults to /embeddings and joins onto the base URL', () => {
+  const paths = resolveRequestPaths({}, 'https://api.openai.com/v1')
+  expect(paths.embeddings).toBe('/embeddings')
+})
+
+test('a configured embeddings path resolves against the base URL origin', () => {
+  const paths = resolveRequestPaths(
+    { embeddingsPath: '/openai/v1/embeddings' },
+    'https://gateway.test/gwt/v1',
+  )
+  expect(paths.embeddings).toBe('https://gateway.test/openai/v1/embeddings')
+})
+
+test('the embeddings path is offered on both the provider and the model forms', () => {
+  expect(PATH_FIELDS.map((f) => f.name)).toContain('embeddingsPath')
+  expect(MODEL_PATH_FIELDS.map((f) => f.name)).toContain('embeddingsPath')
 })

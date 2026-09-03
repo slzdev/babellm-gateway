@@ -18,6 +18,7 @@ export const DEFAULT_PATHS = {
   // absolute `/v1/messages`; the adapter always passes an explicit path,
   // so that default never applies and cannot double the prefix.
   messages: '/messages',
+  embeddings: '/embeddings',
 } as const
 
 export type ProviderPaths = { -readonly [K in keyof typeof DEFAULT_PATHS]: string }
@@ -28,13 +29,14 @@ const CONFIG_KEYS: Record<keyof ProviderPaths, string> = {
   chatCompletions: 'chatCompletionsPath',
   responses: 'responsesPath',
   messages: 'messagesPath',
+  embeddings: 'embeddingsPath',
 }
 
 /**
  * The one description of these fields, read by the provider forms to render
  * them and by the server actions to collect them. Keeping the list here rather
- * than in the form is what stops these three fields from having to be added in
- * three places, once a fourth endpoint shows up.
+ * than in the form is what stops each new endpoint from having to be added in
+ * three places.
  */
 export const PATH_FIELDS = [
   {
@@ -60,6 +62,12 @@ export const PATH_FIELDS = [
     label: 'Messages path',
     placeholder: DEFAULT_PATHS.messages,
     help: 'Where this provider serves the Anthropic Messages API.',
+  },
+  {
+    name: 'embeddingsPath',
+    label: 'Embeddings path',
+    placeholder: DEFAULT_PATHS.embeddings,
+    help: 'Where this provider serves embeddings.',
   },
 ] as const
 
@@ -87,6 +95,12 @@ export const MODEL_PATH_FIELDS = [
     label: 'Messages path',
     placeholder: DEFAULT_PATHS.messages,
     help: 'Where this one model answers the Anthropic Messages API.',
+  },
+  {
+    name: 'embeddingsPath',
+    label: 'Embeddings path',
+    placeholder: DEFAULT_PATHS.embeddings,
+    help: 'Where this one model is embedded, if not where the provider embeds the rest.',
   },
 ] as const
 
@@ -173,6 +187,7 @@ export function resolveProviderPaths(config: ProviderConfig): ProviderPaths {
     chatCompletions: resolveOne(config, 'chatCompletions').path,
     responses: resolveOne(config, 'responses').path,
     messages: resolveOne(config, 'messages').path,
+    embeddings: resolveOne(config, 'embeddings').path,
   }
 }
 
@@ -212,6 +227,7 @@ export function resolveRequestPaths(
     chatCompletions: resolve('chatCompletions'),
     responses: resolve('responses'),
     messages: resolve('messages'),
+    embeddings: resolve('embeddings'),
   }
 }
 
