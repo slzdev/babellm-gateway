@@ -110,6 +110,22 @@ export function responsesRequest(
   })
 }
 
+export function embeddingsRequest(
+  body: unknown,
+  apiKey: string | null,
+  headers: Record<string, string> = {},
+) {
+  return new Request('http://gateway.test/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      ...headers,
+    },
+    body: JSON.stringify(body),
+  })
+}
+
 export function fakeAdapterDeps(adapter: Partial<ProviderAdapter>) {
   return {
     createAdapter: () => ({
@@ -124,6 +140,14 @@ export function fakeAdapterDeps(adapter: Partial<ProviderAdapter>) {
       },
       async *respondStream() {
         throw new Error('respondStream not stubbed')
+      },
+      // Present, and throwing, so that a fake adapter reaches the embeddings
+      // ingress as one that *can* embed. `embed` is optional on
+      // ProviderAdapter and its absence is what the ingress answers 501 to, so
+      // a fake without this member could never take the happy path. A test
+      // about that refusal has to build the deps object itself.
+      async embed() {
+        throw new Error('embed not stubbed')
       },
       ...adapter,
     }) as ProviderAdapter,
@@ -241,6 +265,11 @@ export function fakeAdapterByProvider(
       },
       async *respondStream() {
         throw new Error(`respondStream not stubbed for ${provider.name}`)
+      },
+      // See fakeAdapterDeps: present so the adapter reads as one that can
+      // embed, throwing so a test that did not stub it hears about it.
+      async embed() {
+        throw new Error(`embed not stubbed for ${provider.name}`)
       },
       ...(byName[provider.name] ?? {}),
     }) as ProviderAdapter,
