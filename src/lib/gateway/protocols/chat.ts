@@ -65,6 +65,7 @@ export const chatIngress: Ingress<ChatCompletionRequest, ChatCompletion, ChatCom
   finish: (res, identity, cost) => withUsageCost(rewriteCompletion(res, identity), cost),
   usageOf: (res) => usageFrom(res.usage),
   cost: computeCost,
+  pinsServiceTier: true,
   newIdentityId: newCompletionId,
   streaming: {
     isStream: (req) => req.stream === true,

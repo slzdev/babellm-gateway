@@ -39,10 +39,11 @@ export function droppedForChat(candidate: Candidate, req: ChatCompletionRequest)
  * `anthropic_messages` candidate never reaches this function at all — its
  * adapter has no `embed`, and the ingress's 501 lands first.
  *
- * The translator reports a pinned `service_tier` even though no client can have
- * sent one: the handler asks this question about the body the winning target
- * was actually sent, so an operator who pins a tier and lands on Gemini is told
- * the pin did nothing rather than left to infer it.
+ * The translator still reports `service_tier`, which reaches this shape only
+ * from a client that sent one of its own — the ingress declines to inject a
+ * target's pinned tier here (`pinsServiceTier: false`). A client that sends one
+ * anyway is told Gemini could not honour it, which is the ordinary
+ * drop-and-report rule rather than anything embeddings-specific.
  */
 export function droppedForEmbeddings(
   candidate: Candidate,

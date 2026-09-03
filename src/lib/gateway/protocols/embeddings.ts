@@ -58,6 +58,13 @@ export const embeddingsIngress: Ingress<EmbeddingsRequest, EmbeddingsResult> = {
   // answers null — the request is then unpriced rather than priced at zero.
   usageOf: (res) => usageFromEmbeddings(res.usage),
   cost: computeInputOnlyCost,
+  // The OpenAI embeddings API documents no `service_tier`, and OpenAI answers
+  // an argument it does not recognise with a 400 rather than ignoring it. So a
+  // tier an operator pinned on the route target is dropped here instead of
+  // being injected: a setting that means nothing on this endpoint must read as
+  // nothing, not as every request to that target failing non-retryably. A tier
+  // a client sends itself still passes through, as any parameter it sends does.
+  pinsServiceTier: false,
   newIdentityId: newEmbeddingsId,
   // No `streaming` block, which is what makes the handler's streaming branch
   // unreachable for this ingress by type rather than by convention: the OpenAI

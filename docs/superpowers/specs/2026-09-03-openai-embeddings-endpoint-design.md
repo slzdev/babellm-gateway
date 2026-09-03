@@ -73,6 +73,7 @@ nobody could have set before this ships.
 | A target that cannot embed | Non-retryable 501, no failover. Section 3.7. |
 | Model kind | Not enforced. Section 3.8. |
 | Payload capture | Unchanged, and capped as today. Section 3.9. |
+| A target's pinned `service_tier` | Not injected on this endpoint. Section 3.10. |
 
 ### 3.1 A third ingress, and what "no streaming" costs the interface
 
@@ -297,6 +298,27 @@ Payload capture is per-key and off by default, and stays bounded by
 for its token count — a 3072-dimension vector is ~40KB of JSON — so a key with
 capture enabled will see truncated responses more often here than on chat. That
 is the existing cap doing its job, and the `truncated` flag already says so.
+
+### 3.10 A pinned service tier is not injected here
+
+`bodyFor` in the handler overwrites `service_tier` with whatever the winning
+target pins, and both chat dialects carry that parameter at the top level. The
+embeddings dialect does not have it at all.
+
+The tempting reading is that this makes a pinned tier *inert* on this endpoint —
+an OpenAI-shaped upstream ignoring an undocumented parameter the way it ignores
+any other. That reading is wrong: OpenAI answers an argument it does not
+recognise with `400 Unrecognized request argument supplied`, and a 400 is
+non-retryable, so it does not fail over. An operator who pins `flex` on a target
+that also serves an embedding model would take every embeddings request to that
+target off the air, with an error blaming an argument they never sent.
+
+So `Ingress` carries `pinsServiceTier`, and the embeddings ingress sets it
+`false`: the injection is declined at the one place that knows which dialect is
+being spoken. A tier a *client* sends itself is still forwarded untouched, on
+this endpoint as on any other — the schema is loose, and what the caller sends
+is the caller's to answer for. On a Gemini target such a client-sent tier is
+reported in `x-babellm-dropped-params` under the ordinary drop-and-report rule.
 
 ## 4. Wire contract
 

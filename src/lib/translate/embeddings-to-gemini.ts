@@ -133,11 +133,11 @@ export function fromEmbedContent(
  * chat-to-gemini's reason: SDKs send `user` meaning nothing by it, and it
  * cannot change which vectors come back.
  *
- * `service_tier` is here even though the OpenAI embeddings API documents none,
- * so no client can have sent one. A route target can *pin* one, and the handler
- * computes the dropped set against the body the winning target was actually
- * sent — so an operator who pins a tier and then routes to Gemini learns the
- * pin did nothing, instead of having to infer it from unchanged latency.
+ * `service_tier` is here even though the OpenAI embeddings API documents none:
+ * the schema is loose, so a client that sends one anyway gets it forwarded, and
+ * on a Gemini target it goes nowhere. It cannot arrive from a route target's
+ * pinned tier — the embeddings ingress declines that injection, because OpenAI
+ * rejects an argument it does not recognise rather than ignoring it.
  *
  * `encoding_format` is not here — it is honoured, gateway-side, by
  * `fromEmbedContent`. Nor is `dimensions`, which maps directly.

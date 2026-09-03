@@ -224,7 +224,11 @@ fails over on the same loop until its first chunk lands.
 
 `x-babellm-provider` and `x-babellm-upstream-model` on the response name who
 actually served. Targets can pin a service tier (`flex`, `priority`,
-`ultrafast`, …) where the provider supports one.
+`ultrafast`, …) where the provider supports one. A pinned tier applies to the
+two chat shapes only: `/v1/embeddings` has no such parameter, and OpenAI answers
+an argument it does not recognise with a `400` rather than ignoring it, so
+injecting one there would turn a setting that means nothing on that endpoint
+into every request to that target failing.
 
 ### Costs on the response
 

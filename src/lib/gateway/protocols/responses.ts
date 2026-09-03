@@ -95,6 +95,7 @@ export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, Respon
   finish: (res, identity, cost) => withUsageCost(rewriteResponse(res, identity), cost),
   usageOf: (res) => usageFromResponses(res.usage as never),
   cost: computeCost,
+  pinsServiceTier: true,
   newIdentityId: newResponseId,
   streaming: {
     isStream: (req) => req.stream === true,

@@ -71,6 +71,11 @@ export interface Ingress<Req, Res, Chunk = never> {
    *  calls it at both pricing sites, which is what keeps the client's number,
    *  the log row and the key's billed spend one value. */
   cost(prices: PricingSnapshot | null, usage: LogUsage | null): CostBreakdown | null
+  /** Whether a target's pinned `service_tier` is a parameter this dialect can
+   *  carry. False makes `bodyFor` leave the body alone — see the reasoning
+   *  there: on a dialect with no such parameter, injecting one does not read as
+   *  a no-op upstream, it reads as a rejected request. */
+  pinsServiceTier: boolean
   newIdentityId(): string
   /** Everything that only exists because a dialect can stream, grouped so a
    *  dialect that cannot says so by leaving it out. Absence is the honest
@@ -125,18 +130,18 @@ async function readJson(request: Request): Promise<unknown> {
  * overwrites whatever the client asked for — it is an operator's routing
  * decision, not a default.
  *
- * Shared by all three ingresses. The two chat dialects spell it
- * `service_tier` at the top level, so there is nothing per-shape to decide
- * between them, and the embeddings dialect has no such parameter at all —
- * which makes a pinned tier inert there rather than wrong: an OpenAI-shaped
- * upstream ignores it as it ignores any undocumented parameter, and Gemini's
- * embeddings translator builds its parameters explicitly and never reads it.
- * Left uniform on purpose. Excepting embeddings here would buy nothing on the
- * upstreams that ignore the field and would silently un-pin a clone that does
- * honour a tier on it.
+ * Both chat dialects spell it `service_tier` at the top level, so there is
+ * nothing per-shape to decide between them. Embeddings has no such parameter,
+ * and `pinsServiceTier` is how that ingress declines the injection — it is not
+ * a tidiness measure. OpenAI answers an argument it does not recognise with
+ * `400 Unrecognized request argument supplied`, and a 400 is non-retryable, so
+ * a tier added to an embeddings body would turn an operator's inert setting
+ * into every request on that target failing with no failover. A tier a *client*
+ * sends is still passed through untouched, on this endpoint as on any other:
+ * that one is the client's own to answer for.
  */
-function bodyFor<Req>(candidate: Candidate, body: Req): Req {
-  if (!candidate.serviceTier) return body
+function bodyFor<Req>(candidate: Candidate, body: Req, pinsServiceTier: boolean): Req {
+  if (!pinsServiceTier || !candidate.serviceTier) return body
   return { ...body, service_tier: candidate.serviceTier }
 }
 
@@ -377,12 +382,12 @@ export async function runGatewayRequest<Req, Res, Chunk>(
       const result = await execute(
         chain, requestId, request.signal, { ...deps, recordHealth },
         (adapter, ctx, candidate) =>
-          startStream(streaming.runStream(adapter, ctx, bodyFor(candidate, body))),
+          startStream(streaming.runStream(adapter, ctx, bodyFor(candidate, body, ingress.pinsServiceTier))),
       )
       // Against the body the winning target was actually sent, not the client's
       // — otherwise a tier this gateway added would be dropped by a Gemini
       // target without ever being reported.
-      dropped = ingress.droppedFor(result.candidate, bodyFor(result.candidate, body))
+      dropped = ingress.droppedFor(result.candidate, bodyFor(result.candidate, body, ingress.pinsServiceTier))
       // Resolved only when its value is actually used: for the default case
       // (capture off) this settings lookup would otherwise sit unconditionally
       // between execute() and the response, adding to time-to-first-token for
@@ -427,9 +432,9 @@ export async function runGatewayRequest<Req, Res, Chunk>(
 
     const result = await execute(
       chain, requestId, request.signal, { ...deps, recordHealth },
-      (adapter, ctx, candidate) => ingress.run(adapter, ctx, bodyFor(candidate, body), candidate),
+      (adapter, ctx, candidate) => ingress.run(adapter, ctx, bodyFor(candidate, body, ingress.pinsServiceTier), candidate),
     )
-    dropped = ingress.droppedFor(result.candidate, bodyFor(result.candidate, body))
+    dropped = ingress.droppedFor(result.candidate, bodyFor(result.candidate, body, ingress.pinsServiceTier))
 
     // Usage is read first so a provider that reports none skips the catalog
     // lookup entirely — otherwise a SELECT would sit on the client's critical
