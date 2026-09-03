@@ -49,13 +49,27 @@ function inputCount(input: EmbeddingsRequest['input']): number {
   return typeof input === 'string' ? 1 : input.length
 }
 
+/**
+ * Whether `input` is text this translator can embed, as opposed to token ids
+ * it cannot.
+ *
+ * Exported because the embeddings ingress's `supports` has to answer the same
+ * question *before* target selection that `toContents` answers at attempt
+ * time. `Ingress.supports` may never encode a rule the adapter cannot also
+ * refuse, and the cheapest way to keep that true is for the filter and the
+ * refusal to read one definition rather than two that can drift.
+ *
+ * The schema's `.min(1)` on every array member means an array names exactly
+ * one of the four input shapes, so this decides the shape rather than guessing
+ * at it.
+ */
+export function isTextInput(input: EmbeddingsRequest['input']): input is string | string[] {
+  return typeof input === 'string' || input.every((value) => typeof value === 'string')
+}
+
 function toContents(input: EmbeddingsRequest['input'], provider: string): ContentListUnion {
-  if (typeof input === 'string') return [input]
-  // The schema's `.min(1)` on every array member means an array names exactly
-  // one of the four input shapes, so this decides the shape rather than
-  // guessing at it.
-  if (input.every((value) => typeof value === 'string')) return input
-  throw refuseTokenInput(provider)
+  if (!isTextInput(input)) throw refuseTokenInput(provider)
+  return typeof input === 'string' ? [input] : input
 }
 
 export function toEmbedParams(
@@ -136,8 +150,10 @@ export function fromEmbedContent(
  * `service_tier` is here even though the OpenAI embeddings API documents none:
  * the schema is loose, so a client that sends one anyway gets it forwarded, and
  * on a Gemini target it goes nowhere. It cannot arrive from a route target's
- * pinned tier — the embeddings ingress declines that injection, because OpenAI
- * rejects an argument it does not recognise rather than ignoring it.
+ * pinned tier — the embeddings ingress declares no `bodyFor`, because OpenAI
+ * rejects an argument it does not recognise rather than ignoring it. A pin is
+ * reported by `droppedForEmbeddings` instead, which is also why that function
+ * de-duplicates: both halves can name this one parameter.
  *
  * `encoding_format` is not here — it is honoured, gateway-side, by
  * `fromEmbedContent`. Nor is `dimensions`, which maps directly.

@@ -351,8 +351,19 @@ test('a candidate carries the model path overrides', async () => {
     chatCompletionsPath: null,
     responsesPath: '/api/v2/responses',
     messagesPath: null,
+    audioTranscriptionsPath: null,
     embeddingsPath: '/api/v2/embeddings',
   })
+})
+
+test('a candidate carries the model audio transcriptions path override', async () => {
+  const { model } = await seedTargets({
+    targets: [{ name: 'p1', audioTranscriptionsPath: '/api/v2/audio/transcriptions' }],
+  })
+
+  const { candidates } = await resolveModel(model.name)
+
+  expect(candidates[0].pathOverrides?.audioTranscriptionsPath).toBe('/api/v2/audio/transcriptions')
 })
 
 test('a target outside the catalog carries no path overrides', async () => {

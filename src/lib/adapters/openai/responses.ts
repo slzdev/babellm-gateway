@@ -15,6 +15,7 @@ import type {
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { embed } from './embeddings'
 import { toProviderError } from './errors'
+import { transcribeVia } from './audio'
 import { resolveRequestPaths } from '../paths'
 
 // The symmetric misconfiguration to the Chat Completions hint below: a
@@ -130,5 +131,11 @@ export function createResponsesAdapter(
         throw toProviderError(err, FLAVOR_HINT)
       }
     },
+
+    // /audio/transcriptions is a sibling endpoint on the same host as
+    // /responses, not a dialect of chat — see design doc §3.4 — so a
+    // Responses-flavored provider gets the identical implementation a
+    // Chat-Completions-flavored one does, from the same shared function.
+    transcribe: transcribeVia(client, paths.audioTranscriptions),
   }
 }

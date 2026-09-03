@@ -3,7 +3,7 @@ import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { createGeminiAdapter } from '@/lib/adapters/gemini'
 import { resolveProviderRuntime } from '@/lib/adapters/registry'
-import { withRespondViaChat } from '@/lib/adapters/wrappers'
+import { withRespondViaChat, withTranscribeUnsupported } from '@/lib/adapters/wrappers'
 import type { ProviderRow } from '@/lib/db/schema'
 import { seedGateway } from '../helpers/gateway'
 import { resetDb } from '../helpers/db'
@@ -57,9 +57,13 @@ function gatewayClient(apiKey: string, responses: unknown[]) {
 
   const deps = {
     createAdapter: (provider: ProviderRow) =>
-      withRespondViaChat(
-        createGeminiAdapter(resolveProviderRuntime(provider), () => fakeGenAI as never),
+      withTranscribeUnsupported(
+        withRespondViaChat(
+          createGeminiAdapter(resolveProviderRuntime(provider), () => fakeGenAI as never),
+          provider.name,
+        ),
         provider.name,
+        'this contract test has no transcription fixture',
       ),
   }
 

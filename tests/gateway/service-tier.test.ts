@@ -169,7 +169,9 @@ test('a gemini target with no tier reports nothing', async () => {
 // answers an argument it does not recognise with a 400 rather than ignoring it.
 // Injecting one here would turn a setting that means nothing on this endpoint
 // into every request to that target failing, non-retryably and with no
-// failover. So the embeddings ingress declines the injection outright.
+// failover. So the embeddings ingress declares no `bodyFor` at all, and the
+// handler's default hands every candidate the client's own body. The pin is
+// reported in x-babellm-dropped-params instead — asserted below.
 test('a pinned tier is not injected into an embeddings request', async () => {
   const { apiKey } = await seedGateway({ serviceTier: 'flex' })
   const embed = vi.fn().mockResolvedValue({
@@ -185,6 +187,9 @@ test('a pinned tier is not injected into an embeddings request', async () => {
 
   expect(res.status).toBe(200)
   expect('service_tier' in embed.mock.calls[0][0]).toBe(false)
+  // Declined, not silently ignored: an operator's routing decision the gateway
+  // cannot honour on this endpoint is exactly what this header is for.
+  expect(res.headers.get('x-babellm-dropped-params')).toBe('service_tier')
 })
 
 test('a tier the client sent itself still reaches an embeddings target', async () => {

@@ -1,0 +1,262 @@
+import { beforeEach, expect, test, vi } from 'vitest'
+import { GatewayError } from '@/lib/gateway/errors'
+import { runGatewayRequest, type Ingress } from '@/lib/gateway/handler'
+import { postgresStore } from '@/lib/logs/postgres'
+import { clearRequestLogStoreCache } from '@/lib/logs/registry'
+import { clearPriceCache } from '@/lib/pricing'
+import { fakeAdapterByProvider, fakeAdapterDeps, seedGateway, seedTargets } from '../../helpers/gateway'
+import { waitForLogs } from '../../helpers/logs'
+import { resetDb } from '../../helpers/db'
+
+/**
+ * Widening `Ingress` (Task 1 of the audio-transcriptions plan) is a pure
+ * refactor for Chat and Responses, so it needs a seam of its own to exercise:
+ * a minimal fake dialect that proves `runGatewayRequest` drives `read`,
+ * `toResponse` and `supports` correctly, independent of what chat.ts or
+ * responses.ts happen to do with them.
+ */
+interface FakeReq {
+  model: string
+  /** Stands in for anything request-dependent an ingress might judge a
+   *  candidate against — transcription's `response_format`, in practice. */
+  format?: string
+}
+type FakeRes = Record<string, unknown>
+
+function makeIngress(overrides: Partial<Ingress<FakeReq, FakeRes, never>> = {}): Ingress<FakeReq, FakeRes, never> {
+  return {
+    read: async () => ({ model: 'house-model' }),
+    modelOf: (req) => req.model,
+    isStream: () => false,
+    droppedFor: () => [],
+    run: async () => ({}),
+    finish: (res) => res,
+    usageOf: () => null,
+    cost: () => null,
+    toResponse: (res, headers) => Response.json(res, { headers }),
+    ...overrides,
+  }
+}
+
+function fakeRequest(apiKey: string, headers: Record<string, string> = {}) {
+  return new Request('http://gateway.test/v1/fake', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${apiKey}`, ...headers },
+    body: '{}',
+  })
+}
+
+beforeEach(async () => {
+  process.env.ENCRYPTION_KEY = 'a'.repeat(64)
+  await resetDb()
+  clearRequestLogStoreCache()
+  clearPriceCache()
+})
+
+test('read receives the real Request, not a pre-parsed body', async () => {
+  const { apiKey } = await seedGateway()
+  let seenContentType: string | null = null
+
+  const ingress = makeIngress({
+    read: async (request) => {
+      seenContentType = request.headers.get('content-type')
+      return { model: 'house-model' }
+    },
+    run: async () => ({ ok: true }),
+  })
+
+  const response = await runGatewayRequest(
+    fakeRequest(apiKey, { 'content-type': 'multipart/form-data; boundary=x' }),
+    ingress,
+    fakeAdapterDeps({}),
+  )
+
+  expect(response.status).toBe(200)
+  expect(seenContentType).toBe('multipart/form-data; boundary=x')
+})
+
+test('toResponse decides the response, with the attempt headers still merged in', async () => {
+  const { apiKey } = await seedGateway()
+
+  const ingress = makeIngress({
+    run: async () => ({ ok: true }),
+    toResponse: (res, headers) =>
+      new Response('hi', { status: 200, headers: { 'content-type': 'text/plain', ...headers } }),
+  })
+
+  const response = await runGatewayRequest(fakeRequest(apiKey), ingress, fakeAdapterDeps({}))
+
+  expect(response.status).toBe(200)
+  expect(response.headers.get('content-type')).toBe('text/plain')
+  // attemptHeaders came through even though the ingress built its own Response.
+  expect(response.headers.get('x-babellm-provider')).toBe('test-provider')
+  expect(await response.text()).toBe('hi')
+})
+
+test('supports filters the chain: the rejected target is never attempted', async () => {
+  const { apiKey } = await seedTargets({ targets: [{ name: 'p1' }, { name: 'p2' }] })
+  const p1Chat = vi.fn()
+  const p2Chat = vi.fn().mockResolvedValue({ ok: true })
+
+  const ingress = makeIngress({
+    supports: (candidate) => candidate.provider.name !== 'p1',
+    run: (adapter, ctx, req) => adapter.chat(req as never, ctx) as unknown as Promise<FakeRes>,
+  })
+
+  const response = await runGatewayRequest(
+    fakeRequest(apiKey),
+    ingress,
+    fakeAdapterByProvider({ p1: { chat: p1Chat }, p2: { chat: p2Chat } }),
+  )
+
+  expect(response.status).toBe(200)
+  expect(p1Chat).not.toHaveBeenCalled()
+  expect(p2Chat).toHaveBeenCalledTimes(1)
+  await waitForLogs()
+
+  const page = await postgresStore.query({ limit: 10 })
+  expect(page.rows[0].finalProvider).toBe('p2')
+  const detail = await postgresStore.get(page.rows[0].id)
+  // One attempt, not two-then-skip: the rejected target was filtered out of
+  // the chain, not tried and failed.
+  expect(detail?.attempts).toHaveLength(1)
+})
+
+// Pins the fix for a real defect: filtering has to feed selectOrder, not
+// follow it. selectOrder truncates its ordered chain to model.maxAttempts
+// BEFORE anyone can know which candidates this dialect can even use — so
+// filtering downstream of that truncation would slice off p1 and p2 (an
+// unsupported flavor), see both rejected, and 501 with a perfectly capable
+// p3 sitting untried one slot further down. maxAttempts: 2 has to mean "two
+// real attempts", not "look at the first two candidates, whatever they are".
+test('maxAttempts does not starve a viable target sitting behind unsupported ones', async () => {
+  const { apiKey } = await seedTargets({
+    maxAttempts: 2,
+    targets: [{ name: 'p1' }, { name: 'p2' }, { name: 'p3' }],
+  })
+  const p3Chat = vi.fn().mockResolvedValue({ ok: true })
+
+  const ingress = makeIngress({
+    supports: (candidate) => candidate.provider.name === 'p3',
+    run: (adapter, ctx, req) => adapter.chat(req as never, ctx) as unknown as Promise<FakeRes>,
+  })
+
+  const response = await runGatewayRequest(
+    fakeRequest(apiKey),
+    ingress,
+    fakeAdapterByProvider({ p1: { chat: vi.fn() }, p2: { chat: vi.fn() }, p3: { chat: p3Chat } }),
+  )
+
+  expect(response.status).toBe(200)
+  expect(p3Chat).toHaveBeenCalledTimes(1)
+})
+
+// `supports` is handed the request as well as the candidate, because whether
+// a target can serve a request is not always a property of the target alone —
+// a Gemini target transcribes, but not into the timestamp formats. Judging
+// that at attempt time instead would make the same request succeed or fail
+// depending on which target selection happened to pick, and non-deterministic
+// success is not a behaviour a gateway may have (design doc §3.5).
+test('supports is judged per request, not per target', async () => {
+  const { apiKey } = await seedTargets({ targets: [{ name: 'p1' }, { name: 'p2' }] })
+  const p1Chat = vi.fn()
+  const p2Chat = vi.fn().mockResolvedValue({ ok: true })
+  const seen: Array<[string, string | undefined]> = []
+
+  const ingress = makeIngress({
+    read: async (request) => ({
+      model: 'house-model',
+      format: request.headers.get('x-format') ?? undefined,
+    }),
+    // Only p2 can serve the 'fancy' format. p1 is otherwise perfectly capable
+    // and sits first in the chain, so it can only be skipped by a decision
+    // that read the request.
+    supports: (candidate, req) => {
+      seen.push([candidate.provider.name, req.format])
+      return req.format !== 'fancy' || candidate.provider.name === 'p2'
+    },
+    run: (adapter, ctx, req) => adapter.chat(req as never, ctx) as unknown as Promise<FakeRes>,
+  })
+
+  const response = await runGatewayRequest(
+    fakeRequest(apiKey, { 'x-format': 'fancy' }),
+    ingress,
+    fakeAdapterByProvider({ p1: { chat: p1Chat }, p2: { chat: p2Chat } }),
+  )
+
+  expect(response.status).toBe(200)
+  expect(p1Chat).not.toHaveBeenCalled()
+  expect(p2Chat).toHaveBeenCalledTimes(1)
+  // Every candidate was judged against this request's own format, not against
+  // the candidate alone.
+  expect(seen).toEqual([['p1', 'fancy'], ['p2', 'fancy']])
+})
+
+// `supports` steers a chain; it does not refuse one. When it rejects every
+// candidate, the unfiltered chain is ordered instead so the refusal comes from
+// the adapter, which knows *why* — a Gemini target asked for `srt` answers a
+// 400 naming the format and the remedy, an Anthropic one a 501 naming the
+// provider. The generic "no target of X can serve this endpoint" this branch
+// used to answer was false for a target that serves the endpoint fine in
+// another format, and it told a client whose request was one field from
+// working that the server does not implement it.
+test('supports rejecting everything falls back to the unfiltered chain', async () => {
+  const { apiKey } = await seedGateway()
+  const chat = vi.fn().mockResolvedValue({ ok: true })
+
+  const ingress = makeIngress({
+    supports: () => false,
+    run: (adapter, ctx, req) => adapter.chat(req as never, ctx) as unknown as Promise<FakeRes>,
+  })
+
+  const response = await runGatewayRequest(fakeRequest(apiKey), ingress, fakeAdapterDeps({ chat }))
+
+  expect(response.status).toBe(200)
+  expect(chat).toHaveBeenCalledTimes(1)
+})
+
+// The point of the fallback: the adapter's own verdict reaches the client
+// intact — its status, its code, and the message that names the offending
+// field and what to do about it — instead of being flattened into one generic
+// envelope by the handler.
+test('the adapter refusal survives the fallback verbatim', async () => {
+  const { apiKey } = await seedGateway()
+  const chat = vi.fn().mockRejectedValue(new GatewayError({
+    status: 400,
+    type: 'invalid_request_error',
+    code: 'unsupported_parameter',
+    param: 'response_format',
+    message: 'gemini returns no timestamps, so it cannot serve response_format: "srt".',
+  }))
+
+  const ingress = makeIngress({
+    supports: () => false,
+    run: (adapter, ctx, req) => adapter.chat(req as never, ctx) as unknown as Promise<FakeRes>,
+  })
+
+  const response = await runGatewayRequest(fakeRequest(apiKey), ingress, fakeAdapterDeps({ chat }))
+
+  expect(response.status).toBe(400)
+  const payload = await response.json()
+  expect(payload.error.code).toBe('unsupported_parameter')
+  expect(payload.error.message).toContain('timestamps')
+  // One attempt, and — because the refusal is non-retryable and happened
+  // before any upstream call — no failover and no breaker record.
+  expect(chat).toHaveBeenCalledTimes(1)
+})
+
+test('an ingress with no newIdentityId still serves a buffered response', async () => {
+  const { apiKey } = await seedGateway()
+
+  const ingress = makeIngress({
+    run: async () => ({ ok: true }),
+    // '' is the documented stand-in for "this dialect mints no id" — proven
+    // here by reflecting identity.id back into the body.
+    finish: (res, identity) => ({ ...res, identityId: identity.id }),
+  })
+
+  const response = await runGatewayRequest(fakeRequest(apiKey), ingress, fakeAdapterDeps({}))
+
+  expect(response.status).toBe(200)
+  expect(await response.json()).toEqual({ ok: true, identityId: '' })
+})

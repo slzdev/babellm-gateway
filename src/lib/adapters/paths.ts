@@ -18,6 +18,7 @@ export const DEFAULT_PATHS = {
   // absolute `/v1/messages`; the adapter always passes an explicit path,
   // so that default never applies and cannot double the prefix.
   messages: '/messages',
+  audioTranscriptions: '/audio/transcriptions',
   embeddings: '/embeddings',
 } as const
 
@@ -29,6 +30,7 @@ const CONFIG_KEYS: Record<keyof ProviderPaths, string> = {
   chatCompletions: 'chatCompletionsPath',
   responses: 'responsesPath',
   messages: 'messagesPath',
+  audioTranscriptions: 'audioTranscriptionsPath',
   embeddings: 'embeddingsPath',
 }
 
@@ -64,6 +66,12 @@ export const PATH_FIELDS = [
     help: 'Where this provider serves the Anthropic Messages API.',
   },
   {
+    name: 'audioTranscriptionsPath',
+    label: 'Audio transcriptions path',
+    placeholder: DEFAULT_PATHS.audioTranscriptions,
+    help: 'Where this provider transcribes audio.',
+  },
+  {
     name: 'embeddingsPath',
     label: 'Embeddings path',
     placeholder: DEFAULT_PATHS.embeddings,
@@ -95,6 +103,12 @@ export const MODEL_PATH_FIELDS = [
     label: 'Messages path',
     placeholder: DEFAULT_PATHS.messages,
     help: 'Where this one model answers the Anthropic Messages API.',
+  },
+  {
+    name: 'audioTranscriptionsPath',
+    label: 'Audio transcriptions path',
+    placeholder: DEFAULT_PATHS.audioTranscriptions,
+    help: 'Where this one model is transcribed, if not where the provider serves the rest.',
   },
   {
     name: 'embeddingsPath',
@@ -187,6 +201,7 @@ export function resolveProviderPaths(config: ProviderConfig): ProviderPaths {
     chatCompletions: resolveOne(config, 'chatCompletions').path,
     responses: resolveOne(config, 'responses').path,
     messages: resolveOne(config, 'messages').path,
+    audioTranscriptions: resolveOne(config, 'audioTranscriptions').path,
     embeddings: resolveOne(config, 'embeddings').path,
   }
 }
@@ -227,6 +242,7 @@ export function resolveRequestPaths(
     chatCompletions: resolve('chatCompletions'),
     responses: resolve('responses'),
     messages: resolve('messages'),
+    audioTranscriptions: resolve('audioTranscriptions'),
     embeddings: resolve('embeddings'),
   }
 }

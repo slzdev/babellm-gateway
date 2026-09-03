@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { eq } from 'drizzle-orm'
-import type { EmbeddingsResult, ProviderAdapter } from '@/lib/adapters/types'
+import type { EmbeddingsResult } from '@/lib/adapters/types'
 import { db } from '@/lib/db'
 import { apiKeys } from '@/lib/db/schema'
 import { generateApiKey } from '@/lib/gateway/auth'
 import { handleEmbeddings } from '@/lib/gateway/embeddings-handler'
+import { getHealthStore, resetHealthStore } from '@/lib/health'
 import { postgresStore } from '@/lib/logs/postgres'
 import { clearRequestLogStoreCache } from '@/lib/logs/registry'
 import { clearPriceCache } from '@/lib/pricing'
 import { setLoggingSettings } from '@/lib/settings'
+import { toEmbedParams } from '@/lib/translate/embeddings-to-gemini'
 import {
   embeddingsRequest, fakeAdapterByProvider, fakeAdapterDeps, seedGateway, seedPrices, seedTargets,
   type SeedOptions,
@@ -53,22 +55,36 @@ function apiError(status: number, message = 'boom') {
 }
 
 /**
- * Deps whose adapters have no `embed` property at all, except where a test
- * names one.
+ * Spies on the circuit breaker's two write paths.
  *
- * fakeAdapterByProvider cannot express this: its default set supplies a
- * throwing `embed`, and a throw from inside `embed` is a provider error, not
- * the absence the ingress turns into a 501.
+ * The steering tests below claim a target was *never charged* for a request it
+ * was not eligible for, and the health store is the only place that would
+ * record it. `recordHealth` is fire-and-forget, so `settleHealth` gives those
+ * writes a turn of the event loop before the assertion runs.
  */
-function depsWithoutEmbed(byName: Record<string, Partial<ProviderAdapter>> = {}) {
-  return {
-    createAdapter: (provider: { name: string }) => ({
-      async chat() {
-        throw new Error(`chat not stubbed for ${provider.name}`)
-      },
-      ...(byName[provider.name] ?? {}),
-    }) as ProviderAdapter,
-  }
+function healthSpies() {
+  const store = getHealthStore()
+  return { succeed: vi.spyOn(store, 'succeed'), fail: vi.spyOn(store, 'fail') }
+}
+
+function targetsTouched(spies: ReturnType<typeof healthSpies>): string[] {
+  return [...spies.succeed.mock.calls, ...spies.fail.mock.calls].map((call) => call[0])
+}
+
+async function settleHealth() {
+  await new Promise((resolve) => setImmediate(resolve))
+}
+
+/** A Gemini target first, an OpenAI-shaped one behind it — the mixed chain the
+ *  routing filter exists for. */
+function seedGeminiThenOpenAI() {
+  return seedTargets({
+    virtualModel: 'house-embed',
+    targets: [
+      { name: 'gem', priority: 0, adapter: 'gemini' },
+      { name: 'oai', priority: 1 },
+    ],
+  })
 }
 
 beforeEach(async () => {
@@ -76,11 +92,14 @@ beforeEach(async () => {
   await resetDb()
   clearRequestLogStoreCache()
   clearPriceCache()
+  resetHealthStore()
   vi.spyOn(console, 'log').mockImplementation(() => {})
 })
 
-afterEach(() => {
+afterEach(async () => {
+  await waitForLogs()
   vi.restoreAllMocks()
+  resetHealthStore()
 })
 
 test('returns one vector per input, in the order they were sent', async () => {
@@ -245,47 +264,167 @@ test('failover walks to the next target, and the log row keeps both attempts', a
   expect(detail?.attempts[1]).toMatchObject({ n: 2, provider: 'backup', status: 200 })
 })
 
-test('a target whose adapter cannot embed answers 501 unsupported_operation', async () => {
-  const { apiKey } = await seedTargets({
-    virtualModel: 'house-embed',
-    targets: [{ name: 'clone', adapter: 'openai_compatible', apiFlavor: 'anthropic_messages' }],
-  })
-
-  const res = await handleEmbeddings(embeddingsRequest(body, apiKey), depsWithoutEmbed())
-  const json = await res.json()
-
-  expect(res.status).toBe(501)
-  expect(json.error.code).toBe('unsupported_operation')
-  // The provider and its flavor, because that pair is where the fix is made.
-  expect(json.error.message).toContain('clone')
-  expect(json.error.message).toContain('Anthropic Messages')
-})
-
-test('a target that cannot embed is not failed over to a healthy sibling', async () => {
-  // Spec 3.7, and the whole reason the refusal is non-retryable: a target
-  // that cannot serve the operation at all is a misconfiguration, and a
-  // sibling quietly covering for it hides the fault until the day that
-  // sibling is down.
-  const { apiKey } = await seedTargets({
+test('an anthropic_messages target is steered past, and the sibling serves', async () => {
+  // The behaviour this endpoint settled on: `supports` filters a candidate
+  // that cannot embed out of the chain *before* ordering, so a viable sibling
+  // answers the request instead of the client getting a 501 from a model that
+  // has a working target. Filtering before `selectOrder` is what makes it
+  // deterministic — after it, the operator's maxAttempts could have truncated
+  // the chain to nothing but ineligible candidates.
+  const { apiKey, targets } = await seedTargets({
     virtualModel: 'house-embed',
     targets: [
-      { name: 'clone', priority: 0, adapter: 'openai_compatible', apiFlavor: 'anthropic_messages' },
+      { name: 'clone', priority: 0, apiFlavor: 'anthropic_messages' },
       { name: 'healthy', priority: 1 },
     ],
   })
-  const healthy = vi.fn().mockResolvedValue(upstreamEmbeddings)
+  const clone = vi.fn()
+  const health = healthSpies()
 
   const res = await handleEmbeddings(
     embeddingsRequest(body, apiKey),
-    depsWithoutEmbed({ healthy: { embed: healthy } }),
+    fakeAdapterByProvider({
+      clone: { embed: clone },
+      healthy: { embed: vi.fn().mockResolvedValue(upstreamEmbeddings) },
+    }),
   )
 
-  expect(res.status).toBe(501)
-  expect(healthy).not.toHaveBeenCalled()
+  expect(res.status).toBe(200)
+  expect(res.headers.get('x-babellm-provider')).toBe('healthy')
+  expect(clone).not.toHaveBeenCalled()
   await waitForLogs()
+  await settleHealth()
 
   const [row] = (await postgresStore.query({ limit: 1 })).rows
   expect((await postgresStore.get(row.id))?.attempts).toHaveLength(1)
+  // Steered past, not tried and failed: the ineligible target learns nothing
+  // about itself from a request it was never eligible for. The serving
+  // target's own success is asserted alongside it, so "no record" is a fact
+  // about the filtered candidate rather than about a spy that saw nothing.
+  expect(targetsTouched(health)).toEqual([targets[1].target.id])
+})
+
+test('a model whose only target is anthropic_messages answers 501 naming the provider', async () => {
+  // Driven through the real registry, because the message is
+  // withEmbedUnsupported's and the point is that the client is told which
+  // provider cannot do this and why — not a generic "not implemented".
+  //
+  // `supports` rejects the one candidate there is, and the handler then orders
+  // the unfiltered chain rather than refusing on its own: a generic "no target
+  // of this model can embed" would carry neither the provider nor the remedy.
+  const { apiKey } = await seedTargets({
+    virtualModel: 'house-embed',
+    targets: [{ name: 'claude', apiFlavor: 'anthropic_messages' }],
+  })
+
+  const res = await handleEmbeddings(embeddingsRequest(body, apiKey))
+
+  expect(res.status).toBe(501)
+  const json = await res.json()
+  expect(json.error.code).toBe('unsupported_operation')
+  expect(json.error.message).toContain('claude')
+  expect(json.error.message).toContain('Anthropic Messages API')
+
+  await waitForLogs()
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  expect(row).toMatchObject({ status: 501, outcome: 'error' })
+  // Asserted rather than inferred from the envelope: one recorded attempt is
+  // what distinguishes the all-ineligible fallback — which ordered the
+  // unfiltered chain so the adapter could name the provider — from an empty
+  // chain, whose only possible answer would have been a generic 503.
+  expect((await postgresStore.get(row.id))?.attempts).toHaveLength(1)
+})
+
+test('a mixed model answers token-array input from the target that takes tokens', async () => {
+  // The improvement the filter buys on this endpoint. Token ids are knowable
+  // from the request alone, and Gemini embeds text — so the request steers to
+  // the OpenAI-shaped sibling instead of depending on which target selection
+  // happened to pick.
+  const { apiKey, targets } = await seedGeminiThenOpenAI()
+  const gem = vi.fn()
+  const health = healthSpies()
+
+  const res = await handleEmbeddings(
+    embeddingsRequest({ model: 'house-embed', input: [15339, 1917] }, apiKey),
+    fakeAdapterByProvider({
+      gem: { embed: gem },
+      oai: { embed: vi.fn().mockResolvedValue(upstreamEmbeddings) },
+    }),
+  )
+
+  expect(res.status).toBe(200)
+  expect(res.headers.get('x-babellm-provider')).toBe('oai')
+  expect(gem).not.toHaveBeenCalled()
+  await waitForLogs()
+  await settleHealth()
+
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  expect((await postgresStore.get(row.id))?.attempts).toHaveLength(1)
+  expect(targetsTouched(health)).toEqual([targets[1].target.id])
+})
+
+test('the same mixed model answers text input from the Gemini target, which can serve it', async () => {
+  // The other half of the pair. `supports` filters the Gemini candidate out
+  // for token ids only, so its eligibility is a property of the request rather
+  // than of the target — and this is the direction that would break if the
+  // filter were widened into "Gemini cannot embed".
+  const { apiKey } = await seedGeminiThenOpenAI()
+  const oai = vi.fn()
+
+  const res = await handleEmbeddings(
+    embeddingsRequest(body, apiKey),
+    fakeAdapterByProvider({
+      gem: { embed: vi.fn().mockResolvedValue(upstreamEmbeddings) },
+      oai: { embed: oai },
+    }),
+  )
+
+  expect(res.status).toBe(200)
+  expect(res.headers.get('x-babellm-provider')).toBe('gem')
+  expect(oai).not.toHaveBeenCalled()
+})
+
+test('a Gemini-only model handed token ids answers 400 naming input, and no breaker failure', async () => {
+  // The all-ineligible fallback for the other rule: nothing survives the
+  // filter, so the request reaches the adapter and the real translator refuses
+  // it. That refusal names the field and the remedy, which a handler-level
+  // 501 could not. It is raised before any upstream call, so it costs one
+  // recorded attempt and tells the breaker nothing.
+  const { apiKey } = await seedEmbeddings({ adapter: 'gemini' })
+  const upstream = vi.fn()
+  const health = healthSpies()
+
+  const res = await handleEmbeddings(
+    embeddingsRequest({ model: 'house-embed', input: [15339, 1917] }, apiKey),
+    fakeAdapterDeps({
+      embed: async (req, ctx) => {
+        toEmbedParams(req, ctx, 'test-provider')
+        return upstream()
+      },
+    }),
+  )
+
+  expect(res.status).toBe(400)
+  const json = await res.json()
+  expect(json.error).toMatchObject({
+    type: 'invalid_request_error',
+    code: 'unsupported_input',
+  })
+  expect(json.error.message).toContain('test-provider')
+  expect(upstream).not.toHaveBeenCalled()
+  await waitForLogs()
+  await settleHealth()
+
+  const [row] = (await postgresStore.query({ limit: 1 })).rows
+  expect(row).toMatchObject({ status: 400, outcome: 'error' })
+  const detail = await postgresStore.get(row.id)
+  // One attempt at 400, not an empty chain and not a 501: the request did
+  // reach a target, which is what let it be told which field to change.
+  expect(detail?.attempts).toHaveLength(1)
+  expect(detail?.attempts[0]).toMatchObject({ n: 1, provider: 'test-provider', status: 400 })
+  // Nothing at all: a refusal raised before the call is not evidence about the
+  // target, so the breaker is told neither success nor failure.
+  expect(targetsTouched(health)).toEqual([])
 })
 
 test('the log row records an unstreamed request, its prompt tokens and a zero output', async () => {

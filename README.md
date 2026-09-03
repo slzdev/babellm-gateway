@@ -63,7 +63,21 @@ await client.responses.create({
   express is dropped rather than rejected, and named in the
   `x-babellm-dropped-params` response header and the request log.
 
-`/v1/embeddings` completes the set — the third shape a client can send, on the
+Audio too, on the same client and the same virtual models:
+
+```ts
+await client.audio.transcriptions.create({
+  model: "transcribe",             // two Whisper providers, failover between them
+  file: fs.createReadStream("standup.mp3"),
+});
+```
+
+All five response formats against an OpenAI-shaped target, two of them against
+Gemini, and the same routing, failover, and logs as everything else. The
+limitations are worth reading *before* you route audio through it:
+[Audio transcriptions](#audio-transcriptions).
+
+`/v1/embeddings` completes the set — the fourth shape a client can send, on the
 same key and the same virtual models:
 
 ```ts
@@ -82,20 +96,21 @@ await client.embeddings.create({
   returned **unpriced** rather than as costing zero. Google's `embedContent`
   measures no tokens — `billableCharacterCount` is a Vertex field — and a zero
   would claim a measurement that was never taken.
-- **A target whose model is on the `anthropic_messages` flavor answers a
-  `501`.** That API has no embeddings endpoint, and nothing can synthesize an
-  embedding out of a chat completion the way a Response can be synthesized from
-  one. The request is deliberately **not** failed over to a sibling that could
-  serve it: a target that cannot do the operation at all is a misconfiguration,
-  and a sibling quietly covering for it hides the fault until the day that
-  sibling is down. The error names the provider and the flavor, because that
-  pair is where the fix is made.
-- **Token-array `input` is refused with a `400` on a Gemini target.** Gemini
-  embeds text, so the only thing the gateway could do with token ids is hand
-  them over as something else — returning vectors for content the client never
-  asked about. That is the one failure "drop and report" cannot cover, so it is
-  refused instead. `user`, which changes no vector, is dropped and named in
-  `x-babellm-dropped-params` as usual.
+- **A target that cannot embed is skipped, not attempted.** A model on the
+  `anthropic_messages` flavor has no embeddings endpoint to reach, and neither
+  does a Gemini target handed token-array `input` — so a virtual model that
+  also has a sibling which *can* serve the request is routed to that sibling,
+  before target selection rather than after a wasted attempt. Only a model
+  where nothing can serve it refuses, and then the answer comes from whoever
+  knows why: a `501` naming the provider for the Anthropic flavor, a `400`
+  naming `input` for a Gemini-only one.
+- **Token-array `input` needs an OpenAI-shaped target.** Gemini embeds text, so
+  the only thing the gateway could do with token ids is hand them over as
+  something else — returning vectors for content the client never asked about.
+  That is the one failure "drop and report" cannot cover, so such a request
+  steers to a target that takes tokens and is refused with a `400` only when
+  Gemini is the sole option. `user`, which changes no vector, is dropped and
+  named in `x-babellm-dropped-params` as usual.
 - There is no streaming form to support — the OpenAI embeddings API has none —
   so the log row records `stream = false`, and the cost arrives with the body.
 
@@ -139,7 +154,7 @@ Set `GATEWAY_PORT` to publish elsewhere (`GATEWAY_PORT=3100 docker compose …`)
 
 ```mermaid
 flowchart LR
-    A["Your app<br/><sub>OpenAI SDK</sub>"] -->|"sk-bab-…"| B["BabeLLM<br/><sub>/v1/chat/completions<br/>/v1/responses<br/>/v1/embeddings</sub>"]
+    A["Your app<br/><sub>OpenAI SDK</sub>"] -->|"sk-bab-…"| B["BabeLLM<br/><sub>/v1/chat/completions<br/>/v1/responses<br/>/v1/audio/transcriptions<br/>/v1/embeddings</sub>"]
     B --> C{"Virtual model<br/><sub>policy + targets</sub>"}
     C -->|1| D["OpenAI"]
     C -->|2| E["Any OpenAI-compatible<br/><sub>Groq, OpenRouter, vLLM…</sub>"]
@@ -147,7 +162,8 @@ flowchart LR
     B -.-> G[("Postgres<br/><sub>logs · usage · config</sub>")]
 ```
 
-Clients can speak Chat Completions, Responses, or embeddings. Every
+Clients can speak either Chat Completions or Responses, upload audio to
+`/v1/audio/transcriptions`, or embed text at `/v1/embeddings`. Every
 OpenAI-shaped provider is called on one of three APIs, whichever its
 `api_flavor` says — Chat Completions, Responses, or Anthropic Messages — set
 per provider and overridable per catalog model, so one virtual model can mix a
@@ -156,13 +172,12 @@ per provider and overridable per catalog model, so one virtual model can mix a
 three — Gemini's `generateContent` — is translated in both directions, and so
 is any request that crosses ingress and provider flavor (a Responses request
 served by a Chat Completions target, a Chat Completions request served by an
-Anthropic Messages target, and so on). Embeddings sit outside that choice:
-`/v1/embeddings` is a sibling of both OpenAI chat dialects rather than one of
-them, so a `responses`-flavored target embeds through the same client a
+Anthropic Messages target, and so on). Transcriptions and embeddings sit
+outside that choice: each is a sibling of all three chat dialects rather than
+one of them, so a `responses`-flavored target embeds through the same client a
 `chat_completions` one does, only Gemini needs translating, and an
-`anthropic_messages` target has no embeddings endpoint to be pointed at. The
-embeddings path is configurable per provider and per model, like the three chat
-ones.
+`anthropic_messages` target has neither endpoint to be pointed at. Both paths
+are configurable per provider and per model, like the three chat ones.
 
 An `anthropic_messages` model is called on `/v1/messages` — the path is
 configurable per provider and per model, like the other flavors'. There is no
@@ -225,10 +240,12 @@ fails over on the same loop until its first chunk lands.
 `x-babellm-provider` and `x-babellm-upstream-model` on the response name who
 actually served. Targets can pin a service tier (`flex`, `priority`,
 `ultrafast`, …) where the provider supports one. A pinned tier applies to the
-two chat shapes only: `/v1/embeddings` has no such parameter, and OpenAI answers
-an argument it does not recognise with a `400` rather than ignoring it, so
-injecting one there would turn a setting that means nothing on that endpoint
-into every request to that target failing.
+two chat shapes only: neither `/v1/audio/transcriptions` nor `/v1/embeddings`
+has such a parameter, and a provider answers an argument it does not recognise
+with a `400` rather than ignoring it, so injecting one there would turn a
+setting that means nothing on those endpoints into every request to that target
+failing. A pin that lands on one of them is reported in
+`x-babellm-dropped-params` instead.
 
 ### Costs on the response
 
@@ -251,10 +268,12 @@ the way the gateway billed it:
 }
 ```
 
-Same field on `/v1/chat/completions`, `/v1/responses` and `/v1/embeddings`.
-Streaming puts it on the final usage chunk (chat) or the `response.completed`
-event (Responses), so it arrives with the tokens it prices rather than in a
-header that has already been flushed.
+Same field on `/v1/chat/completions`, `/v1/responses` and `/v1/embeddings`, and
+on a `json` transcription whose provider reported token usage it could be
+priced from — see [Audio transcriptions](#audio-transcriptions) for which
+providers that is. Streaming puts it on the final usage chunk (chat) or the
+`response.completed` event (Responses), so it arrives with the tokens it prices
+rather than in a header that has already been flushed.
 
 Amounts are strings at nine decimal places — a client summing thousands of
 requests should not inherit float error from the wire format. Cached tokens are
@@ -315,6 +334,86 @@ client.chat.completions.create({ model: "xai/grok-4.5", messages });
 Names resolve as virtual models first, so `xai/grok-4.5` can also be a virtual
 model that shadows the direct route — the supported way to put a policy in
 front of a name your clients already send.
+
+### Audio transcriptions
+
+`POST /v1/audio/transcriptions` is not a special case. Virtual models,
+priority tiers and policies, failover, the breaker, tags, rate limits,
+budgets, and one log row with the full attempt chain all apply to it exactly as
+they do to a chat.
+
+```ts
+await client.audio.transcriptions.create({
+  model: "transcribe",
+  file: fs.createReadStream("standup.mp3"),
+  response_format: "verbose_json",
+});
+```
+
+All five response formats are served — `json`, `verbose_json`, `text`, `srt`
+and `vtt`. The last three come back as `text/plain`, which is what the upstream
+API sends, so the SDK hands your code a string for those and a parsed object
+for the other two.
+
+Any OpenAI-shaped provider serves the endpoint natively at
+`/audio/transcriptions` on its base URL, configurable as an
+`audioTranscriptionsPath` per provider and per catalog model like the other
+endpoints' paths. A `gemini` provider is translated instead: the audio is
+inlined into a `generateContent` call, `language` and `prompt` are folded into
+the instruction, and `include`, `chunking_strategy`, `keywords` and `languages`
+are dropped and named in `x-babellm-dropped-params`. An `anthropic_messages`
+target is skipped — that flavor's host has no transcription endpoint and no
+audio input at all — and a model whose only target is one answers `501` naming
+the provider.
+
+Failover re-reads the uploaded file for every attempt, so the second target
+gets the same bytes as the first. Payload capture stores the file's name, size,
+and mime type and never the audio itself: truncated audio has no diagnostic
+value, and a call recording in a Postgres row is a liability the byte cap
+reduces but doesn't remove.
+
+**What it deliberately doesn't do:**
+
+- **No `stream: true`.** Refused with a `400` naming the parameter rather than
+  ignored. Upstream ignores the flag for `whisper-1` and honors it for the
+  `gpt-4o-transcribe` family, and the gateway can't do either honestly — a
+  client left waiting for an event stream while holding a JSON body has no way
+  to diagnose that. Drop the flag and retry.
+- **A Gemini target never answers `verbose_json`, `srt`, or `vtt`.** Gemini
+  returns no timestamps, and those three formats are nothing but timestamps —
+  an empty `segments` array and a `duration` the gateway invented would be a
+  fabricated measurement in a response whose whole purpose is to carry
+  measurements. So a Gemini target is skipped for those formats, and for audio
+  over 20 MB, which doesn't fit inline in one of its requests: a virtual model
+  that also holds an OpenAI-shaped target answers from that one, in a single
+  attempt, and only a model where *nothing* can serve refuses — with a `400`
+  naming the format or the size. What the client asked for is answered or
+  explained, never coin-flipped on which target the policy happened to pick.
+- **Only `response_format: json` prices, and only from a model that bills by
+  token.** `text`, `srt` and `vtt` come back as a bare string with no `usage`
+  object to hang a cost on, and `verbose_json`'s usage is duration-only —
+  `{ type: "duration", seconds }` — regardless of which model served it, so it
+  never prices either. `whisper-1` and its clones report that duration usage
+  even for `json`, and the catalog holds per-million-token rates only, so
+  there is nothing to price seconds against. Only a `json` transcription from
+  a token-billed model — the `gpt-4o-transcribe` family — prices, charges, and
+  rolls up like every other request; every other combination logs with no
+  tokens and no cost, and nothing is charged against that key's tpm or
+  budget — **the dashboard will undercount audio spend on four of the five
+  response formats, whichever model served them**, and it's worth knowing
+  that before you route it rather than after. Per-minute pricing is a
+  follow-up: a `$0.00` that reads as real spend would be worse than a visible
+  gap.
+- **25 MB per file**, the ceiling the upstream API enforces, answered with a
+  `400` naming the limit — so a request that would be rejected upstream is
+  rejected here instead, without the round trip. Route handlers carry no body
+  limit of their own, so this cap is also the only thing bounding what the
+  gateway will forward.
+- **No `/v1/audio/translations` or `/v1/audio/speech`, and no
+  `diarized_json`.** The first two are ordinary router `404`s until someone
+  asks for them; `diarized_json` is refused as an unsupported
+  `response_format`, because one model family serves it and the shape is still
+  moving.
 
 ### A model catalog that knows the prices
 
@@ -507,6 +606,11 @@ phases. What's still missing:
   distribution.
 - **No Bedrock adapter and no `/v1/models`.** A `bedrock` provider is accepted
   by the dashboard but returns `501`.
+- **Transcription spend can be invisible.** Duration-billed models bill by
+  audio length, which the catalog can't express, so those requests log with no
+  usage and no cost — see [Audio transcriptions](#audio-transcriptions).
+  Streaming transcription, `/v1/audio/translations`, and `/v1/audio/speech`
+  are not served.
 - **Reasoning travels one way.** Reasoning summaries and Gemini thoughts are
   surfaced as `reasoning_content` but never fed back upstream, so long tool
   loops on models that expect their own reasoning items may degrade.

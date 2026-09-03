@@ -1,74 +1,86 @@
 import type { EmbeddingsResult } from '@/lib/adapters/types'
-import { API_FLAVOR_LABELS } from '@/lib/api-flavors'
 import { computeInputOnlyCost } from '@/lib/pricing'
 import { embeddingsRequestSchema, type EmbeddingsRequest } from '@/lib/schemas/embeddings'
+import { isTextInput } from '@/lib/translate/embeddings-to-gemini'
 import { withUsageCost } from '../cost'
-import { UnsupportedOperationError } from '../errors'
-import { parseWith, type Ingress } from '../handler'
-import { newEmbeddingsId, rewriteEmbeddings } from '../identity'
+import { parseWith, readJson, type Ingress } from '../handler'
+import { rewriteEmbeddings } from '../identity'
 import type { Candidate } from '../resolve'
 import { usageFromEmbeddings } from '../usage'
 import { droppedForEmbeddings } from './dropped'
 
 /**
- * The answer a target that cannot embed gives, and the only place that answer
- * lives.
+ * `POST /v1/embeddings`, as an `Ingress`.
  *
- * `embed` is optional on `ProviderAdapter` because no wrapper can synthesize
- * an embedding out of a chat completion the way `withRespondViaChat`
- * synthesizes a Response — so the adapters state what they can do by
- * presence, and turning that absence into an HTTP answer is the ingress's job
- * rather than each adapter's.
- *
- * `classifyProviderError` reads `UnsupportedOperationError` as a non-retryable
- * 501, so the chain stops here instead of trying the next target. That is the
- * intent, not a limitation: a virtual model's targets are meant to be
- * interchangeable, one that cannot serve the operation at all is a
- * configuration error, and failing over would hide it behind a working sibling
- * until the day that sibling is down. Non-retryable also keeps `execute` from
- * reporting health, so a provider that is perfectly reachable does not open a
- * breaker by declining an ability it never claimed.
- *
- * The flavor is named alongside the provider because it is usually the lever:
- * an `openai_compatible` provider embeds fine until a target pins it to
- * `anthropic_messages`, and the fix is on the same page as the cause.
+ * The fourth dialect on the shared handler, and the plainest: JSON in, JSON
+ * out, like the two chat shapes, but with no streaming form, no response id,
+ * and no `service_tier` — three optional seams left unimplemented rather than
+ * stubbed. Everything else about the request (auth, tags, limits, routing,
+ * failover, the breaker, pricing, logging) is the handler's, unchanged.
  */
-function refuseEmbeddings(candidate: Candidate): UnsupportedOperationError {
-  return new UnsupportedOperationError(
-    `Provider "${candidate.provider.name}" cannot serve embeddings on the `
-    + `${API_FLAVOR_LABELS[candidate.apiFlavor]} API flavor: its adapter has no embeddings `
-    + 'endpoint. On the Catalog page, either point this model at a target whose provider '
-    + 'speaks an OpenAI-shaped or Gemini dialect, or change this target\'s API flavor. '
-    + 'The request was not retried against another target, because a target that cannot '
-    + 'serve the operation is a misconfiguration rather than an outage.',
-  )
+
+/**
+ * Whether this candidate can serve *this* request.
+ *
+ * The adapter is checked before the flavor, mirroring `createAdapter` and the
+ * transcription ingress: a gemini-adapter provider gets the translated `embed`
+ * regardless of the flavor label it carries, so a flavor-first ordering here
+ * would call such a target unable to embed at all. `withEmbedUnsupported` is
+ * applied only inside `flavoredAdapter`, i.e. never to Gemini.
+ *
+ * Judged per request rather than per target because one of the two rules is a
+ * property of the request: `input` may be an array of token ids, which Gemini
+ * cannot accept — it embeds text. That is knowable from the request alone,
+ * which is the test for what belongs here, and knowing it before ordering is
+ * what makes the answer deterministic. Discovered at attempt time instead, a
+ * token-array request against a mixed Gemini+OpenAI model under `round_robin`
+ * would succeed about half the time and answer a 400 the rest; filtering the
+ * Gemini candidate out steers it to the target that takes tokens and leaves
+ * that target eligible for every request it does serve.
+ *
+ * Both rules have the matching refusal `supports`'s docblock requires, which
+ * is what licenses them: `withEmbedUnsupported` answers the Anthropic flavor
+ * with a 501, and the translator's `refuseTokenInput` answers token ids with a
+ * 400 naming `input` and the remedy. Neither makes an upstream call, so the
+ * all-ineligible fallback costs nothing.
+ */
+function supports(candidate: Candidate, req: EmbeddingsRequest): boolean {
+  if (candidate.provider.adapter === 'gemini') return isTextInput(req.input)
+  // Anthropic's API has no embeddings endpoint, and nothing can synthesize a
+  // vector out of the completion it does serve — so this target could only
+  // burn an attempt, a breaker failure and a round trip to report something
+  // the gateway already knew from its own configuration.
+  if (candidate.apiFlavor === 'anthropic_messages') return false
+  return true
 }
 
-export const embeddingsIngress: Ingress<EmbeddingsRequest, EmbeddingsResult> = {
-  parse: (raw) => parseWith(embeddingsRequestSchema, raw),
+export const embeddingsIngress: Ingress<EmbeddingsRequest, EmbeddingsResult, never> = {
+  read: async (request) => parseWith(embeddingsRequestSchema, await readJson(request)),
   modelOf: (req) => req.model,
+  // Never, and unlike transcription this ingress does not even refuse
+  // `stream: true`: the OpenAI embeddings API documents no such parameter, so
+  // one a client sends anyway is forwarded like any other undocumented field
+  // and ignored by an OpenAI-shaped upstream. Declaring none of the streaming
+  // members is what makes the handler's streaming branch unreachable here.
+  isStream: () => false,
+  supports,
+  // No `bodyFor`: the embeddings dialect has no `service_tier` field, and
+  // OpenAI answers an argument it does not recognise with `400 Unrecognized
+  // request argument supplied` rather than ignoring it. A 400 is
+  // non-retryable, so injecting an operator's pinned tier here would take
+  // every embeddings request to that target off the air, blaming an argument
+  // the client never sent. The pin is reported as dropped instead — see
+  // `droppedForEmbeddings`.
   droppedFor: (candidate, req) => droppedForEmbeddings(candidate, req),
-  run: (adapter, ctx, req, candidate) => {
-    if (!adapter.embed) throw refuseEmbeddings(candidate)
-    return adapter.embed(req, ctx)
-  },
-  finish: (res, identity, cost) => withUsageCost(rewriteEmbeddings(res, identity), cost),
+  run: (adapter, ctx, req) => adapter.embed(req, ctx),
   // The SDK's response type declares `usage` required; a translated Gemini
   // response has none, which is why this normalizer takes an absence and
   // answers null — the request is then unpriced rather than priced at zero.
   usageOf: (res) => usageFromEmbeddings(res.usage),
   cost: computeInputOnlyCost,
-  // The OpenAI embeddings API documents no `service_tier`, and OpenAI answers
-  // an argument it does not recognise with a 400 rather than ignoring it. So a
-  // tier an operator pinned on the route target is dropped here instead of
-  // being injected: a setting that means nothing on this endpoint must read as
-  // nothing, not as every request to that target failing non-retryably. A tier
-  // a client sends itself still passes through, as any parameter it sends does.
-  pinsServiceTier: false,
-  newIdentityId: newEmbeddingsId,
-  // No `streaming` block, which is what makes the handler's streaming branch
-  // unreachable for this ingress by type rather than by convention: the OpenAI
-  // embeddings API has no streaming form to implement. A `stream` a client
-  // sends regardless is forwarded like any other undocumented parameter and
-  // ignored upstream; the log row records `stream = false` either way.
+  finish: (res, identity, cost) => withUsageCost(rewriteEmbeddings(res, identity), cost),
+  toResponse: (res, headers) => Response.json(res, { headers }),
+  // No `newIdentityId`: an embeddings response has no `id` field, so there is
+  // nothing to mint one for and the handler's `''` is never read. `finish`
+  // still rewrites the `model`, which this shape does carry.
 }

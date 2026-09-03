@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import OpenAI from 'openai'
 import { toProviderError } from '@/lib/adapters/openai/errors'
-import { ProviderError } from '@/lib/gateway/errors'
+import { GatewayError, ProviderError } from '@/lib/gateway/errors'
 
 // `OpenAI.APIError`'s constructor is `(status, error, message, headers)` where
 // `error` is the already-unwrapped error body — see `APIError.generate()` in
@@ -66,4 +66,27 @@ test("a 404 is reported with the provider's own message", () => {
 
   expect(error.status).toBe(404)
   expect(error.message).toContain('Not Found')
+})
+
+test('a GatewayError is rethrown untouched, never reclassified as a retryable ProviderError', () => {
+  // Nothing in this adapter's own try blocks throws a GatewayError today —
+  // see the file comment — but the guard is asserted here anyway so the
+  // invariant is enforced at the classifier, not left to be rediscovered by
+  // whichever future call site is the first to throw one.
+  const original = new GatewayError({
+    status: 400,
+    type: 'invalid_request_error',
+    code: 'unsupported_parameter',
+    message: 'refused',
+  })
+
+  let thrown: unknown
+  try {
+    toProviderError(original)
+  } catch (err) {
+    thrown = err
+  }
+
+  expect(thrown).toBe(original)
+  expect(thrown).not.toBeInstanceOf(ProviderError)
 })

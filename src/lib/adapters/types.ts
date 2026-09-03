@@ -4,13 +4,24 @@ import type { CatalogFields } from '@/lib/catalog/types'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
 import type { EmbeddingsRequest } from '@/lib/schemas/embeddings'
 import type { ResponsesRequest } from '@/lib/schemas/responses'
+import type { TranscriptionRequest } from '@/lib/schemas/transcription'
 
 export type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion
 export type ChatCompletionChunk = OpenAI.Chat.Completions.ChatCompletionChunk
 export type ResponsesResult = OpenAI.Responses.Response
 export type ResponseStreamEvent = OpenAI.Responses.ResponseStreamEvent
-// No streaming counterpart: the embeddings API has no streaming form at all,
-// which is why this is one type where the others are pairs.
+export type Transcription = OpenAI.Audio.Transcription
+export type TranscriptionVerbose = OpenAI.Audio.TranscriptionVerbose
+/**
+ * The three shapes the upstream endpoint returns, discriminated by the
+ * `response_format` the ingress already knows it asked for. No wrapper
+ * object carrying the format alongside the body: a second copy of it here
+ * could only ever disagree with the one the ingress already has.
+ */
+export type TranscriptionResult = Transcription | TranscriptionVerbose | string
+// No streaming counterpart, and no union either: the embeddings API has one
+// wire shape and no streaming form at all, which is why this is one type where
+// the two above it are pairs and a triple.
 export type EmbeddingsResult = OpenAI.Embeddings.CreateEmbeddingResponse
 
 export interface ProviderConfig {
@@ -42,6 +53,7 @@ export interface ProviderConfig {
   chatCompletionsPath?: string
   responsesPath?: string
   messagesPath?: string
+  audioTranscriptionsPath?: string
   embeddingsPath?: string
   [key: string]: unknown
 }
@@ -59,6 +71,7 @@ export interface ModelPathOverrides {
   chatCompletionsPath?: string | null
   responsesPath?: string | null
   messagesPath?: string | null
+  audioTranscriptionsPath?: string | null
   embeddingsPath?: string | null
 }
 
@@ -116,26 +129,36 @@ export interface ProviderAdapter {
     ctx: AttemptContext,
   ): AsyncIterable<ResponseStreamEvent>
   /**
-   * Optional by necessity rather than by convenience, which is what makes it
-   * the odd one out beside `respond`. `respond` can be required because
-   * `withRespondViaChat` manufactures it out of `chat`; no wrapper can
-   * manufacture an embedding out of a chat completion, and the Anthropic
-   * Messages API — the shape a Messages-flavored target speaks — has no
-   * embeddings endpoint to reach at all. So an adapter that cannot embed says
-   * so by omission, and the embeddings ingress turns that absence into a
-   * non-retryable 501 naming the provider.
+   * No streaming twin: section 3.7 of the design doc refuses `stream: true`
+   * for this endpoint entirely, and a method whose only implementation
+   * throws would put a lie in the interface.
    */
-  embed?(req: EmbeddingsRequest, ctx: AttemptContext): Promise<EmbeddingsResult>
+  transcribe(req: TranscriptionRequest, ctx: AttemptContext): Promise<TranscriptionResult>
+  /**
+   * Required for the same reason `transcribe` is, and supplied the same way:
+   * `withEmbedUnsupported` gives it to the one flavor whose host has no
+   * embeddings endpoint at all. An optional method would have made "cannot
+   * embed" a fact only the ingress could see, and the ingress is the wrong
+   * place for it — `supports` steers a mixed model away from such a target
+   * before selection, but the request that reaches a model where *every*
+   * target is one still has to be refused by whoever knows why.
+   *
+   * No streaming twin here either, and for a stronger reason than
+   * transcription's: the OpenAI embeddings API has no streaming form to
+   * refuse.
+   */
+  embed(req: EmbeddingsRequest, ctx: AttemptContext): Promise<EmbeddingsResult>
 }
 
 /**
- * What `createOpenAIAdapter` and `createGeminiAdapter` build: chat-native,
- * with no opinion about the Responses API. Each is upgraded to a full
- * `ProviderAdapter` by `withRespondViaChat` in registry.ts, which is the only
- * place that is allowed to know these two methods are missing.
- *
- * Only those two are omitted: `embed` stays, because embeddings are outside
- * the dialect choice this type is about. A chat-native adapter that can also
- * embed declares it here and the wrapper carries it through untouched.
+ * What `createGeminiAdapter` builds (and what `createOpenAIAdapter` builds
+ * before it layers on its own native `transcribe` and `embed` — see
+ * openai/audio.ts and openai/embeddings.ts): chat-native, with no opinion
+ * about the Responses API, transcription, or embeddings.
+ * `respond`/`respondStream` are supplied by `withRespondViaChat`,
+ * `transcribe` by `withTranscribeUnsupported` and `embed` by
+ * `withEmbedUnsupported`, all in wrappers.ts — the only places allowed to
+ * know these methods are missing.
  */
-export type ChatOnlyAdapter = Omit<ProviderAdapter, 'respond' | 'respondStream'>
+export type ChatOnlyAdapter =
+  Omit<ProviderAdapter, 'respond' | 'respondStream' | 'transcribe' | 'embed'>

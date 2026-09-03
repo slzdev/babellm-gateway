@@ -51,6 +51,7 @@ describe('resolveProviderPaths', () => {
       chatCompletions: '/chat/completions',
       responses: '/responses',
       messages: '/messages',
+      audioTranscriptions: '/audio/transcriptions',
       embeddings: '/embeddings',
     })
     expect(DEFAULT_PATHS).toEqual({
@@ -58,6 +59,7 @@ describe('resolveProviderPaths', () => {
       chatCompletions: '/chat/completions',
       responses: '/responses',
       messages: '/messages',
+      audioTranscriptions: '/audio/transcriptions',
       embeddings: '/embeddings',
     })
   })
@@ -68,6 +70,7 @@ describe('resolveProviderPaths', () => {
       chatCompletions: '/api/v2/chat',
       responses: '/responses',
       messages: '/messages',
+      audioTranscriptions: '/audio/transcriptions',
       embeddings: '/embeddings',
     })
   })
@@ -84,6 +87,7 @@ describe('resolveProviderPaths', () => {
       chatCompletions: '/api/chat',
       responses: '/api/responses',
       messages: '/api/messages',
+      audioTranscriptions: '/audio/transcriptions',
       embeddings: '/api/embeddings',
     })
   })
@@ -108,6 +112,7 @@ describe('resolveRequestPaths', () => {
       chatCompletions: '/chat/completions',
       responses: '/responses',
       messages: '/messages',
+      audioTranscriptions: '/audio/transcriptions',
       embeddings: '/embeddings',
     })
   })
@@ -125,6 +130,7 @@ describe('resolveRequestPaths', () => {
       chatCompletions: '/chat/completions',
       responses: 'https://example.com/openai/v1/responses',
       messages: '/messages',
+      audioTranscriptions: '/audio/transcriptions',
       embeddings: '/embeddings',
     })
   })
@@ -178,13 +184,14 @@ describe('PATH_FIELDS', () => {
   test('describes each endpoint once, keyed by the config key it writes', () => {
     expect(PATH_FIELDS.map((f) => f.name)).toEqual([
       'modelsPath', 'chatCompletionsPath', 'responsesPath', 'messagesPath',
-      'embeddingsPath',
+      'audioTranscriptionsPath', 'embeddingsPath',
     ])
   })
 
   test('carries the default as the placeholder, so a blank box reads as "default"', () => {
     expect(PATH_FIELDS.map((f) => f.placeholder)).toEqual([
-      '/models', '/chat/completions', '/responses', '/messages', '/embeddings',
+      '/models', '/chat/completions', '/responses', '/messages',
+      '/audio/transcriptions', '/embeddings',
     ])
   })
 })
@@ -247,6 +254,24 @@ test('a configured messages path resolves against the base URL origin', () => {
 test('the messages path is offered on both the provider and the model forms', () => {
   expect(PATH_FIELDS.map((f) => f.name)).toContain('messagesPath')
   expect(MODEL_PATH_FIELDS.map((f) => f.name)).toContain('messagesPath')
+})
+
+test('audioTranscriptions defaults to /audio/transcriptions and joins onto the base URL', () => {
+  const paths = resolveRequestPaths({}, 'https://api.openai.com/v1')
+  expect(paths.audioTranscriptions).toBe('/audio/transcriptions')
+})
+
+test('a configured audio transcriptions path resolves against the base URL origin', () => {
+  const paths = resolveRequestPaths(
+    { audioTranscriptionsPath: '/openai/v1/audio/transcriptions' },
+    'https://gateway.test/openai/v1',
+  )
+  expect(paths.audioTranscriptions).toBe('https://gateway.test/openai/v1/audio/transcriptions')
+})
+
+test('the audio transcriptions path is offered on both the provider and the model forms', () => {
+  expect(PATH_FIELDS.map((f) => f.name)).toContain('audioTranscriptionsPath')
+  expect(MODEL_PATH_FIELDS.map((f) => f.name)).toContain('audioTranscriptionsPath')
 })
 
 test('embeddings defaults to /embeddings and joins onto the base URL', () => {

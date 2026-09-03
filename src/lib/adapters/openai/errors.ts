@@ -1,5 +1,5 @@
 import OpenAI from 'openai'
-import { ProviderError } from '@/lib/gateway/errors'
+import { GatewayError, ProviderError } from '@/lib/gateway/errors'
 
 // 408 and 409 are transport-ish rather than a rejection of the request, and
 // 429 is the one status where retrying against a *different* provider is
@@ -15,8 +15,23 @@ const RETRYABLE_STATUSES = new Set([408, 409, 429, 498])
  * Interprets an OpenAI SDK failure so the routing loop does not have to.
  * This is the file every future adapter writes its own version of; the
  * gateway's own classifier is only a fallback for errors that escape one.
+ *
+ * A `GatewayError` is rethrown, never reclassified: it is the gateway's own
+ * verdict that the client's request is wrong, made before any upstream call
+ * happened, and the generic branch below would otherwise turn it into a
+ * retryable 502 `upstream_error` — resending a doomed request and charging a
+ * healthy provider's circuit breaker for a call it never received. Nothing
+ * in this adapter's try blocks throws a `GatewayError` today — the Gemini
+ * counterpart's transcribe() throws one too (assertTranscribable, for a
+ * refused response_format or an oversized file), but deliberately from
+ * outside its own try block, so this classifier never actually sees it
+ * either. The guard belongs here anyway, at the classifier rather than at
+ * each call site, so the next adapter method that does throw a
+ * `GatewayError` from inside a try is already safe without having to
+ * rediscover this rule.
  */
 export function toProviderError(err: unknown, hint?: string): ProviderError {
+  if (err instanceof GatewayError) throw err
   if (err instanceof ProviderError) return err
 
   if (err instanceof OpenAI.APIError) {

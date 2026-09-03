@@ -39,26 +39,25 @@ const defaultDeps: GatewayDeps = { createAdapter: defaultCreateAdapter }
 
 /**
  * The shape-specific behaviour `runGatewayRequest` needs from an ingress
- * (Chat, Responses, Embeddings) to run the shared lifecycle: bookkeeping,
- * limits, model resolution, failover and logging live once in the handler;
- * only what differs between wire formats lives behind this interface.
+ * (Chat, Responses, and later transcription) to run the shared lifecycle:
+ * bookkeeping, limits, model resolution, failover and logging live once in
+ * the handler; only what differs between wire formats lives behind this
+ * interface.
+ *
+ * Chat and Responses are both JSON in, JSON out, and always streamable —
+ * which is why the members below split into a required core and an optional
+ * remainder. The optional members exist so a dialect that is *not* JSON, or
+ * cannot stream, or mints no id of its own (transcription is all three) can
+ * say so honestly instead of a stub that throws or lies.
  */
-export interface Ingress<Req, Res, Chunk = never> {
-  parse(raw: unknown): Req
+export interface Ingress<Req, Res, Chunk> {
+  /** Reads AND validates the body. Replaces `parse(raw: unknown)`: the wire
+   *  format decides how the body arrives, not just what it contains. */
+  read(request: Request): Promise<Req>
   modelOf(req: Req): string
+  isStream(req: Req): boolean
   droppedFor(candidate: Candidate, req: Req): string[]
-  /** `candidate` is passed for one reason: an ingress whose operation not
-   *  every adapter implements has to name the target that is refusing it.
-   *  `execute` is already holding it — the body is per-target — and the
-   *  alternative, hanging the provider off `AttemptContext`, would hand it to
-   *  every adapter to answer a question only an ingress asks. Chat and
-   *  Responses ignore it. */
-  run(
-    adapter: ProviderAdapter,
-    ctx: AttemptContext,
-    req: Req,
-    candidate: Candidate,
-  ): Promise<Res>
+  run(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): Promise<Res>
   /** The last transformation before the client sees the response: gateway
    *  identity, and the cost this request is being charged. `cost` is already
    *  serialized, so no ingress has to know how CostBreakdown is rendered. */
@@ -67,40 +66,105 @@ export interface Ingress<Req, Res, Chunk = never> {
   /** How this dialect turns catalog rates into a charge. Chat and Responses
    *  bill input and output; a dialect with no output tokens is billed on input
    *  alone, and the rule for that lives with the dialect rather than in a
-   *  handler that would have to sniff which one it is holding. The handler
-   *  calls it at both pricing sites, which is what keeps the client's number,
-   *  the log row and the key's billed spend one value. */
+   *  handler that would have to sniff which one it is holding. Required, not
+   *  optional with a `computeCost` default: a dialect that says nothing about
+   *  its own pricing would be billed by chat's rules, which is exactly the
+   *  silent mis-bill this member exists to prevent. The handler calls it at
+   *  both pricing sites, which is what keeps the client's number, the log row
+   *  and the key's billed spend one value. */
   cost(prices: PricingSnapshot | null, usage: LogUsage | null): CostBreakdown | null
-  /** Whether a target's pinned `service_tier` is a parameter this dialect can
-   *  carry. False makes `bodyFor` leave the body alone — see the reasoning
-   *  there: on a dialect with no such parameter, injecting one does not read as
-   *  a no-op upstream, it reads as a rejected request. */
-  pinsServiceTier: boolean
-  newIdentityId(): string
-  /** Everything that only exists because a dialect can stream, grouped so a
-   *  dialect that cannot says so by leaving it out. Absence is the honest
-   *  encoding: the alternative — an `isStream` that always returns false plus
-   *  three throwing stubs — is unreachable code that reads as reachable, and
-   *  it leaves the compiler nothing to object to when a later refactor calls
-   *  `runStream` unconditionally. Omitted, the handler's streaming branch is
-   *  unreachable by type rather than by convention. */
-  streaming?: {
-    isStream(req: Req): boolean
-    runStream(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): AsyncIterable<Chunk>
-    protocol: StreamProtocol<Chunk>
-    /** What payload capture stores for an interrupted or completed stream. */
-    captureResponse(identity: IdentityOptions, capture: StreamCapture, outcome: StreamOutcome): unknown
+  /** Renders the finished result. Both JSON dialects pass `Response.json`. */
+  toResponse(res: Res, headers: HeadersInit): Response
+  /** Which candidates can serve this dialect. Absent means "all of them" —
+   *  Chat and Responses can be served by any candidate the routing tables
+   *  hand back, so neither implements this.
+   *
+   *  The request is a parameter, not just the candidate, because capability is
+   *  not always a property of the target alone: a Gemini target transcribes,
+   *  but not into `verbose_json`, `srt` or `vtt`. Judging that at attempt time
+   *  instead would let the same request succeed or fail depending on which
+   *  target selection happened to pick, and non-deterministic success is not a
+   *  behaviour a gateway may have.
+   *
+   *  This hook **steers**, it does not refuse. When it rejects every
+   *  candidate the handler falls back to the unfiltered list, so the answer
+   *  comes from the adapter that knows why — see the fallback below. That
+   *  makes one invariant binding on every implementation: **`supports` may
+   *  never encode a rule the adapter cannot also refuse.** All three of
+   *  transcription's rules satisfy it (`assertTranscribable` refuses the
+   *  timestamp formats and the oversized file; `withTranscribeUnsupported`
+   *  refuses the Anthropic flavor). A rule that did not would send a doomed
+   *  request upstream instead of refusing it. */
+  supports?(candidate: Candidate, req: Req): boolean
+  /** The body to send to one particular target, when a dialect has anything
+   *  per-target to say. Absent means the client's request reaches every
+   *  candidate unchanged — which is what a dialect with no `service_tier`
+   *  field needs, since injecting one would send a parameter the endpoint does
+   *  not accept. Chat and Responses both pass `withServiceTier`. */
+  bodyFor?(candidate: Candidate, req: Req): Req
+  /** What payload capture stores in place of the request. Absent means the
+   *  parsed request itself, which is right for a JSON dialect — the parsed
+   *  body IS what the client sent. A dialect whose request holds something
+   *  unloggable (transcription's audio `File`) substitutes a description of
+   *  it here, rather than mutating the request the adapters are handed: they
+   *  need it intact, and failover needs it re-readable. */
+  captureRequest?(req: Req): unknown
+  /** Absent for a dialect with no response id of its own. */
+  newIdentityId?(): string
+  /** Streaming support, absent for a dialect this gateway does not stream.
+   *  The three members always arrive together — reachable only when
+   *  `isStream()` has returned true for the request in hand. */
+  runStream?(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): AsyncIterable<Chunk>
+  stream?: StreamProtocol<Chunk>
+  /** What payload capture stores for an interrupted or completed stream. */
+  captureResponse?(identity: IdentityOptions, capture: StreamCapture, outcome: StreamOutcome): unknown
+}
+
+/**
+ * Narrows an `Ingress` to its streaming members before the streaming branch
+ * uses them.
+ *
+ * Unreachable in practice: an ingress with no streaming members must refuse
+ * `stream: true` from its own `read` (the transcription ingress does, with a
+ * 400), so `isStream()` can never come back true for one. This guard exists
+ * so that fact is enforced by a thrown error instead of relied upon — a
+ * dialect that got the refusal wrong would otherwise fail with "cannot read
+ * properties of undefined" deep inside the SSE relay.
+ *
+ * An ordinary `Error`, not a `GatewayError`: this is the gateway's own
+ * inconsistency, not something a client did wrong. `errorResponse` sanitizes
+ * anything that is not a `GatewayError` to the generic internal-error
+ * envelope and logs the real message via `console.error` — a `GatewayError`
+ * here would instead hand the client this file's internal commentary.
+ */
+type StreamableIngress<Req, Res, Chunk> =
+  Ingress<Req, Res, Chunk> & Required<Pick<Ingress<Req, Res, Chunk>, 'runStream' | 'stream' | 'captureResponse'>>
+
+function assertStreamable<Req, Res, Chunk>(
+  ingress: Ingress<Req, Res, Chunk>,
+): StreamableIngress<Req, Res, Chunk> {
+  if (!ingress.runStream || !ingress.stream || !ingress.captureResponse) {
+    throw new Error('This dialect has no streaming implementation, but the request reached the streaming branch.')
   }
+  return ingress as StreamableIngress<Req, Res, Chunk>
 }
 
 export function parseWith<T>(schema: z.ZodType<T>, raw: unknown): T {
   const result = schema.safeParse(raw)
   if (!result.success) {
     const issue = (result.error as z.ZodError).issues[0]
+    // A field's own schema can name a more specific code than the generic
+    // `invalid_request` below by raising a custom issue with
+    // `params: { gatewayCode }` — the transcription schema's oversized-file
+    // check does this so a client branching on `error.code` catches "file too
+    // big" the same way regardless of which cap tripped it.
+    const code = issue.code === 'custom' && typeof issue.params?.gatewayCode === 'string'
+      ? issue.params.gatewayCode
+      : 'invalid_request'
     throw new GatewayError({
       status: 400,
       type: 'invalid_request_error',
-      code: 'invalid_request',
+      code,
       param: issue.path.length > 0 ? String(issue.path[0]) : null,
       message: `${issue.path.join('.') || 'body'}: ${issue.message}`,
     })
@@ -108,7 +172,7 @@ export function parseWith<T>(schema: z.ZodType<T>, raw: unknown): T {
   return result.data
 }
 
-async function readJson(request: Request): Promise<unknown> {
+export async function readJson(request: Request): Promise<unknown> {
   try {
     return await request.json()
   } catch {
@@ -122,7 +186,8 @@ async function readJson(request: Request): Promise<unknown> {
 }
 
 /**
- * The body to send to one particular target.
+ * The `bodyFor` both JSON ingresses use: the body to send to one particular
+ * target, with that target's service tier pinned.
  *
  * A target with no tier gets the client's own object back, unchanged and
  * un-copied: "(none)" has to mean the request is not touched, which includes
@@ -130,18 +195,15 @@ async function readJson(request: Request): Promise<unknown> {
  * overwrites whatever the client asked for — it is an operator's routing
  * decision, not a default.
  *
- * Both chat dialects spell it `service_tier` at the top level, so there is
- * nothing per-shape to decide between them. Embeddings has no such parameter,
- * and `pinsServiceTier` is how that ingress declines the injection — it is not
- * a tidiness measure. OpenAI answers an argument it does not recognise with
- * `400 Unrecognized request argument supplied`, and a 400 is non-retryable, so
- * a tier added to an embeddings body would turn an operator's inert setting
- * into every request on that target failing with no failover. A tier a *client*
- * sends is still passed through untouched, on this endpoint as on any other:
- * that one is the client's own to answer for.
+ * One implementation shared by Chat and Responses because both dialects spell
+ * it `service_tier` at the top level, so there is nothing per-shape to decide.
+ * It is *not* the handler's default, though: `service_tier` is a chat concept,
+ * and a dialect that has no such field must not have one injected — the
+ * transcription form would carry it upstream as an unknown multipart part and
+ * earn a 400 from a provider that was going to answer fine.
  */
-function bodyFor<Req>(candidate: Candidate, body: Req, pinsServiceTier: boolean): Req {
-  if (!pinsServiceTier || !candidate.serviceTier) return body
+export function withServiceTier<Req>(candidate: Candidate, body: Req): Req {
+  if (!candidate.serviceTier) return body
   return { ...body, service_tier: candidate.serviceTier }
 }
 
@@ -228,10 +290,6 @@ export async function runGatewayRequest<Req, Res, Chunk>(
   // out long before the row is written.
   const requestId = uuidv7()
   const startedAt = Date.now()
-  // Hoisted into a local because a property access cannot be narrowed: the
-  // streaming branch below needs TypeScript to know the block is present, and
-  // only a `const` gives it that.
-  const streaming = ingress.streaming
 
   // Tracked outside the try so the log line can still say who was calling
   // and for what when the request never got as far as an attempt.
@@ -308,7 +366,10 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     const payload =
       capturePayloads && requestBody
         ? buildPayload(
-            requestBody,
+            // The ingress gets to describe its own request for storage. Only
+            // called when capture is on, so a dialect that has to build a
+            // substitute pays for it on the keys that asked for one.
+            ingress.captureRequest ? ingress.captureRequest(requestBody) : requestBody,
             extra.response ?? null,
             settings.payloadMaxBytes,
             extra.responseTruncated ?? false,
@@ -353,10 +414,10 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     // scope. Before the body parse because it is the cheaper check, and
     // because it puts the tags in scope for every failure path after it.
     tags = tagsFromRequest(request)
-    const body = ingress.parse(await readJson(request))
+    const body = await ingress.read(request)
     requestBody = body
     modelName = ingress.modelOf(body)
-    stream = streaming?.isStream(body) ?? false
+    stream = ingress.isStream(body)
 
     // After parsing so a malformed body cannot consume rpm, and before
     // resolving the model so a throttled key does not cost a database lookup
@@ -366,28 +427,73 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     limits = await checkLimits(apiKey)
 
     const { model, candidates } = await resolveModel(modelName)
-    const open = await openTargetsFor(candidates)
-    const chain = selectOrder(candidates, model, { open })
+    // Filtered before selectOrder, not after: selectOrder truncates its
+    // ordered chain to model.maxAttempts, so filtering downstream of that
+    // truncation could starve a viable target sitting behind ones this
+    // dialect could never have used — an operator's "try at most N" is meant
+    // to count attempts that could succeed, not candidates a later step was
+    // always going to throw away. Policy and breaker demotion still own
+    // ordering; only which candidates are eligible to be ordered at all moves
+    // earlier. This still does not belong in resolveModel: resolution
+    // answers "what does this name route to", the same answer for every
+    // endpoint, and a filter there would make the breaker's open-target
+    // bookkeeping depend on which ingress asked.
+    const supports = ingress.supports
+    const eligible = supports ? candidates.filter((candidate) => supports(candidate, body)) : candidates
+    // `supports` steers; it does not refuse. When it leaves nothing, the
+    // unfiltered chain is ordered instead, so the request reaches the adapter
+    // and is refused by the code that knows *why* — a Gemini target asked for
+    // `srt` answers assertTranscribable's 400 naming the format and the
+    // remedy, an Anthropic one answers withTranscribeUnsupported's 501 naming
+    // the provider. The alternative, a generic "no target of X can serve this
+    // endpoint", is false for a target that serves the endpoint perfectly
+    // well in another format, and it tells a client whose request is one field
+    // away from working that the server does not implement it at all.
+    //
+    // Nothing is retried or charged to a breaker by falling back: both
+    // refusals are non-retryable and raised before any upstream call, which
+    // `classifyProviderError` preserves. This is exactly why `supports` may
+    // never encode a rule the adapter cannot also refuse — see its docblock.
+    //
+    // No empty-chain guard follows: resolveModel already answers 503
+    // `no_targets_available` for a model with no enabled target, a direct
+    // address resolves to exactly one candidate, and selectOrder slices with
+    // `Math.max(1, maxAttempts)` — so a non-empty candidate list cannot order
+    // to an empty chain. Were that ever to change, `execute` ends on the same
+    // 503 rather than on silence.
+    const ordered = eligible.length > 0 ? eligible : candidates
+    const open = await openTargetsFor(ordered)
+    const chain = selectOrder(ordered, model, { open })
 
     void touchApiKey(apiKey.id).catch((err) =>
       console.error(`[gateway] failed to update last_used_at request_id=${requestId}`, err),
     )
 
-    const identity = { id: ingress.newIdentityId(), model: modelName }
+    // '' stands for "this dialect mints no response id of its own" — nothing
+    // reads identity.id in that case, so there is no value worth fabricating.
+    const identity = { id: ingress.newIdentityId?.() ?? '', model: modelName }
 
-    if (streaming && stream) {
+    // Falls back to handing every candidate the client's own object, which is
+    // the only correct default: a per-target rewrite can only be spelled by an
+    // ingress that knows its dialect has a field for it. Chat and Responses
+    // pass `withServiceTier`; transcription passes nothing.
+    const bodyFor = (candidate: Candidate, req: Req): Req =>
+      ingress.bodyFor ? ingress.bodyFor(candidate, req) : req
+
+    if (stream) {
+      const streaming = assertStreamable(ingress)
       // startStream pulls the first chunk, so a failure inside `run` is
       // still a failure before the response is committed — which is what
       // makes failover safe for streams.
       const result = await execute(
         chain, requestId, request.signal, { ...deps, recordHealth },
         (adapter, ctx, candidate) =>
-          startStream(streaming.runStream(adapter, ctx, bodyFor(candidate, body, ingress.pinsServiceTier))),
+          startStream(streaming.runStream(adapter, ctx, bodyFor(candidate, body))),
       )
       // Against the body the winning target was actually sent, not the client's
       // — otherwise a tier this gateway added would be dropped by a Gemini
       // target without ever being reported.
-      dropped = ingress.droppedFor(result.candidate, bodyFor(result.candidate, body, ingress.pinsServiceTier))
+      dropped = ingress.droppedFor(result.candidate, bodyFor(result.candidate, body))
       // Resolved only when its value is actually used: for the default case
       // (capture off) this settings lookup would otherwise sit unconditionally
       // between execute() and the response, adding to time-to-first-token for
@@ -412,7 +518,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
 
       return sseResponse(
         result.value,
-        streaming.protocol,
+        streaming.stream,
         identity,
         attemptHeaders(result.candidate, requestId, dropped, limits),
         (outcome, capture) =>
@@ -432,9 +538,9 @@ export async function runGatewayRequest<Req, Res, Chunk>(
 
     const result = await execute(
       chain, requestId, request.signal, { ...deps, recordHealth },
-      (adapter, ctx, candidate) => ingress.run(adapter, ctx, bodyFor(candidate, body, ingress.pinsServiceTier), candidate),
+      (adapter, ctx, candidate) => ingress.run(adapter, ctx, bodyFor(candidate, body)),
     )
-    dropped = ingress.droppedFor(result.candidate, bodyFor(result.candidate, body, ingress.pinsServiceTier))
+    dropped = ingress.droppedFor(result.candidate, bodyFor(result.candidate, body))
 
     // Usage is read first so a provider that reports none skips the catalog
     // lookup entirely — otherwise a SELECT would sit on the client's critical
@@ -457,9 +563,10 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     // means a throw building the response can no longer race a second,
     // contradictory log line against this one for the same request_id.
     const completion = ingress.finish(result.value, identity, costPayload(cost))
-    const response = Response.json(completion, {
-      headers: attemptHeaders(result.candidate, requestId, dropped, limits),
-    })
+    const response = ingress.toResponse(
+      completion,
+      attemptHeaders(result.candidate, requestId, dropped, limits),
+    )
     log(200, 'ok', result.attempts, {
       candidate: result.candidate,
       usage,

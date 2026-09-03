@@ -44,31 +44,19 @@ export function rewriteResponse<T extends { model?: string }>(
 }
 
 /**
- * An id for a shape that has nowhere to put one.
- *
- * An embeddings response has no `id` field, so `rewriteEmbeddings` cannot
- * write this anywhere and no client ever sees it; the log row keys off the
- * handler's `requestId`, not this. The member exists because one
- * `IdentityOptions` serves all three ingresses, and what this ingress actually
- * needs from it is `model`.
- *
- * Given that, the prefix is the only decision left, and `chatcmpl-` would be
- * the wrong one: an id that never ships is still an id that gets printed in
- * a debugger or a stack trace one day, and naming an embeddings request a chat
- * completion there is a lie with no upside.
- */
-export function newEmbeddingsId(): string {
-  return `embd_${randomUUID().replaceAll('-', '')}`
-}
-
-/**
- * The model, and nothing else — for the third time, and for a third reason.
+ * The model, and nothing else — for a third time, and for a third reason.
  *
  * Chat rewrites the id because it mints one; Responses deliberately leaves the
  * provider's id alone (see above). Here there is simply no id in the shape to
- * have an opinion about, which is why this is its own function rather than a
- * call to `rewriteResponse`: that name and its contract are about a decision
- * that has to keep holding for `previous_response_id`, and this is not it.
+ * have an opinion about, which the embeddings ingress says by declaring no
+ * `newIdentityId` at all.
+ *
+ * Its own function rather than a call to `rewriteResponse`, whose body this
+ * duplicates: that function's name and docblock are about a decision that has
+ * to keep holding for `previous_response_id`, and sharing it would make that
+ * docblock false for one of its two callers. The file already keeps
+ * `rewriteCompletion` and `rewriteChunk` apart on the same grounds — one
+ * rewriter per shape, so each can say what its shape's rule is.
  */
 export function rewriteEmbeddings(
   res: EmbeddingsResult,

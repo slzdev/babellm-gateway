@@ -55,6 +55,9 @@ test('counts only text and reasoning deltas as content', () => {
 test('frames a mid-stream failure as a named error event', () => {
   const framed = decode(p.errorEvent({
     retryable: true, status: 502, type: 'api_error', code: 'upstream_error', message: 'boom',
+    // A mid-stream upstream failure is about no request field of ours; the
+    // frame below hardcodes `param: null` for the same reason.
+    param: null,
   }))
 
   expect(framed).toContain('event: error\n')

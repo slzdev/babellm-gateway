@@ -67,6 +67,23 @@ export interface ClassifiedError {
   type: string
   code: string | null
   message: string
+  /**
+   * The request field the error is about, for the branches that know one.
+   *
+   * Only a GatewayError carries this: it is the gateway's own verdict on the
+   * client's request, so it can name the field it refused. Every other branch
+   * reports null — a provider failure or an SDK error is not about one of our
+   * request fields, and inventing a `param` for it would be worse than
+   * omitting one.
+   *
+   * It exists here because a refusal thrown by an adapter travels out through
+   * `routed()` and `RoutedError`, and without this field it arrived at the
+   * client with `param: null` — so the same refusal named its field when the
+   * schema caught it (parseWith sets `param`) and did not when a target raised
+   * it. `response_format` and `file` are exactly the fields transcription's
+   * 400s are about, which makes that half of the answer worth carrying.
+   */
+  param: string | null
 }
 
 // Kept in step with the per-adapter sets in `adapters/*/errors.ts`; see the
@@ -83,6 +100,30 @@ export function classifyProviderError(err: unknown): ClassifiedError {
       type: err.type,
       code: err.code,
       message: err.message,
+      param: null,
+    }
+  }
+
+  // A GatewayError is the gateway's own verdict that the client's request is
+  // wrong, reached before any upstream call was made — e.g.
+  // assertTranscribable refusing a timestamped response_format or an
+  // oversized file (transcription-to-gemini.ts), thrown deliberately outside
+  // an adapter's own try/catch so it arrives here, at the routing loop's
+  // classifier, unwrapped. Always non-retryable regardless of `status`: no
+  // upstream attempt happened, so there is nothing a retry against the same
+  // or a different target could fix, and falling through to the generic
+  // branch below would otherwise discard the gateway's own status/type/code
+  // and answer with a fabricated retryable 502 — sending the same doomed
+  // request to the next target and charging a target's circuit breaker for
+  // a call it never received.
+  if (err instanceof GatewayError) {
+    return {
+      retryable: false,
+      status: err.status,
+      type: err.type,
+      code: err.code,
+      message: err.message,
+      param: err.param,
     }
   }
 
@@ -93,6 +134,7 @@ export function classifyProviderError(err: unknown): ClassifiedError {
       type: 'invalid_request_error',
       code: 'unsupported_operation',
       message: err.message,
+      param: null,
     }
   }
 
@@ -106,6 +148,7 @@ export function classifyProviderError(err: unknown): ClassifiedError {
       type: err.type ?? (retryable ? 'api_error' : 'invalid_request_error'),
       code: err.code ?? null,
       message: err.message,
+      param: null,
     }
   }
 
@@ -119,6 +162,7 @@ export function classifyProviderError(err: unknown): ClassifiedError {
     type: 'api_error',
     code: isAbort ? 'upstream_timeout' : 'upstream_error',
     message: err instanceof Error ? err.message : 'Upstream request failed',
+    param: null,
   }
 }
 

@@ -45,6 +45,7 @@ export interface CatalogListItem {
   chatCompletionsPath: string | null
   responsesPath: string | null
   messagesPath: string | null
+  audioTranscriptionsPath: string | null
   embeddingsPath: string | null
   /** What a blank field on this row would inherit, so the dialog can show it
    *  as a placeholder instead of sending an operator to the Providers page. */
@@ -54,11 +55,14 @@ export interface CatalogListItem {
 
 /** The provider's resolved path for each endpoint a model may override —
  *  keyed like the columns above so the dialog can pair a row's value with the
- *  placeholder it would fall back to. */
+ *  placeholder it would fall back to. Named rather than written inline at both
+ *  of its uses: with five overridable endpoints the second copy is where the
+ *  two drift apart. */
 interface ProviderPathDefaults {
   chatCompletionsPath: string
   responsesPath: string
   messagesPath: string
+  audioTranscriptionsPath: string
   embeddingsPath: string
 }
 
@@ -107,6 +111,7 @@ function toItem(
     chatCompletionsPath: row.chatCompletionsPath,
     responsesPath: row.responsesPath,
     messagesPath: row.messagesPath,
+    audioTranscriptionsPath: row.audioTranscriptionsPath,
     embeddingsPath: row.embeddingsPath,
     providerApiFlavor,
     providerPaths,
@@ -141,7 +146,9 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
     .map(({
       model, providerName, providerAdapter, providerApiFlavor, providerConfig,
     }) => {
-      const { chatCompletions, responses, messages, embeddings } = resolveProviderPaths(
+      const {
+        chatCompletions, responses, messages, audioTranscriptions, embeddings,
+      } = resolveProviderPaths(
         JSON.parse(providerConfig) as ProviderConfig,
       )
       return toItem(
@@ -153,6 +160,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
           chatCompletionsPath: chatCompletions,
           responsesPath: responses,
           messagesPath: messages,
+          audioTranscriptionsPath: audioTranscriptions,
           embeddingsPath: embeddings,
         },
         targets.filter(
@@ -355,6 +363,7 @@ export interface ModelGatewayInput {
   chatCompletionsPath?: string | null
   responsesPath?: string | null
   messagesPath?: string | null
+  audioTranscriptionsPath?: string | null
   embeddingsPath?: string | null
 }
 
@@ -391,6 +400,9 @@ export async function setModelGateway(
   }
   if (input.messagesPath !== undefined) {
     patch.messagesPath = parseProviderPath(input.messagesPath ?? '')
+  }
+  if (input.audioTranscriptionsPath !== undefined) {
+    patch.audioTranscriptionsPath = parseProviderPath(input.audioTranscriptionsPath ?? '')
   }
   if (input.embeddingsPath !== undefined) {
     patch.embeddingsPath = parseProviderPath(input.embeddingsPath ?? '')

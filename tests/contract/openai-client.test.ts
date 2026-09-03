@@ -2,9 +2,10 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { handleResponses } from '@/lib/gateway/responses-handler'
+import { handleTranscriptions } from '@/lib/gateway/transcriptions-handler'
 import { createAnthropicAdapter } from '@/lib/adapters/anthropic'
 import { withRespondViaChat } from '@/lib/adapters/wrappers'
-import type { ProviderAdapter, ProviderRuntime } from '@/lib/adapters/types'
+import type { ProviderAdapter, ProviderRuntime, TranscriptionVerbose } from '@/lib/adapters/types'
 import { seedGateway, seedTargets } from '../helpers/gateway'
 import { resetDb } from '../helpers/db'
 import fixture from '../fixtures/openai-tool-call-stream.json'
@@ -30,9 +31,10 @@ const completion = {
 }
 
 // `handler` defaults to the chat ingress, which every pre-existing test here
-// exercises; the Responses contract tests below pass handleResponses instead,
-// so both dialects can drive the same real OpenAI SDK against a fetch that
-// never leaves the process.
+// exercises; the Responses and Transcriptions contract tests below pass
+// handleResponses / handleTranscriptions instead, so all three dialects can
+// drive the same real OpenAI SDK against a fetch that never leaves the
+// process.
 function gatewayClient(
   apiKey: string,
   adapter: Partial<ProviderAdapter>,
@@ -236,3 +238,90 @@ test('the openai SDK can stream responses.create against the gateway', async () 
   // The SDK parses our framing, and sequence numbers arrive in order.
   expect(seen).toEqual([0, 1, 2])
 })
+
+// ---------------------------------------------------------------------------
+// Audio transcriptions
+//
+// The end-to-end suite (tests/gateway/transcriptions.test.ts) builds its own
+// FormData and reads the response with `res.json()` / `res.text()` — it
+// checks the gateway against the gateway's own idea of the wire format. Here
+// the SDK builds the multipart body — its own part names, part ordering and
+// `Uploadable` handling of a web `File`; the boundary is undici's, chosen when
+// `new Request` serializes the SDK's `FormData`, because `openai-node` on a
+// fetch platform never picks one itself — and the SDK decides how to parse
+// what comes back:
+// `openai-node` hands back a parsed object when the response content type is
+// `application/json` and a bare string otherwise. `toResponse` picks that
+// content type by sniffing the result's shape on our side; these tests prove
+// the two decisions agree, in both directions, for every format that could
+// disagree.
+// ---------------------------------------------------------------------------
+
+function audioFile(name = 'clip.mp3', type = 'audio/mpeg') {
+  return new File([new Uint8Array([1, 2, 3, 4])], name, { type })
+}
+
+const verboseTranscription: TranscriptionVerbose = {
+  duration: 1.5,
+  language: 'english',
+  text: 'hello there',
+  segments: [{
+    id: 0,
+    seek: 0,
+    start: 0,
+    end: 1.5,
+    text: 'hello there',
+    tokens: [1, 2],
+    temperature: 0,
+    avg_logprob: -0.1,
+    compression_ratio: 1.2,
+    no_speech_prob: 0.01,
+  }],
+}
+
+test('the SDK returns a parsed object, not a string, for a json transcription', async () => {
+  const { apiKey } = await seedGateway()
+  const client = gatewayClient(apiKey, { transcribe: async () => ({ text: 'hello there' }) }, handleTranscriptions)
+
+  const result = await client.audio.transcriptions.create({
+    file: audioFile(),
+    model: 'house-model',
+    response_format: 'json',
+  })
+
+  // `typeof` is the real assertion: the SDK only reads `.text` off a value it
+  // parsed as JSON, which it only does when the response content type says so.
+  expect(typeof result).toBe('object')
+  expect(result.text).toBe('hello there')
+})
+
+test('the SDK returns a parsed object with its segments intact for a verbose_json transcription', async () => {
+  const { apiKey } = await seedGateway()
+  const client = gatewayClient(apiKey, { transcribe: async () => verboseTranscription }, handleTranscriptions)
+
+  const result = await client.audio.transcriptions.create({
+    file: audioFile(),
+    model: 'house-model',
+    response_format: 'verbose_json',
+  })
+
+  expect(typeof result).toBe('object')
+  expect(result.segments?.[0]?.text).toBe('hello there')
+})
+
+for (const format of ['text', 'srt', 'vtt'] as const) {
+  test(`the SDK returns a bare string, not a parsed object, for a ${format} transcription`, async () => {
+    const { apiKey } = await seedGateway()
+    const body = format === 'text' ? 'hello there' : `${format} body for hello there`
+    const client = gatewayClient(apiKey, { transcribe: async () => body }, handleTranscriptions)
+
+    const result = await client.audio.transcriptions.create({
+      file: audioFile(),
+      model: 'house-model',
+      response_format: format,
+    })
+
+    expect(typeof result).toBe('string')
+    expect(result).toBe(body)
+  })
+}

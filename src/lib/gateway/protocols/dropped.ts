@@ -33,22 +33,33 @@ export function droppedForChat(candidate: Candidate, req: ChatCompletionRequest)
  * is read from one place rather than restated per dialect.
  *
  * Flavor is not a lever on this shape, which is the whole of the difference:
- * `/embeddings` is a sibling of both OpenAI chat dialects rather than one of
+ * `/embeddings` is a sibling of all three chat dialects rather than one of
  * them, so a `responses`-flavored candidate embeds through the same client a
  * `chat_completions` one does and is sent the request as it arrived. An
- * `anthropic_messages` candidate never reaches this function at all — its
- * adapter has no `embed`, and the ingress's 501 lands first.
+ * `anthropic_messages` candidate is normally steered away before selection by
+ * the ingress's `supports`, and answers `withEmbedUnsupported`'s 501 when it
+ * is the only candidate there is — either way it never serves a request whose
+ * dropped set is worth asking about.
  *
- * The translator still reports `service_tier`, which reaches this shape only
- * from a client that sent one of its own — the ingress declines to inject a
- * target's pinned tier here (`pinsServiceTier: false`). A client that sends one
- * anyway is told Gemini could not honour it, which is the ordinary
- * drop-and-report rule rather than anything embeddings-specific.
+ * A pinned `service_tier` is reported, and this is the one thing the candidate
+ * contributes beyond its adapter. The ingress declares no `bodyFor`, so an
+ * operator's pin is never injected into a dialect that has no such parameter —
+ * and a routing decision the gateway cannot honour is exactly what this header
+ * exists to surface, rather than leaving it to be inferred from latency that
+ * never changed. The transcription ingress carries the same clause for the
+ * same reason.
+ *
+ * De-duplicated because both halves can name that one parameter: the schema is
+ * loose, so a `service_tier` a *client* sent is forwarded and then reported by
+ * the Gemini translator under the ordinary drop-and-report rule. A request
+ * carrying both a client's tier and an operator's pin has one parameter that
+ * did nothing, so it reads one name, once.
  */
 export function droppedForEmbeddings(
   candidate: Candidate,
   req: EmbeddingsRequest,
 ): string[] {
-  if (candidate.provider.adapter === 'gemini') return geminiEmbeddingsDropped(req)
-  return []
+  const dropped = candidate.provider.adapter === 'gemini' ? geminiEmbeddingsDropped(req) : []
+  if (!candidate.serviceTier) return dropped
+  return [...new Set([...dropped, 'service_tier'])]
 }

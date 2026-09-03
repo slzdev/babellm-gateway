@@ -7,7 +7,10 @@ interface RawUsage {
   completion_tokens_details?: { reasoning_tokens?: number | null } | null
 }
 
-function count(value: number | null | undefined): number | null {
+// `unknown` rather than `number | null | undefined`: usageFromTranscription
+// below reads an untyped upstream object, and the check this performs is
+// exactly the one such a field needs anyway.
+function count(value: unknown): number | null {
   return typeof value === 'number' ? value : null
 }
 
@@ -48,6 +51,40 @@ export function usageFromResponses(raw: RawResponsesUsage | null | undefined): L
     completionTokens: count(raw.output_tokens),
     cachedTokens: count(raw.input_tokens_details?.cached_tokens),
     reasoningTokens: count(raw.output_tokens_details?.reasoning_tokens),
+  }
+}
+
+/**
+ * The transcription spelling — the third of the same numbers, and the only one
+ * that can legitimately measure nothing at all.
+ *
+ * Two variants arrive under one field name, told apart by their own `type`
+ * discriminant: `{ type: 'tokens', input_tokens, output_tokens }` from the
+ * `gpt-4o-transcribe` family, and `{ type: 'duration', seconds }` from
+ * `whisper-1` and its clones. So the parameter is `unknown`: `type` has to be
+ * read before any other field can be trusted, and a Whisper clone may send a
+ * third shape nobody has seen.
+ *
+ * Duration-billed usage returns **null**, not zeroes. It measures seconds of
+ * audio, which the catalog's per-Mtok columns cannot price, and the standing
+ * rule is that a request which cannot be priced reports "unpriced" — a
+ * dashboard showing $0.00 for real spend is worse than one showing nothing
+ * (design doc §3.8). `seconds` is emphatically never returned as a token
+ * count: a duration in a token column would corrupt every rollup that sums
+ * tokens.
+ *
+ * Neither variant reports cached or reasoning tokens — the dialect has no such
+ * fields — so both stay null: not measured, rather than measured as 0.
+ */
+export function usageFromTranscription(raw: unknown): LogUsage | null {
+  if (!raw || typeof raw !== 'object') return null
+  const usage = raw as { type?: unknown; input_tokens?: unknown; output_tokens?: unknown }
+  if (usage.type !== 'tokens') return null
+  return {
+    promptTokens: count(usage.input_tokens),
+    completionTokens: count(usage.output_tokens),
+    cachedTokens: null,
+    reasoningTokens: null,
   }
 }
 

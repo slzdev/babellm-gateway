@@ -5,7 +5,7 @@ import { droppedParams, toChatRequest } from '@/lib/translate/responses-to-chat'
 import { responsesRequestSchema, type ResponsesRequest } from '@/lib/schemas/responses'
 import { withUsageCost } from '../cost'
 import type { ClassifiedError } from '../errors'
-import { parseWith, type Ingress } from '../handler'
+import { parseWith, readJson, withServiceTier, type Ingress } from '../handler'
 import { newResponseId, rewriteResponse } from '../identity'
 import { droppedForChat } from './dropped'
 import type { StreamCapture, StreamProtocol } from '../sse'
@@ -82,8 +82,10 @@ export const responsesStreamProtocol: StreamProtocol<ResponseStreamEvent> = {
 }
 
 export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, ResponseStreamEvent> = {
-  parse: (raw) => parseWith(responsesRequestSchema, raw),
+  read: async (request) => parseWith(responsesRequestSchema, await readJson(request)),
   modelOf: (req) => req.model,
+  isStream: (req) => req.stream === true,
+  bodyFor: withServiceTier,
   droppedFor: (candidate, req) => {
     // A Responses-native candidate expresses everything it is sent; every
     // other one loses whatever responses-to-chat cannot carry, plus whatever
@@ -92,30 +94,27 @@ export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, Respon
     return [...droppedParams(req), ...droppedForChat(candidate, toChatRequest(req))]
   },
   run: (adapter, ctx, req) => adapter.respond(req, ctx),
+  runStream: (adapter, ctx, req) => adapter.respondStream(req, ctx),
   finish: (res, identity, cost) => withUsageCost(rewriteResponse(res, identity), cost),
   usageOf: (res) => usageFromResponses(res.usage as never),
   cost: computeCost,
-  pinsServiceTier: true,
+  toResponse: (res, headers) => Response.json(res, { headers }),
   newIdentityId: newResponseId,
-  streaming: {
-    isStream: (req) => req.stream === true,
-    runStream: (adapter, ctx, req) => adapter.respondStream(req, ctx),
-    protocol: responsesStreamProtocol,
-    captureResponse: (identity, capture, outcome) => ({
-      // No `id` field: `identity.id` is a `resp_<uuid>` the handler minted for
-      // this ingress, but this ingress never rewrites response ids (unlike
-      // chat's), so the client actually received the upstream id instead.
-      // Logging `identity.id` here would stamp the capture record with an id
-      // nothing ever saw — worst precisely when someone is debugging a
-      // `previous_response_id` complaint. `StreamCapture` carries no upstream
-      // id to use instead, so the field is omitted rather than fabricated.
-      object: 'response',
-      model: identity.model,
-      status: outcome === 'ok' ? 'completed' : 'incomplete',
-      output: [{
-        type: 'message', role: 'assistant', status: outcome === 'ok' ? 'completed' : 'incomplete',
-        content: [{ type: 'output_text', text: capture.text, annotations: [] }],
-      }],
-    }),
-  },
+  stream: responsesStreamProtocol,
+  captureResponse: (identity, capture, outcome) => ({
+    // No `id` field: `identity.id` is a `resp_<uuid>` the handler minted for
+    // this ingress, but this ingress never rewrites response ids (unlike
+    // chat's), so the client actually received the upstream id instead.
+    // Logging `identity.id` here would stamp the capture record with an id
+    // nothing ever saw — worst precisely when someone is debugging a
+    // `previous_response_id` complaint. `StreamCapture` carries no upstream
+    // id to use instead, so the field is omitted rather than fabricated.
+    object: 'response',
+    model: identity.model,
+    status: outcome === 'ok' ? 'completed' : 'incomplete',
+    output: [{
+      type: 'message', role: 'assistant', status: outcome === 'ok' ? 'completed' : 'incomplete',
+      content: [{ type: 'output_text', text: capture.text, annotations: [] }],
+    }],
+  }),
 }

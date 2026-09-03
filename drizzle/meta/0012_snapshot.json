@@ -1,6 +1,6 @@
 {
-  "id": "0a2b3b2d-db24-4e53-a591-628a47d7c1d8",
-  "prevId": "2ce914d4-9fdd-4cc8-94b7-93d4c7981b44",
+  "id": "2ee5d91f-2d8f-4af8-b824-30ead53a9dbf",
+  "prevId": "0a2b3b2d-db24-4e53-a591-628a47d7c1d8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -312,6 +312,12 @@
         },
         "audio_transcriptions_path": {
           "name": "audio_transcriptions_path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "embeddings_path": {
+          "name": "embeddings_path",
           "type": "text",
           "primaryKey": false,
           "notNull": false
