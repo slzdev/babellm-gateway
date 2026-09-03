@@ -175,6 +175,23 @@ test('user is reported as dropped', () => {
   expect(droppedParams(request({ user: 'u-1' }))).toEqual(['user'])
 })
 
+// No client can send this — the OpenAI embeddings API documents no
+// service_tier — but a route target can pin one, and the handler asks this
+// question about the body the winning target was actually sent. An operator
+// who pins a tier and routes to Gemini has to be told the pin did nothing.
+test('a tier the gateway pinned is reported as dropped', () => {
+  expect(droppedParams(request({ service_tier: 'flex' }))).toEqual(['service_tier'])
+})
+
+test('a pinned tier and a user are reported together, in a stable order', () => {
+  expect(droppedParams(request({ service_tier: 'flex', user: 'u-1' })))
+    .toEqual(['service_tier', 'user'])
+})
+
+test('an empty string reads as unset rather than as a dropped parameter', () => {
+  expect(droppedParams(request({ user: '' }))).toEqual([])
+})
+
 test('nothing is dropped for a request Gemini can serve whole', () => {
   expect(droppedParams(request({ dimensions: 256, encoding_format: 'base64' }))).toEqual([])
 })

@@ -133,9 +133,25 @@ export function fromEmbedContent(
  * chat-to-gemini's reason: SDKs send `user` meaning nothing by it, and it
  * cannot change which vectors come back.
  *
+ * `service_tier` is here even though the OpenAI embeddings API documents none,
+ * so no client can have sent one. A route target can *pin* one, and the handler
+ * computes the dropped set against the body the winning target was actually
+ * sent — so an operator who pins a tier and then routes to Gemini learns the
+ * pin did nothing, instead of having to infer it from unchanged latency.
+ *
  * `encoding_format` is not here — it is honoured, gateway-side, by
  * `fromEmbedContent`. Nor is `dimensions`, which maps directly.
  */
+const UNMAPPABLE = ['service_tier', 'user'] as const
+
 export function droppedParams(req: EmbeddingsRequest): string[] {
-  return req.user ? ['user'] : []
+  const dropped: string[] = []
+  for (const name of UNMAPPABLE) {
+    const value = (req as Record<string, unknown>)[name]
+    // An empty string is what an SDK sends for "unset"; reporting it would put
+    // a line in the header for a parameter the caller did not really use.
+    if (value === undefined || value === null || value === '') continue
+    dropped.push(name)
+  }
+  return dropped
 }

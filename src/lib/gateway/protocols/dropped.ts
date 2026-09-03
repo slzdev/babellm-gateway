@@ -39,10 +39,10 @@ export function droppedForChat(candidate: Candidate, req: ChatCompletionRequest)
  * `anthropic_messages` candidate never reaches this function at all — its
  * adapter has no `embed`, and the ingress's 501 lands first.
  *
- * One gap, deliberate: a `service_tier` the gateway pinned for a Gemini target
- * goes unreported, because the embeddings translator reports only parameters
- * an embeddings request can carry and the OpenAI embeddings API has no tier.
- * Nothing the client sent is being hidden from it.
+ * The translator reports a pinned `service_tier` even though no client can have
+ * sent one: the handler asks this question about the body the winning target
+ * was actually sent, so an operator who pins a tier and lands on Gemini is told
+ * the pin did nothing rather than left to infer it.
  */
 export function droppedForEmbeddings(
   candidate: Candidate,
