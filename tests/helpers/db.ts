@@ -1,6 +1,8 @@
 import { sql } from 'drizzle-orm'
 import { db, pool } from '@/lib/db'
-import { MONTHS_AHEAD, addMonths, ensurePartitions, partitionName } from '@/lib/logs/partitions'
+import {
+  MONTHS_AHEAD, addMonths, ensurePartitions, monthBound, partitionName,
+} from '@/lib/logs/partitions'
 
 const TABLES = [
   'request_logs',
@@ -59,6 +61,33 @@ export async function resetDb() {
   }
 
   await ensurePartitions(pool, now)
+}
+
+/**
+ * Creates the partition a row dated `at` needs, whatever month that is.
+ *
+ * `resetDb` keeps only the months `ensurePartitions` would build for right now,
+ * which is what a fixture wants — but it also means a test whose fixed dates
+ * sit outside that window has nowhere to write. That is not a hypothetical: the
+ * rollup and aggregate suites are built on a fixed clock precisely so their
+ * assertions can name literal timestamps, and they broke on the 1st of the
+ * month after the one they were written in, with a partition-key error that
+ * says nothing about aggregation. Provisioning on demand is what stops those
+ * suites from decaying every time the calendar moves.
+ *
+ * A test that means to assert the no-DEFAULT-partition behaviour itself must
+ * keep writing raw SQL, as tests/lib/logs/partitions.test.ts does — going
+ * through this helper would provision away the very failure it is asserting.
+ */
+export async function ensureLogPartition(at: Date): Promise<void> {
+  const name = partitionName(at)
+  const { rows } = await pool.query(`SELECT to_regclass('public.${name}') IS NULL AS missing`)
+  if (rows[0]?.missing !== true) return
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.${name} PARTITION OF public.request_logs
+    FOR VALUES FROM ('${monthBound(at)}') TO ('${monthBound(addMonths(at, 1))}')
+  `)
 }
 
 export { db as testDb }
