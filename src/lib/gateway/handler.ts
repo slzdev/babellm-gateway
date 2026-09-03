@@ -39,7 +39,7 @@ const defaultDeps: GatewayDeps = { createAdapter: defaultCreateAdapter }
 
 /**
  * The shape-specific behaviour `runGatewayRequest` needs from an ingress
- * (Chat, and later Responses) to run the shared lifecycle: bookkeeping,
+ * (Chat, Responses, Embeddings) to run the shared lifecycle: bookkeeping,
  * limits, model resolution, failover and logging live once in the handler;
  * only what differs between wire formats lives behind this interface.
  */
@@ -47,7 +47,18 @@ export interface Ingress<Req, Res, Chunk = never> {
   parse(raw: unknown): Req
   modelOf(req: Req): string
   droppedFor(candidate: Candidate, req: Req): string[]
-  run(adapter: ProviderAdapter, ctx: AttemptContext, req: Req): Promise<Res>
+  /** `candidate` is passed for one reason: an ingress whose operation not
+   *  every adapter implements has to name the target that is refusing it.
+   *  `execute` is already holding it — the body is per-target — and the
+   *  alternative, hanging the provider off `AttemptContext`, would hand it to
+   *  every adapter to answer a question only an ingress asks. Chat and
+   *  Responses ignore it. */
+  run(
+    adapter: ProviderAdapter,
+    ctx: AttemptContext,
+    req: Req,
+    candidate: Candidate,
+  ): Promise<Res>
   /** The last transformation before the client sees the response: gateway
    *  identity, and the cost this request is being charged. `cost` is already
    *  serialized, so no ingress has to know how CostBreakdown is rendered. */
@@ -114,8 +125,15 @@ async function readJson(request: Request): Promise<unknown> {
  * overwrites whatever the client asked for — it is an operator's routing
  * decision, not a default.
  *
- * Shared by both ingresses because both dialects spell it `service_tier` at
- * the top level, so there is nothing per-shape to decide.
+ * Shared by all three ingresses. The two chat dialects spell it
+ * `service_tier` at the top level, so there is nothing per-shape to decide
+ * between them, and the embeddings dialect has no such parameter at all —
+ * which makes a pinned tier inert there rather than wrong: an OpenAI-shaped
+ * upstream ignores it as it ignores any undocumented parameter, and Gemini's
+ * embeddings translator builds its parameters explicitly and never reads it.
+ * Left uniform on purpose. Excepting embeddings here would buy nothing on the
+ * upstreams that ignore the field and would silently un-pin a clone that does
+ * honour a tier on it.
  */
 function bodyFor<Req>(candidate: Candidate, body: Req): Req {
   if (!candidate.serviceTier) return body
@@ -409,7 +427,7 @@ export async function runGatewayRequest<Req, Res, Chunk>(
 
     const result = await execute(
       chain, requestId, request.signal, { ...deps, recordHealth },
-      (adapter, ctx, candidate) => ingress.run(adapter, ctx, bodyFor(candidate, body)),
+      (adapter, ctx, candidate) => ingress.run(adapter, ctx, bodyFor(candidate, body), candidate),
     )
     dropped = ingress.droppedFor(result.candidate, bodyFor(result.candidate, body))
 
