@@ -22,6 +22,13 @@ export const DEFAULT_PATHS = {
   embeddings: '/embeddings',
 } as const
 
+/**
+ * What `/models` becomes for the embeddings-only listing. Not part of
+ * DEFAULT_PATHS: it is never configured, never overridden per model, and is
+ * asked for only as a sibling of whatever models path a provider resolved to.
+ */
+const EMBEDDINGS_MODELS_SUFFIX = '/embeddings/models'
+
 export type ProviderPaths = { -readonly [K in keyof typeof DEFAULT_PATHS]: string }
 
 /** The `config` key each resolved path is stored under. */
@@ -45,7 +52,7 @@ export const PATH_FIELDS = [
     name: 'modelsPath',
     label: 'Models path',
     placeholder: DEFAULT_PATHS.models,
-    help: 'Where this provider lists its models.',
+    help: 'Where this provider lists its models. The embeddings-only listing beside it, which OpenRouter serves at /embeddings/models, moves with it.',
   },
   {
     name: 'chatCompletionsPath',
@@ -267,6 +274,28 @@ function resolveOne(
   } catch {
     return fallback
   }
+}
+
+/**
+ * The sibling listing endpoint that reports embeddings models, derived from
+ * wherever this provider lists the rest. OpenRouter is the reason it exists:
+ * its `/models` omits embeddings models entirely and serves them from
+ * `/embeddings/models` instead, so a provider synced from `/models` alone
+ * gets a catalog with no embeddings models in it at all.
+ *
+ * Derived rather than configured, because the two paths are the same endpoint
+ * family: a clone that lists models at `/openai/v1/models` serves this at
+ * `/openai/v1/embeddings/models`, and an admin who moved one should not have
+ * to move the other. A models path that does not end in `/models` names
+ * something this cannot extrapolate from, so it returns null and discovery
+ * asks for nothing.
+ *
+ * Works on a resolved request path either way: the trailing segment is the
+ * same whether the path is relative or already absolute on the base URL's host.
+ */
+export function deriveEmbeddingsModelsPath(modelsPath: string): string | null {
+  if (!modelsPath.endsWith(DEFAULT_PATHS.models)) return null
+  return `${modelsPath.slice(0, -DEFAULT_PATHS.models.length)}${EMBEDDINGS_MODELS_SUFFIX}`
 }
 
 function parseOrigin(baseUrl: string | null | undefined): string | null {
