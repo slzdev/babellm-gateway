@@ -1,0 +1,122 @@
+# The whole development stack in one command: Postgres, Redis, and the app
+# itself running `next dev` against the working tree, with hot reload.
+#
+#   docker compose -f docker-compose.dev.yml up --build
+#   # dashboard on http://localhost:3000
+#
+# Only the app's port is published. Postgres and Redis are reachable solely
+# from inside the Compose network, so this stack can never be mistaken for —
+# or collide with — the developer's own database on 5432, the disposable test
+# database on 5434, or a local Redis on 6379.
+#
+# `name:` pins the Compose project. Without it Compose derives the project
+# from the directory, this file would share it with docker-compose.yml, and
+# bringing this stack up would recreate the containers of that one with these
+# settings. Same reasoning as docker-compose.test.yml.
+name: babellm-dev
+
+# ---------------------------------------------------------------------------
+# THE CREDENTIALS BELOW ARE PUBLIC, exactly as in docker-compose.gateway.yml.
+# This is a local development stack, not something to put on a network you do
+# not control. Override any of them in a `.env` next to this file — Compose
+# loads it for interpolation automatically.
+# ---------------------------------------------------------------------------
+
+services:
+  app:
+    # `deps` is the Dockerfile stage that has pnpm plus a full (dev included)
+    # `pnpm install --frozen-lockfile`, and nothing else. The source does not
+    # come from the image at all — it is bind-mounted below, which is what
+    # makes edits on the host show up in the dev server.
+    build:
+      context: .
+      target: deps
+    image: babellm-gateway-dev:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # The only published port in this file. Override DEV_PORT to run this
+    # stack alongside a `pnpm dev` that already holds 3000.
+    ports:
+      - "${DEV_PORT:-3000}:3000"
+    environment:
+      # Real env vars win over the `.env` in the bind-mounted working tree:
+      # @next/env only fills in names that process.env does not already
+      # define. So a developer's `DATABASE_URL=...localhost:5432` cannot pull
+      # this container onto their own database.
+      DATABASE_URL: postgres://babellm:babellm@postgres:5432/babellm
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-babellm}
+      SESSION_SECRET: ${SESSION_SECRET:-insecure-demo-session-secret-change-me}
+    volumes:
+      # The working tree, live.
+      - .:/app
+      # Two named volumes that deliberately shadow the bind mount:
+      #
+      #   node_modules — the host's is built for the host's platform, and its
+      #   native binaries (Next's SWC, Tailwind's oxide, lightningcss) will
+      #   not load under Linux. Docker seeds a named volume from the image on
+      #   first use, so this is the container's own install from the `deps`
+      #   stage. Recreate it (`docker compose -f docker-compose.dev.yml down
+      #   -v`) after changing dependencies, or rebuild with --build.
+      #
+      #   .next — build output is large, rewritten constantly, and of no use
+      #   on the host; keeping it out of the bind mount is also a noticeable
+      #   speedup on macOS and Windows. It is what lets this stack run beside
+      #   a `pnpm dev` on the host, too: `next dev` takes an exclusive lock on
+      #   `<distDir>/dev/lock`, and with the directory held in a volume the
+      #   two servers cannot see each other's lock. (Hence no NEXT_DIST_DIR
+      #   here, unlike `pnpm dev:test-db`, which shares one filesystem and so
+      #   has to rename the directory instead.)
+      - node-modules:/app/node_modules
+      - next-cache:/app/.next
+    # Migrate before serving, so the dev server never comes up against an
+    # out-of-date schema — the same order the production image uses. `exec`
+    # so `next dev` is PID 1 and receives SIGTERM from `docker compose down`.
+    command: sh -c "node scripts/migrate.mjs && exec node_modules/.bin/next dev"
+    # Turbopack watches the bind mount; on macOS and Windows file events cross
+    # the VM boundary and can arrive late. If a save ever fails to trigger a
+    # reload, save again — or run the dev server on the host instead and use
+    # docker-compose.yml for the dependencies only.
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: babellm
+      POSTGRES_PASSWORD: babellm
+      POSTGRES_DB: babellm
+    # No `ports:` on purpose. Reach it with
+    # `docker compose -f docker-compose.dev.yml exec postgres psql -U babellm`.
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U babellm"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # No `ports:` either — nothing outside the stack has any business here.
+    # No persistence: the usage counters this holds are volatile by design,
+    # and losing them on restart is what already happens when REDIS_URL is
+    # unset.
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  # Namespaced by the `babellm-dev` project, so none of these collide with the
+  # volumes of docker-compose.yml.
+  pg-data:
+  node-modules:
+  next-cache:
