@@ -2,6 +2,7 @@ import type OpenAI from 'openai'
 import type { AdapterType } from '@/lib/adapters/credentials'
 import type { CatalogFields } from '@/lib/catalog/types'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
+import type { EmbeddingsRequest } from '@/lib/schemas/embeddings'
 import type { ResponsesRequest } from '@/lib/schemas/responses'
 import type { TranscriptionRequest } from '@/lib/schemas/transcription'
 
@@ -18,6 +19,10 @@ export type TranscriptionVerbose = OpenAI.Audio.TranscriptionVerbose
  * could only ever disagree with the one the ingress already has.
  */
 export type TranscriptionResult = Transcription | TranscriptionVerbose | string
+// No streaming counterpart, and no union either: the embeddings API has one
+// wire shape and no streaming form at all, which is why this is one type where
+// the two above it are pairs and a triple.
+export type EmbeddingsResult = OpenAI.Embeddings.CreateEmbeddingResponse
 
 export interface ProviderConfig {
   /** Skip sending stream_options.include_usage — some clones reject it. */
@@ -49,6 +54,7 @@ export interface ProviderConfig {
   responsesPath?: string
   messagesPath?: string
   audioTranscriptionsPath?: string
+  embeddingsPath?: string
   [key: string]: unknown
 }
 
@@ -66,6 +72,7 @@ export interface ModelPathOverrides {
   responsesPath?: string | null
   messagesPath?: string | null
   audioTranscriptionsPath?: string | null
+  embeddingsPath?: string | null
 }
 
 export interface ProviderRuntime {
@@ -127,14 +134,31 @@ export interface ProviderAdapter {
    * throws would put a lie in the interface.
    */
   transcribe(req: TranscriptionRequest, ctx: AttemptContext): Promise<TranscriptionResult>
+  /**
+   * Required for the same reason `transcribe` is, and supplied the same way:
+   * `withEmbedUnsupported` gives it to the one flavor whose host has no
+   * embeddings endpoint at all. An optional method would have made "cannot
+   * embed" a fact only the ingress could see, and the ingress is the wrong
+   * place for it — `supports` steers a mixed model away from such a target
+   * before selection, but the request that reaches a model where *every*
+   * target is one still has to be refused by whoever knows why.
+   *
+   * No streaming twin here either, and for a stronger reason than
+   * transcription's: the OpenAI embeddings API has no streaming form to
+   * refuse.
+   */
+  embed(req: EmbeddingsRequest, ctx: AttemptContext): Promise<EmbeddingsResult>
 }
 
 /**
  * What `createGeminiAdapter` builds (and what `createOpenAIAdapter` builds
- * before it layers on its own native `transcribe` — see openai/audio.ts):
- * chat-native, with no opinion about the Responses API or transcription.
- * `respond`/`respondStream` are supplied by `withRespondViaChat` and
- * `transcribe` by `withTranscribeUnsupported`, both in wrappers.ts — the only
- * places allowed to know these methods are missing.
+ * before it layers on its own native `transcribe` and `embed` — see
+ * openai/audio.ts and openai/embeddings.ts): chat-native, with no opinion
+ * about the Responses API, transcription, or embeddings.
+ * `respond`/`respondStream` are supplied by `withRespondViaChat`,
+ * `transcribe` by `withTranscribeUnsupported` and `embed` by
+ * `withEmbedUnsupported`, all in wrappers.ts — the only places allowed to
+ * know these methods are missing.
  */
-export type ChatOnlyAdapter = Omit<ProviderAdapter, 'respond' | 'respondStream' | 'transcribe'>
+export type ChatOnlyAdapter =
+  Omit<ProviderAdapter, 'respond' | 'respondStream' | 'transcribe' | 'embed'>

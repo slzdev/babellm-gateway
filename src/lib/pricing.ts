@@ -10,6 +10,11 @@ const PER_MTOK = 1_000_000
  * path would be a self-inflicted wound. A minute of staleness is the trade. */
 const PRICE_TTL_MS = 60_000
 
+/** A charge of exactly nothing, at the same scale as every other money string
+ * here. Distinct from `null`, which is reserved for "this could not be
+ * priced": a request with no output tokens has a real output charge of zero. */
+const ZERO_USD = (0).toFixed(SCALE)
+
 const cache = new Map<string, { at: number; prices: PricingSnapshot | null }>()
 
 export function clearPriceCache(): void {
@@ -63,6 +68,21 @@ function usd(tokens: number, perMtok: string): string {
 }
 
 /**
+ * Splits a prompt count into the slice billed at the cached rate and the slice
+ * billed at the full one.
+ *
+ * Providers occasionally report more cached tokens than prompt tokens when a
+ * cache hit spans a prefix. Cached is documented as a SUBSET of prompt, so
+ * billing more tokens than were reported would contradict the invariant this
+ * encodes — and charging both slices in full would double-count every cached
+ * request. Shared by both pricing functions so the invariant has one home.
+ */
+function splitPrompt(promptTokens: number, cachedTokens: number | null) {
+  const cached = Math.min(cachedTokens ?? 0, promptTokens)
+  return { cached, billablePrompt: Math.max(promptTokens - cached, 0) }
+}
+
+/**
  * Turns catalog rates and measured tokens into a cost.
  *
  * Returns null — never zero — when the request cannot be priced. A dashboard
@@ -80,14 +100,7 @@ export function computeCost(
   // request. A measured 0 is still a legitimate value and still prices.
   if (usage.promptTokens === null || usage.completionTokens === null) return null
 
-  // Providers occasionally report more cached tokens than prompt tokens when
-  // a cache hit spans a prefix. Cached is documented as a SUBSET of prompt,
-  // so billing more tokens than were reported would contradict the invariant
-  // this function exists to encode.
-  const cached = Math.min(usage.cachedTokens ?? 0, usage.promptTokens ?? 0)
-  // OpenAI reports cached_tokens as a *subset* of prompt_tokens, so charging
-  // both in full would double-count every cached request.
-  const billablePrompt = Math.max((usage.promptTokens ?? 0) - cached, 0)
+  const { cached, billablePrompt } = splitPrompt(usage.promptTokens, usage.cachedTokens)
   const cachedRate = prices.cachedInputPerMtok ?? prices.inputPerMtok
 
   const inputUsd = usd(billablePrompt, prices.inputPerMtok)
@@ -100,4 +113,39 @@ export function computeCost(
   const totalUsd = (Number(inputUsd) + Number(cachedUsd) + Number(outputUsd)).toFixed(SCALE)
 
   return { inputUsd, cachedUsd, outputUsd, totalUsd, pricing: prices }
+}
+
+/**
+ * Prices a request that has input tokens and no output ones.
+ *
+ * `computeCost` refuses a catalog row with no `output_per_mtok`, which is
+ * right for chat — half a price is not a price. On an embedding model it is a
+ * false negative: such a model routinely carries an input rate and no output
+ * rate, because there is no output to charge for. Here a missing
+ * `outputPerMtok` is inapplicable rather than missing, so the request is fully
+ * priceable without it, and `completionTokens` is not consulted at all.
+ *
+ * A sibling rather than a flag on `computeCost`, so neither dialect can be
+ * priced by the other's rules by accident: this function would silently
+ * under-bill a chat completion.
+ */
+export function computeInputOnlyCost(
+  prices: PricingSnapshot | null,
+  usage: LogUsage | null,
+): CostBreakdown | null {
+  if (!prices || !usage) return null
+  if (prices.inputPerMtok === null) return null
+  if (usage.promptTokens === null) return null
+
+  const { cached, billablePrompt } = splitPrompt(usage.promptTokens, usage.cachedTokens)
+  const cachedRate = prices.cachedInputPerMtok ?? prices.inputPerMtok
+
+  const inputUsd = usd(billablePrompt, prices.inputPerMtok)
+  const cachedUsd = usd(cached, cachedRate)
+  const totalUsd = (Number(inputUsd) + Number(cachedUsd)).toFixed(SCALE)
+
+  // `pricing` is carried even though the output rate went unused, because the
+  // log row records the snapshot a charge was drawn from, not just the rates
+  // that happened to be multiplied.
+  return { inputUsd, cachedUsd, outputUsd: ZERO_USD, totalUsd, pricing: prices }
 }

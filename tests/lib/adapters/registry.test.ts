@@ -214,7 +214,7 @@ test('a model that names no path leaves the provider config alone', async () => 
       config: JSON.stringify({ chatCompletionsPath: '/provider/chat' }),
     }),
     'chat_completions',
-    { chatCompletionsPath: null, responsesPath: null },
+    { chatCompletionsPath: null, responsesPath: null, embeddingsPath: null },
   )
   await adapter.chat(chatBody, chatCtx)
 
@@ -413,6 +413,118 @@ test('gemini now serves a real translated transcription, not the withTranscribeU
   const error = await adapter
     .transcribe(transcribeRequest(), transcribeCtx)
     .catch((err: unknown) => err)
+
+  expect(error).not.toBeInstanceOf(UnsupportedOperationError)
+  expect(fetchSpy).toHaveBeenCalled()
+})
+
+test('a model that names only an embeddings path leaves its other endpoints alone', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(
+    provider({
+      adapter: 'openai_compatible',
+      baseUrl: 'https://api.example/v1',
+      config: JSON.stringify({ chatCompletionsPath: '/provider/chat' }),
+    }),
+    'chat_completions',
+    { embeddingsPath: '/api/v2/embeddings' },
+  )
+  await adapter.chat(chatBody, chatCtx)
+
+  // withModelPaths copies key by key, so an override for an endpoint this
+  // request does not use cannot displace the one it does.
+  expect(calledPath(fetchSpy)).toBe('https://api.example/provider/chat')
+})
+
+test('withModelPaths copies a set embeddingsPath onto the config', () => {
+  const layered = withModelPaths(runtime(), { embeddingsPath: '/api/v2/embeddings' })
+  expect(layered.config.embeddingsPath).toBe('/api/v2/embeddings')
+})
+
+test('withModelPaths is a no-op when every path key is null', () => {
+  const original = runtime({ config: { embeddingsPath: '/provider/embeddings' } })
+  const layered = withModelPaths(original, {
+    chatCompletionsPath: null, responsesPath: null, messagesPath: null,
+    audioTranscriptionsPath: null, embeddingsPath: null,
+  })
+  expect(layered).toBe(original)
+})
+
+// embed: /embeddings is a sibling endpoint on the same host too (embeddings
+// design doc §3.2), so the same three claims hold for it as for transcribe —
+// both OpenAI-shaped flavors reach it, and only the anthropic_messages flavor,
+// whose host has no embeddings endpoint at all, may not.
+
+const embedCtx = {
+  upstreamModel: 'embed-upstream',
+  signal: new AbortController().signal,
+  requestId: 'req_1',
+}
+
+const embedBody = { model: 'house-embed', input: 'hi' }
+
+test('a chat_completions-flavored provider embeds at /embeddings', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(provider({ apiFlavor: 'chat_completions' }))
+  await adapter.embed(embedBody, embedCtx)
+
+  expect(lastCalledPath(fetchSpy)).toMatch(/\/embeddings$/)
+})
+
+test('a responses-flavored provider embeds at the same endpoint, not at /responses', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(provider({ apiFlavor: 'responses' }))
+  await adapter.embed(embedBody, embedCtx)
+
+  expect(lastCalledPath(fetchSpy)).toMatch(/\/embeddings$/)
+})
+
+test('a model path override moves the embeddings endpoint', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(
+    provider({ adapter: 'openai_compatible', baseUrl: 'https://api.example/v1' }),
+    'chat_completions',
+    { embeddingsPath: '/api/v2/embeddings' },
+  )
+  await adapter.embed(embedBody, embedCtx)
+
+  expect(lastCalledPath(fetchSpy)).toBe('https://api.example/api/v2/embeddings')
+})
+
+test('an anthropic_messages target cannot embed', async () => {
+  const adapter = createAdapter(
+    provider({ adapter: 'openai_compatible', baseUrl: 'https://api.example/v1' }),
+    'anthropic_messages',
+  )
+
+  await expect(adapter.embed(embedBody, embedCtx)).rejects.toThrow(UnsupportedOperationError)
+})
+
+test('an anthropic_messages target still cannot transcribe once embed is wrapped too', async () => {
+  // Both wrappers are applied to the same adapter, and each spreads the one
+  // beneath it. Asserting the outer wrapper did not shadow the inner one is
+  // the only thing that catches a spread written in the wrong order.
+  const adapter = createAdapter(
+    provider({ adapter: 'openai_compatible', baseUrl: 'https://api.example/v1' }),
+    'anthropic_messages',
+  )
+
+  await expect(adapter.transcribe(transcribeRequest(), transcribeCtx))
+    .rejects.toThrow(UnsupportedOperationError)
+  await expect(adapter.chat(chatBody, chatCtx)).rejects.toThrow()
+})
+
+test('gemini embeds through the translated embedContent rather than refusing', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(
+    provider({ adapter: 'gemini', credentials: encryptJson({ apiKey: 'g-key' }) }),
+  )
+
+  // As with transcribe above: what matters here is only that the registry
+  // wires up the real implementation, so the call reaches Gemini at all
+  // instead of throwing UnsupportedOperationError before any upstream
+  // attempt. The empty stub body then fails the translator's own checks.
+  const error = await adapter.embed(embedBody, embedCtx).catch((err: unknown) => err)
 
   expect(error).not.toBeInstanceOf(UnsupportedOperationError)
   expect(fetchSpy).toHaveBeenCalled()

@@ -253,6 +253,7 @@ test('gateway settings are stored on the model and leave the layers alone', asyn
     chatCompletionsPath: '/api/chat',
     responsesPath: '/api/v2/responses',
     audioTranscriptionsPath: '/api/v2/audio/transcriptions',
+    embeddingsPath: '/api/v2/embeddings',
   })
 
   const [item] = await listCatalog()
@@ -260,6 +261,7 @@ test('gateway settings are stored on the model and leave the layers alone', asyn
   expect(item.chatCompletionsPath).toBe('/api/chat')
   expect(item.responsesPath).toBe('/api/v2/responses')
   expect(item.audioTranscriptionsPath).toBe('/api/v2/audio/transcriptions')
+  expect(item.embeddingsPath).toBe('/api/v2/embeddings')
   // These are not layer fields: the override and the value merged from it
   // must come through untouched.
   expect(item.override.contextWindow).toBe(999)
@@ -318,6 +320,7 @@ test('the list carries what a blank field would inherit', async () => {
   expect(item.providerApiFlavor).toBe('responses')
   expect(item.providerPaths.responsesPath).toBe('/p/responses')
   expect(item.providerPaths.chatCompletionsPath).toBe('/chat/completions')
+  expect(item.providerPaths.embeddingsPath).toBe('/embeddings')
 })
 
 test('a target reports the flavor its model pins', async () => {

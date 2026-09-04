@@ -7,6 +7,7 @@ import {
 import {
   droppedParams, MAX_INLINE_BYTES, TIMESTAMPED_FORMATS,
 } from '@/lib/translate/transcription-to-gemini'
+import { computeCost } from '@/lib/pricing'
 import { withUsageCost } from '../cost'
 import { GatewayError } from '../errors'
 import { parseWith, type Ingress } from '../handler'
@@ -100,6 +101,11 @@ export const transcriptionIngress: Ingress<TranscriptionRequest, TranscriptionRe
   ],
   run: (adapter, ctx, req) => adapter.transcribe(req, ctx),
   usageOf: (res) => (typeof res === 'string' ? null : usageFromTranscription(res.usage)),
+  // Input and output both, like the chat dialects: a token-billed
+  // transcription reports each, and a duration-billed one reports no usage at
+  // all — so there is no output-less case here for `computeInputOnlyCost` to
+  // answer. `usageOf` has already turned the unpriceable variant into null.
+  cost: computeCost,
   finish: (res, _identity, cost) => {
     // No identity rewriting at all: a transcription response has no `id` and
     // no `model` field, so there is nothing to rewrite and nothing to mint

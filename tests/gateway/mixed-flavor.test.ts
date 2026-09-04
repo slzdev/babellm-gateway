@@ -4,7 +4,9 @@ import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { handleResponses } from '@/lib/gateway/responses-handler'
 import { createResponsesAdapter } from '@/lib/adapters/openai/responses'
 import { createAnthropicAdapter } from '@/lib/adapters/anthropic'
-import { withRespondViaChat, withTranscribeUnsupported } from '@/lib/adapters/wrappers'
+import {
+  withEmbedUnsupported, withRespondViaChat, withTranscribeUnsupported,
+} from '@/lib/adapters/wrappers'
 import type {
   ChatCompletion, ChatCompletionChunk, ChatOnlyAdapter, ProviderAdapter, ProviderRuntime,
 } from '@/lib/adapters/types'
@@ -49,7 +51,7 @@ function responseResult(text: string) {
  *  registry wraps it, so both ingresses exercise the real crossings. */
 function anthropicAdapter(name: string, create: unknown): ProviderAdapter {
   const factory = vi.fn().mockReturnValue({ messages: { create } })
-  return withTranscribeUnsupported(
+  const transcribable = withTranscribeUnsupported(
     withRespondViaChat(
       createAnthropicAdapter(
         { ...runtime(name), baseUrl: 'https://api.anthropic.com/v1' },
@@ -60,6 +62,11 @@ function anthropicAdapter(name: string, create: unknown): ProviderAdapter {
     ),
     name,
     'the Anthropic Messages API has no transcription endpoint and no audio input at all',
+  )
+  return withEmbedUnsupported(
+    transcribable,
+    name,
+    'the Anthropic Messages API has no embeddings endpoint',
   )
 }
 
@@ -96,19 +103,24 @@ function chatOnlyRespondingVia(
       throw new Error(`chatStream not used in this test for ${providerName}`)
     },
   }
-  // Named rather than nested inside the `withTranscribeUnsupported(...)` call
-  // below: TypeScript's inference for a generic call fed straight into a
-  // second generic call, in a `: ProviderAdapter` return position, tries to
-  // contextually type this file's object literal against `ProviderAdapter`
-  // itself and rejects it as missing `respond`/`respondStream`/`transcribe`
-  // — even though the literal only needs to satisfy `ChatOnlyAdapter`, the
-  // inner call's actual parameter type. Binding the intermediate result
-  // breaks that chain and resolves each call independently.
+  // Named rather than nested inside the wrapper calls below: TypeScript's
+  // inference for a generic call fed straight into a second generic call, in
+  // a `: ProviderAdapter` return position, tries to contextually type this
+  // file's object literal against `ProviderAdapter` itself and rejects it as
+  // missing `respond`/`respondStream`/`transcribe`/`embed` — even though the
+  // literal only needs to satisfy `ChatOnlyAdapter`, the inner call's actual
+  // parameter type. Binding each intermediate result breaks that chain and
+  // resolves the calls independently.
   const respondable = withRespondViaChat(chatOnly, providerName)
-  return withTranscribeUnsupported(
+  const transcribable = withTranscribeUnsupported(
     respondable,
     providerName,
     'this test fixture has no transcription implementation',
+  )
+  return withEmbedUnsupported(
+    transcribable,
+    providerName,
+    'this test fixture has no embeddings implementation',
   )
 }
 
@@ -131,13 +143,18 @@ function chatOnlyStreamingVia(
     },
     chatStream: chatStream as ProviderAdapter['chatStream'],
   }
-  // See the identical `respondable` binding in `chatOnlyRespondingVia` above
-  // for why this cannot be inlined into the call below.
+  // See the identical bindings in `chatOnlyRespondingVia` above for why these
+  // cannot be inlined into the calls below.
   const respondable = withRespondViaChat(chatOnly, providerName)
-  return withTranscribeUnsupported(
+  const transcribable = withTranscribeUnsupported(
     respondable,
     providerName,
     'this test fixture has no transcription implementation',
+  )
+  return withEmbedUnsupported(
+    transcribable,
+    providerName,
+    'this test fixture has no embeddings implementation',
   )
 }
 

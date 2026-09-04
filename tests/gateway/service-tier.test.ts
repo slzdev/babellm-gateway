@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
+import { handleEmbeddings } from '@/lib/gateway/embeddings-handler'
 import {
-  chatRequest, fakeAdapterByProvider, fakeAdapterDeps, seedGateway, seedTargets,
+  chatRequest, embeddingsRequest, fakeAdapterByProvider, fakeAdapterDeps, seedGateway,
+  seedTargets,
 } from '../helpers/gateway'
 import { resetDb } from '../helpers/db'
 
@@ -160,4 +162,50 @@ test('a gemini target with no tier reports nothing', async () => {
   )
 
   expect(res.headers.get('x-babellm-dropped-params')).toBeNull()
+})
+
+// The tier is an operator's routing decision, and every endpoint that can carry
+// it gets it — but `/v1/embeddings` documents no such parameter, and OpenAI
+// answers an argument it does not recognise with a 400 rather than ignoring it.
+// Injecting one here would turn a setting that means nothing on this endpoint
+// into every request to that target failing, non-retryably and with no
+// failover. So the embeddings ingress declares no `bodyFor` at all, and the
+// handler's default hands every candidate the client's own body. The pin is
+// reported in x-babellm-dropped-params instead — asserted below.
+test('a pinned tier is not injected into an embeddings request', async () => {
+  const { apiKey } = await seedGateway({ serviceTier: 'flex' })
+  const embed = vi.fn().mockResolvedValue({
+    object: 'list', model: 'gpt-4o-mini',
+    data: [{ object: 'embedding', index: 0, embedding: [0.1] }],
+    usage: { prompt_tokens: 1, total_tokens: 1 },
+  })
+
+  const res = await handleEmbeddings(
+    embeddingsRequest({ model: 'house-model', input: 'hi' }, apiKey),
+    fakeAdapterDeps({ embed }),
+  )
+
+  expect(res.status).toBe(200)
+  expect('service_tier' in embed.mock.calls[0][0]).toBe(false)
+  // Declined, not silently ignored: an operator's routing decision the gateway
+  // cannot honour on this endpoint is exactly what this header is for.
+  expect(res.headers.get('x-babellm-dropped-params')).toBe('service_tier')
+})
+
+test('a tier the client sent itself still reaches an embeddings target', async () => {
+  const { apiKey } = await seedGateway()
+  const embed = vi.fn().mockResolvedValue({
+    object: 'list', model: 'gpt-4o-mini',
+    data: [{ object: 'embedding', index: 0, embedding: [0.1] }],
+    usage: { prompt_tokens: 1, total_tokens: 1 },
+  })
+
+  await handleEmbeddings(
+    embeddingsRequest({ model: 'house-model', input: 'hi', service_tier: 'flex' }, apiKey),
+    fakeAdapterDeps({ embed }),
+  )
+
+  // Declining to *pin* a tier is not the same as stripping one. What the client
+  // sent is the client's to answer for, exactly as on the other two endpoints.
+  expect(embed.mock.calls[0][0].service_tier).toBe('flex')
 })

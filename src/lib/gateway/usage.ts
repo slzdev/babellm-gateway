@@ -87,3 +87,33 @@ export function usageFromTranscription(raw: unknown): LogUsage | null {
     reasoningTokens: null,
   }
 }
+
+interface RawEmbeddingsUsage {
+  prompt_tokens?: number | null
+  /** Declared to match the upstream object and nothing more. LogUsage has no
+   *  total, and the callers that want one add the two counts themselves. */
+  total_tokens?: number | null
+}
+
+/**
+ * The embeddings spelling, which reports one number worth keeping.
+ *
+ * `completionTokens` is 0 where usageFrom would leave it null, and that is the
+ * point: an embeddings response has no output tokens to measure, so zero is
+ * the measurement rather than the absence of one. Null would say "unmeasured"
+ * and make an otherwise fully-measured request unpriceable.
+ *
+ * Null is still right for the two details, which no provider reports on this
+ * endpoint, and for the whole object when the response carries no usage at all
+ * — Gemini's embedContent measures nothing, and inventing a zero there would
+ * claim a measurement that never happened.
+ */
+export function usageFromEmbeddings(raw: RawEmbeddingsUsage | null | undefined): LogUsage | null {
+  if (!raw) return null
+  return {
+    promptTokens: count(raw.prompt_tokens),
+    completionTokens: 0,
+    cachedTokens: null,
+    reasoningTokens: null,
+  }
+}

@@ -9,7 +9,7 @@ import { createResponsesAdapter } from './openai/responses'
 import type {
   ModelPathOverrides, ProviderAdapter, ProviderConfig, ProviderRuntime,
 } from './types'
-import { withRespondViaChat, withTranscribeUnsupported } from './wrappers'
+import { withEmbedUnsupported, withRespondViaChat, withTranscribeUnsupported } from './wrappers'
 
 export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
   return {
@@ -44,9 +44,10 @@ export function createAdapter(
       // Gemini speaks neither OpenAI dialect natively, so flavor says nothing
       // about it: the adapter translates from Chat Completions either way,
       // and gets `respond`/`respondStream` from the same wrapper any
-      // chat-only adapter does. `transcribe` is real and translated (design
-      // doc §3.6) — createGeminiAdapter supplies it directly, so no
-      // `withTranscribeUnsupported` wrapper belongs here any more.
+      // chat-only adapter does. `transcribe` and `embed` are both real and
+      // translated (transcriptions §3.6, embeddings §3.4) —
+      // createGeminiAdapter supplies them directly, so neither
+      // `withTranscribeUnsupported` nor `withEmbedUnsupported` belongs here.
       return withRespondViaChat(createGeminiAdapter(runtime), runtime.name)
     case 'bedrock':
       throw new UnsupportedOperationError(
@@ -67,7 +68,7 @@ export function withModelPaths(
 ): ProviderRuntime {
   if (
     !paths?.chatCompletionsPath && !paths?.responsesPath && !paths?.messagesPath
-    && !paths?.audioTranscriptionsPath
+    && !paths?.audioTranscriptionsPath && !paths?.embeddingsPath
   ) return runtime
 
   const config: ProviderConfig = { ...runtime.config }
@@ -75,6 +76,7 @@ export function withModelPaths(
   if (paths.responsesPath) config.responsesPath = paths.responsesPath
   if (paths.messagesPath) config.messagesPath = paths.messagesPath
   if (paths.audioTranscriptionsPath) config.audioTranscriptionsPath = paths.audioTranscriptionsPath
+  if (paths.embeddingsPath) config.embeddingsPath = paths.embeddingsPath
   return { ...runtime, config }
 }
 
@@ -90,17 +92,21 @@ function flavoredAdapter(
 ): ProviderAdapter {
   if (flavor === 'responses') return createResponsesAdapter(runtime)
   if (flavor === 'anthropic_messages') {
-    // The one true exception (design doc §3.4): Anthropic's own API has no
-    // transcription endpoint and no audio input at all, regardless of which
-    // adapter reaches it. Unlike the Gemini branch above, this is not a
-    // placeholder — the throw is permanent, and §3.5's all-ineligible
-    // fallback means it is reachable through the gateway too: a model whose
-    // only target is `anthropic_messages` reaches this adapter and gets this
-    // throw as its 501.
-    return withTranscribeUnsupported(
-      withRespondViaChat(createAnthropicAdapter(runtime, maxOutputTokens), runtime.name),
+    // The one true exception, and it is the exception twice over: Anthropic's
+    // own API has neither a transcription endpoint nor an embeddings one,
+    // regardless of which adapter reaches it. Unlike the Gemini branch above,
+    // neither is a placeholder — both throws are permanent, and each
+    // ingress's all-ineligible fallback means both are reachable through the
+    // gateway: a model whose only target is `anthropic_messages` reaches this
+    // adapter and gets one of these throws as its 501.
+    return withEmbedUnsupported(
+      withTranscribeUnsupported(
+        withRespondViaChat(createAnthropicAdapter(runtime, maxOutputTokens), runtime.name),
+        runtime.name,
+        'the Anthropic Messages API has no transcription endpoint and no audio input at all',
+      ),
       runtime.name,
-      'the Anthropic Messages API has no transcription endpoint and no audio input at all',
+      'the Anthropic Messages API has no embeddings endpoint',
     )
   }
   return withRespondViaChat(createOpenAIAdapter(runtime), runtime.name)

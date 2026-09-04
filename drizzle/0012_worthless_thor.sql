@@ -1,0 +1,1 @@
+ALTER TABLE "catalog_models" ADD COLUMN "embeddings_path" text;

@@ -32,6 +32,7 @@ function makeIngress(overrides: Partial<Ingress<FakeReq, FakeRes, never>> = {}):
     run: async () => ({}),
     finish: (res) => res,
     usageOf: () => null,
+    cost: () => null,
     toResponse: (res, headers) => Response.json(res, { headers }),
     ...overrides,
   }

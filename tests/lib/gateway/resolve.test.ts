@@ -338,7 +338,11 @@ test('one provider can serve a chat model and a responses model', async () => {
 
 test('a candidate carries the model path overrides', async () => {
   const { model } = await seedTargets({
-    targets: [{ name: 'p1', responsesPath: '/api/v2/responses' }],
+    targets: [{
+      name: 'p1',
+      responsesPath: '/api/v2/responses',
+      embeddingsPath: '/api/v2/embeddings',
+    }],
   })
 
   const { candidates } = await resolveModel(model.name)
@@ -348,6 +352,7 @@ test('a candidate carries the model path overrides', async () => {
     responsesPath: '/api/v2/responses',
     messagesPath: null,
     audioTranscriptionsPath: null,
+    embeddingsPath: '/api/v2/embeddings',
   })
 })
 

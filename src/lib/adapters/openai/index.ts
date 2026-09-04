@@ -9,6 +9,7 @@ import type {
   ProviderRuntime,
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
+import { embed } from './embeddings'
 import { toProviderError } from './errors'
 import { transcribeVia } from './audio'
 import { resolveRequestPaths } from '../paths'
@@ -23,7 +24,7 @@ const FLAVOR_HINT =
 export function createOpenAIAdapter(
   runtime: ProviderRuntime,
   createClient?: OpenAIClientFactory,
-): ChatOnlyAdapter & Pick<ProviderAdapter, 'transcribe'> {
+): ChatOnlyAdapter & Pick<ProviderAdapter, 'transcribe' | 'embed'> {
   const client = createOpenAIClient(runtime, createClient)
   const paths = resolveRequestPaths(runtime.config, runtime.baseUrl)
 
@@ -83,9 +84,11 @@ export function createOpenAIAdapter(
 
     listModels: (ctx) => listModels(client, ctx, paths.models),
 
-    // /audio/transcriptions is a sibling endpoint on the same host, not a
-    // dialect of chat — see design doc §3.4 — so it is served the same way
-    // regardless of which flavor this provider's chat endpoint speaks.
+    // /audio/transcriptions and /embeddings are sibling endpoints on the same
+    // host, not dialects of chat — see the transcriptions design doc §3.4 and
+    // the embeddings one §3.2 — so both are served the same way regardless of
+    // which flavor this provider's chat endpoint speaks.
     transcribe: transcribeVia(client, paths.audioTranscriptions),
+    embed: (req, ctx) => embed(client, req, ctx, paths.embeddings),
   }
 }

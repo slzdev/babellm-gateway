@@ -6,7 +6,9 @@ import {
 } from '@/lib/translate/responses-to-chat'
 import { newResponseId } from '@/lib/gateway/identity'
 import { UnsupportedOperationError } from '@/lib/gateway/errors'
-import type { ChatOnlyAdapter, ProviderAdapter, TranscriptionResult } from './types'
+import type {
+  ChatOnlyAdapter, EmbeddingsResult, ProviderAdapter, TranscriptionResult,
+} from './types'
 
 /**
  * The one crossing path that needs a wrapper.
@@ -22,12 +24,14 @@ import type { ChatOnlyAdapter, ProviderAdapter, TranscriptionResult } from './ty
  * `respond`/`respondStream` from the same wrapper the OpenAI chat adapter
  * uses, and never learns that the Responses API exists.
  *
+
  * Generic in `A` rather than fixed to `ChatOnlyAdapter`: `createOpenAIAdapter`
- * hands this a `ChatOnlyAdapter` that also carries a native `transcribe` (see
- * openai/audio.ts), and that extra method must survive the `...adapter`
- * spread below in the *type* the caller sees, not just at runtime — otherwise
- * `createAdapter`'s declared return of a full `ProviderAdapter` would be a
- * lie the compiler couldn't catch anywhere else.
+ * hands this a `ChatOnlyAdapter` that also carries a native `transcribe` and a
+ * native `embed` (see openai/audio.ts and openai/embeddings.ts), and those
+ * extra methods must survive the `...adapter` spread below in the *type* the
+ * caller sees, not just at runtime — otherwise `createAdapter`'s declared
+ * return of a full `ProviderAdapter` would be a lie the compiler couldn't
+ * catch anywhere else.
  */
 export function withRespondViaChat<A extends ChatOnlyAdapter>(
   adapter: A,
@@ -78,6 +82,37 @@ export function withTranscribeUnsupported<A extends ChatOnlyAdapter>(
     async transcribe(): Promise<TranscriptionResult> {
       throw new UnsupportedOperationError(
         `"${providerName}" cannot serve audio transcriptions: ${reason}.`,
+      )
+    },
+  }
+}
+
+/**
+ * Supplies `embed` for an adapter that has no embeddings implementation of its
+ * own. The same shape as `withTranscribeUnsupported` above, and the same one
+ * caller — the `anthropic_messages` flavor — because the two gaps have the
+ * same cause: Anthropic's API serves neither endpoint, and nothing can be
+ * derived from the one it does serve. `withRespondViaChat` manufactures a
+ * Response out of a chat completion; no wrapper can manufacture an embedding
+ * out of one, because a vector is not something a completion contains.
+ *
+ * Reachable through the gateway as well as from a direct unit call: §3.7's
+ * routing filter steers a mixed model away from a target that would only throw
+ * this, but its all-ineligible fallback sends a model whose *only* target is
+ * `anthropic_messages` here, and this throw is that request's 501. `reason` is
+ * read by the operator who misconfigured the route, so it says why the
+ * provider cannot serve rather than only that it cannot.
+ */
+export function withEmbedUnsupported<A extends ChatOnlyAdapter>(
+  adapter: A,
+  providerName: string,
+  reason: string,
+): A & Pick<ProviderAdapter, 'embed'> {
+  return {
+    ...adapter,
+    async embed(): Promise<EmbeddingsResult> {
+      throw new UnsupportedOperationError(
+        `"${providerName}" cannot serve embeddings: ${reason}.`,
       )
     },
   }

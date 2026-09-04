@@ -13,6 +13,7 @@ import type {
   ResponseStreamEvent,
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
+import { embed } from './embeddings'
 import { toProviderError } from './errors'
 import { transcribeVia } from './audio'
 import { resolveRequestPaths } from '../paths'
@@ -83,6 +84,11 @@ export function createResponsesAdapter(
     },
 
     listModels: (ctx) => listModels(client, ctx, paths.models),
+
+    // Identical to the chat adapter's, and deliberately so: this flavor
+    // changes where chat is served, and embeddings are served in the same
+    // place either way.
+    embed: (req, ctx) => embed(client, req, ctx, paths.embeddings),
 
     /**
      * The matching path: Responses in, Responses out. No translation at all —

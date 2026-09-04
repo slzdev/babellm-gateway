@@ -1,5 +1,6 @@
 import type { ResponseStreamEvent, ResponsesResult } from '@/lib/adapters/types'
 import type { LogUsage } from '@/lib/logs/types'
+import { computeCost } from '@/lib/pricing'
 import { droppedParams, toChatRequest } from '@/lib/translate/responses-to-chat'
 import { responsesRequestSchema, type ResponsesRequest } from '@/lib/schemas/responses'
 import { withUsageCost } from '../cost'
@@ -96,6 +97,7 @@ export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, Respon
   runStream: (adapter, ctx, req) => adapter.respondStream(req, ctx),
   finish: (res, identity, cost) => withUsageCost(rewriteResponse(res, identity), cost),
   usageOf: (res) => usageFromResponses(res.usage as never),
+  cost: computeCost,
   toResponse: (res, headers) => Response.json(res, { headers }),
   newIdentityId: newResponseId,
   stream: responsesStreamProtocol,

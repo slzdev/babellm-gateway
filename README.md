@@ -77,6 +77,43 @@ Gemini, and the same routing, failover, and logs as everything else. The
 limitations are worth reading *before* you route audio through it:
 [Audio transcriptions](#audio-transcriptions).
 
+`/v1/embeddings` completes the set — the fourth shape a client can send, on the
+same key and the same virtual models:
+
+```ts
+await client.embeddings.create({
+  model: "house-embed",
+  input: ["hello", "world"],
+});
+```
+
+**What embeddings inherit, and what they don't:**
+
+- Routing, failover, breakers, per-key limits, budgets, and logging are all
+  shape-independent, so an embeddings request gets every one of them — and
+  `usage.cost` on the response, exactly as the other two endpoints carry it.
+- **A Gemini target reports no usage at all**, so those requests are logged and
+  returned **unpriced** rather than as costing zero. Google's `embedContent`
+  measures no tokens — `billableCharacterCount` is a Vertex field — and a zero
+  would claim a measurement that was never taken.
+- **A target that cannot embed is skipped, not attempted.** A model on the
+  `anthropic_messages` flavor has no embeddings endpoint to reach, and neither
+  does a Gemini target handed token-array `input` — so a virtual model that
+  also has a sibling which *can* serve the request is routed to that sibling,
+  before target selection rather than after a wasted attempt. Only a model
+  where nothing can serve it refuses, and then the answer comes from whoever
+  knows why: a `501` naming the provider for the Anthropic flavor, a `400`
+  naming `input` for a Gemini-only one.
+- **Token-array `input` needs an OpenAI-shaped target.** Gemini embeds text, so
+  the only thing the gateway could do with token ids is hand them over as
+  something else — returning vectors for content the client never asked about.
+  That is the one failure "drop and report" cannot cover, so such a request
+  steers to a target that takes tokens and is refused with a `400` only when
+  Gemini is the sole option. `user`, which changes no vector, is dropped and
+  named in `x-babellm-dropped-params` as usual.
+- There is no streaming form to support — the OpenAI embeddings API has none —
+  so the log row records `stream = false`, and the cost arrives with the body.
+
 ## Why
 
 - **Your keys stay yours.** Provider credentials are encrypted at rest with
@@ -117,7 +154,7 @@ Set `GATEWAY_PORT` to publish elsewhere (`GATEWAY_PORT=3100 docker compose …`)
 
 ```mermaid
 flowchart LR
-    A["Your app<br/><sub>OpenAI SDK</sub>"] -->|"sk-bab-…"| B["BabeLLM<br/><sub>/v1/chat/completions<br/>/v1/responses<br/>/v1/audio/transcriptions</sub>"]
+    A["Your app<br/><sub>OpenAI SDK</sub>"] -->|"sk-bab-…"| B["BabeLLM<br/><sub>/v1/chat/completions<br/>/v1/responses<br/>/v1/audio/transcriptions<br/>/v1/embeddings</sub>"]
     B --> C{"Virtual model<br/><sub>policy + targets</sub>"}
     C -->|1| D["OpenAI"]
     C -->|2| E["Any OpenAI-compatible<br/><sub>Groq, OpenRouter, vLLM…</sub>"]
@@ -125,16 +162,22 @@ flowchart LR
     B -.-> G[("Postgres<br/><sub>logs · usage · config</sub>")]
 ```
 
-Clients can speak either Chat Completions or Responses, and upload audio to
-`/v1/audio/transcriptions`. Every OpenAI-shaped provider is called on one of
-three APIs, whichever its `api_flavor` says — Chat Completions, Responses, or
-Anthropic Messages — set per provider and overridable per catalog model, so one
-virtual model can mix a `chat_completions` target with a `responses` one, or
-either with an `anthropic_messages` one. Anything behind the gateway that
-speaks none of the three — Gemini's `generateContent` — is translated in both
-directions, and so is any request that crosses ingress and provider flavor (a
-Responses request served by a Chat Completions target, a Chat Completions
-request served by an Anthropic Messages target, and so on).
+Clients can speak either Chat Completions or Responses, upload audio to
+`/v1/audio/transcriptions`, or embed text at `/v1/embeddings`. Every
+OpenAI-shaped provider is called on one of three APIs, whichever its
+`api_flavor` says — Chat Completions, Responses, or Anthropic Messages — set
+per provider and overridable per catalog model, so one virtual model can mix a
+`chat_completions` target with a `responses` one, or either with an
+`anthropic_messages` one. Anything behind the gateway that speaks none of the
+three — Gemini's `generateContent` — is translated in both directions, and so
+is any request that crosses ingress and provider flavor (a Responses request
+served by a Chat Completions target, a Chat Completions request served by an
+Anthropic Messages target, and so on). Transcriptions and embeddings sit
+outside that choice: each is a sibling of all three chat dialects rather than
+one of them, so a `responses`-flavored target embeds through the same client a
+`chat_completions` one does, only Gemini needs translating, and an
+`anthropic_messages` target has neither endpoint to be pointed at. Both paths
+are configurable per provider and per model, like the three chat ones.
 
 An `anthropic_messages` model is called on `/v1/messages` — the path is
 configurable per provider and per model, like the other flavors'. There is no
@@ -196,7 +239,13 @@ fails over on the same loop until its first chunk lands.
 
 `x-babellm-provider` and `x-babellm-upstream-model` on the response name who
 actually served. Targets can pin a service tier (`flex`, `priority`,
-`ultrafast`, …) where the provider supports one.
+`ultrafast`, …) where the provider supports one. A pinned tier applies to the
+two chat shapes only: neither `/v1/audio/transcriptions` nor `/v1/embeddings`
+has such a parameter, and a provider answers an argument it does not recognise
+with a `400` rather than ignoring it, so injecting one there would turn a
+setting that means nothing on those endpoints into every request to that target
+failing. A pin that lands on one of them is reported in
+`x-babellm-dropped-params` instead.
 
 ### Costs on the response
 
@@ -219,13 +268,12 @@ the way the gateway billed it:
 }
 ```
 
-Same field on `/v1/chat/completions` and `/v1/responses`, and on a `json`
-transcription whose provider reported token usage it could be priced from —
-see [Audio transcriptions](#audio-transcriptions) for which providers that is.
-Streaming puts it on
-the final usage chunk (chat) or the `response.completed` event (Responses), so
-it arrives with the tokens it prices rather than in a header that has already
-been flushed.
+Same field on `/v1/chat/completions`, `/v1/responses` and `/v1/embeddings`, and
+on a `json` transcription whose provider reported token usage it could be
+priced from — see [Audio transcriptions](#audio-transcriptions) for which
+providers that is. Streaming puts it on the final usage chunk (chat) or the
+`response.completed` event (Responses), so it arrives with the tokens it prices
+rather than in a header that has already been flushed.
 
 Amounts are strings at nine decimal places — a client summing thousands of
 requests should not inherit float error from the wire format. Cached tokens are
@@ -236,7 +284,8 @@ regular input token — so a cache hit is never charged twice.
 `"cost": null` means the request could not be priced: the model has no catalog
 entry, or only half of one. It is never `0` — a zero would be indistinguishable
 from a free request. When a provider reports no usage at all, there is no
-`usage` object and no cost.
+`usage` object and no cost — embeddings on a Gemini target are the standing
+example.
 
 The per-million rates behind the numbers stay in the request log and the admin
 UI; they are not published to clients.
@@ -555,8 +604,8 @@ phases. What's still missing:
   key's total spend to zero.
 - **Round-robin state is per process**, so multiple instances skew the
   distribution.
-- **No Bedrock adapter, no `/v1/models`, no `/v1/embeddings`.** A `bedrock`
-  provider is accepted by the dashboard but returns `501`.
+- **No Bedrock adapter and no `/v1/models`.** A `bedrock` provider is accepted
+  by the dashboard but returns `501`.
 - **Transcription spend can be invisible.** Duration-billed models bill by
   audio length, which the catalog can't express, so those requests log with no
   usage and no cost — see [Audio transcriptions](#audio-transcriptions).

@@ -1,4 +1,5 @@
 import type { ChatCompletion, ChatCompletionChunk } from '@/lib/adapters/types'
+import { computeCost } from '@/lib/pricing'
 import { chatCompletionRequestSchema, type ChatCompletionRequest } from '@/lib/schemas/chat'
 import type { ClassifiedError } from '../errors'
 import { withUsageCost } from '../cost'
@@ -66,6 +67,7 @@ export const chatIngress: Ingress<ChatCompletionRequest, ChatCompletion, ChatCom
   runStream: (adapter, ctx, req) => adapter.chatStream(req, ctx),
   finish: (res, identity, cost) => withUsageCost(rewriteCompletion(res, identity), cost),
   usageOf: (res) => usageFrom(res.usage),
+  cost: computeCost,
   toResponse: (res, headers) => Response.json(res, { headers }),
   newIdentityId: newCompletionId,
   stream: chatStreamProtocol,

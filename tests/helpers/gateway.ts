@@ -110,6 +110,22 @@ export function responsesRequest(
   })
 }
 
+export function embeddingsRequest(
+  body: unknown,
+  apiKey: string | null,
+  headers: Record<string, string> = {},
+) {
+  return new Request('http://gateway.test/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      ...headers,
+    },
+    body: JSON.stringify(body),
+  })
+}
+
 export function fakeAdapterDeps(adapter: Partial<ProviderAdapter>) {
   return {
     createAdapter: () => ({
@@ -127,6 +143,9 @@ export function fakeAdapterDeps(adapter: Partial<ProviderAdapter>) {
       },
       async transcribe() {
         throw new Error('transcribe not stubbed')
+      },
+      async embed() {
+        throw new Error('embed not stubbed')
       },
       ...adapter,
     }) as ProviderAdapter,
@@ -147,6 +166,7 @@ export interface TargetSpec {
   responsesPath?: string | null
   messagesPath?: string | null
   audioTranscriptionsPath?: string | null
+  embeddingsPath?: string | null
   adapter?: 'openai' | 'openai_compatible' | 'gemini' | 'bedrock'
 }
 
@@ -197,7 +217,7 @@ export async function seedTargets(options: SeedTargetsOptions) {
 
     if (
       spec.apiFlavor || spec.chatCompletionsPath || spec.responsesPath || spec.messagesPath
-      || spec.audioTranscriptionsPath
+      || spec.audioTranscriptionsPath || spec.embeddingsPath
     ) {
       await db.insert(catalogModels).values({
         providerId: provider.id,
@@ -207,6 +227,7 @@ export async function seedTargets(options: SeedTargetsOptions) {
         responsesPath: spec.responsesPath ?? null,
         messagesPath: spec.messagesPath ?? null,
         audioTranscriptionsPath: spec.audioTranscriptionsPath ?? null,
+        embeddingsPath: spec.embeddingsPath ?? null,
       })
     }
 
@@ -247,6 +268,9 @@ export function fakeAdapterByProvider(
       },
       async transcribe() {
         throw new Error(`transcribe not stubbed for ${provider.name}`)
+      },
+      async embed() {
+        throw new Error(`embed not stubbed for ${provider.name}`)
       },
       ...(byName[provider.name] ?? {}),
     }) as ProviderAdapter,

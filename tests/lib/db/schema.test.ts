@@ -132,6 +132,7 @@ test('a catalog model inherits its provider flavor and paths by default', async 
   expect(row.chatCompletionsPath).toBeNull()
   expect(row.responsesPath).toBeNull()
   expect(row.audioTranscriptionsPath).toBeNull()
+  expect(row.embeddingsPath).toBeNull()
 })
 
 test('a catalog model can pin its own flavor and paths', async () => {
@@ -146,12 +147,14 @@ test('a catalog model can pin its own flavor and paths', async () => {
     chatCompletionsPath: '/api/chat',
     responsesPath: '/api/responses',
     audioTranscriptionsPath: '/api/audio/transcriptions',
+    embeddingsPath: '/api/embeddings',
   }).returning()
 
   expect(row.apiFlavor).toBe('responses')
   expect(row.chatCompletionsPath).toBe('/api/chat')
   expect(row.responsesPath).toBe('/api/responses')
   expect(row.audioTranscriptionsPath).toBe('/api/audio/transcriptions')
+  expect(row.embeddingsPath).toBe('/api/embeddings')
 })
 
 test('route targets carry nullable breaker overrides', async () => {

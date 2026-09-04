@@ -33,6 +33,8 @@ const ctx = {
 
 const body = { model: 'fast', messages: [{ role: 'user' as const, content: 'hi' }] }
 
+const embeddingsBody = { model: 'fast', input: 'hi' }
+
 const completion = {
   id: 'chatcmpl-1', object: 'chat.completion', created: 1, model: 'clone-model',
   choices: [{ index: 0, message: { role: 'assistant', content: 'hi' }, finish_reason: 'stop' }],
@@ -61,6 +63,14 @@ function responsesClient() {
       ? { async *[Symbol.asyncIterator]() { /* an empty stream is enough */ } }
       : response)
   return { create, factory: vi.fn().mockReturnValue({ responses: { create } }) }
+}
+
+function embeddingsClient() {
+  const create = vi.fn().mockResolvedValue({
+    object: 'list', model: 'clone-model', usage: { prompt_tokens: 1, total_tokens: 1 },
+    data: [{ object: 'embedding', index: 0, embedding: [0.1] }],
+  })
+  return { create, factory: vi.fn().mockReturnValue({ embeddings: { create } }) }
 }
 
 function modelsClient() {
@@ -147,6 +157,44 @@ describe('responses path', () => {
     expect(create.mock.calls[0][1]).toMatchObject({
       path: 'https://api.example/api/v2/responses',
     })
+  })
+})
+
+describe('embeddings path', () => {
+  test('sends the SDK default when the provider configures nothing', async () => {
+    const { create, factory } = embeddingsClient()
+    await createOpenAIAdapter(runtime({}), factory as never).embed!(embeddingsBody, ctx)
+
+    expect(create.mock.calls[0][1]).toMatchObject({ path: '/embeddings' })
+  })
+
+  test('sends the configured path instead', async () => {
+    const { create, factory } = embeddingsClient()
+    const rt = runtime({ embeddingsPath: '/api/v2/embed' })
+    await createOpenAIAdapter(rt, factory as never).embed!(embeddingsBody, ctx)
+
+    expect(create.mock.calls[0][1]).toMatchObject({
+      path: 'https://api.example/api/v2/embed',
+      signal: ctx.signal,
+    })
+  })
+
+  test('applies to a Responses provider, which embeds the same way', async () => {
+    const { create, factory } = embeddingsClient()
+    const rt = runtime({ embeddingsPath: '/api/v2/embed' })
+    await createResponsesAdapter(rt, factory as never).embed!(embeddingsBody, ctx)
+
+    expect(create.mock.calls[0][1]).toMatchObject({
+      path: 'https://api.example/api/v2/embed',
+    })
+  })
+
+  test('a chat completions override does not move it', async () => {
+    const { create, factory } = embeddingsClient()
+    const rt = runtime({ chatCompletionsPath: '/api/v2/chat' })
+    await createOpenAIAdapter(rt, factory as never).embed!(embeddingsBody, ctx)
+
+    expect(create.mock.calls[0][1]).toMatchObject({ path: '/embeddings' })
   })
 })
 
