@@ -431,6 +431,15 @@ Syncing is explicit — per provider, or all at once — and a model that stops
 being returned is marked *missing* rather than deleted, so a provider having a
 bad day can't quietly erase your catalog.
 
+Discovery asks an OpenAI-compatible provider for two listings: `/models`, and
+the `/embeddings/models` beside it. OpenRouter is why — its `/models` omits
+every embeddings model and serves them from that sibling endpoint, so a
+catalog synced from `/models` alone has no embeddings models in it at all. A
+provider with no such endpoint just 404s the second request, which is ignored,
+and a model that appears in both listings is taken from `/models` as it always
+was. Move `Models path` in a provider's **Advanced** settings and the sibling
+moves with it.
+
 ### Usage, cost, and logs
 
 `/dashboard` shows usage, cost, and errors across the gateway: stat tiles with

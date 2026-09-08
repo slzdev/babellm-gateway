@@ -93,7 +93,15 @@ test('a configured models path replaces the base URL\'s own path', async () => {
   const models = await createOpenAIAdapter(runtime, factory as never)
     .listModels!({ signal: ctx.signal })
 
-  expect(urls).toEqual(['https://api.example/api/v2/models'])
+  // Two URLs, both rebased: discovery also asks for the embeddings-only
+  // listing beside whatever path lists the rest (OpenRouter serves its
+  // embeddings models only there). This transport answers both with the same
+  // body, so the model is already known and is neither duplicated nor
+  // relabelled — the merge rule the adapter tests pin, seen through the SDK.
+  expect(urls).toEqual([
+    'https://api.example/api/v2/models',
+    'https://api.example/api/v2/embeddings/models',
+  ])
   expect(models.map((m) => m.id)).toEqual(['clone-model'])
 })
 

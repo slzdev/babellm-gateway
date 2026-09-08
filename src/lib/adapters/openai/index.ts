@@ -12,7 +12,7 @@ import { createOpenAIClient, listModels, type OpenAIClientFactory } from './clie
 import { embed } from './embeddings'
 import { toProviderError } from './errors'
 import { transcribeVia } from './audio'
-import { resolveRequestPaths } from '../paths'
+import { deriveEmbeddingsModelsPath, resolveRequestPaths } from '../paths'
 
 // Re-exported because tests and the registry import the factory type from the
 // adapter module rather than reaching past it.
@@ -27,6 +27,14 @@ export function createOpenAIAdapter(
 ): ChatOnlyAdapter & Pick<ProviderAdapter, 'transcribe' | 'embed'> {
   const client = createOpenAIClient(runtime, createClient)
   const paths = resolveRequestPaths(runtime.config, runtime.baseUrl)
+
+  // OpenRouter keeps its embeddings models out of `/models`, in a sibling
+  // listing, so discovery asks for that one too. Only for the clones: the
+  // first-party OpenAI lists text-embedding-3-* in `/models` alongside
+  // everything else, and has no such sibling to ask for.
+  const embeddingsModelsPath = runtime.adapter === 'openai_compatible'
+    ? deriveEmbeddingsModelsPath(paths.models)
+    : null
 
   function upstreamParams(req: ChatCompletionRequest, ctx: AttemptContext) {
     return { ...req, model: ctx.upstreamModel }
@@ -82,7 +90,7 @@ export function createOpenAIAdapter(
       }
     },
 
-    listModels: (ctx) => listModels(client, ctx, paths.models),
+    listModels: (ctx) => listModels(client, ctx, paths.models, embeddingsModelsPath),
 
     // /audio/transcriptions and /embeddings are sibling endpoints on the same
     // host, not dialects of chat — see the transcriptions design doc §3.4 and

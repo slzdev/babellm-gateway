@@ -36,8 +36,71 @@ export function createOpenAIClient(
 /**
  * `path` overrides the one the SDK hardcodes for this resource; the caller
  * resolves it because only the adapter holds the provider's config.
+ *
+ * `embeddingsModelsPath`, when given, is a second listing asked for after the
+ * first — see the comment on mergeEmbeddingsModels for what it is and why a
+ * model is only ever added from it, never reinterpreted by it.
  */
 export async function listModels(
+  client: OpenAI,
+  ctx: ListModelsContext,
+  path: string,
+  embeddingsModelsPath?: string | null,
+): Promise<DiscoveredModel[]> {
+  const models = await listFrom(client, ctx, path)
+  if (!embeddingsModelsPath) return models
+
+  let embeddingsModels: DiscoveredModel[]
+  try {
+    embeddingsModels = await listFrom(client, ctx, embeddingsModelsPath)
+  } catch {
+    // Expected, and for most providers the only outcome: nothing but
+    // OpenRouter serves this path, so a 404 here is the norm and says only
+    // that this provider keeps every model in one listing. The sync's own
+    // result must not turn on it — the first listing already succeeded.
+    return models
+  }
+
+  return mergeEmbeddingsModels(models, embeddingsModels)
+}
+
+/**
+ * Folds an embeddings-only listing into the main one. Two rules, and the
+ * second is the load-bearing one:
+ *
+ * - A model the main listing never mentioned is added, tagged `embedding`.
+ *   That is the whole point: OpenRouter's `/models` omits its embeddings
+ *   models, so without this they reach the catalog not at all.
+ * - A model both listings report is left exactly as the main listing gave it.
+ *   The path is asked for unconditionally, so a clone whose router answers any
+ *   `/models`-ish path with its full catalog would otherwise have every model
+ *   it serves relabelled `embedding` — and a mislabelled chat model is worse
+ *   than a missing embeddings one, because routing believes the label.
+ */
+export function mergeEmbeddingsModels(
+  models: DiscoveredModel[],
+  embeddingsModels: DiscoveredModel[],
+): DiscoveredModel[] {
+  const known = new Set(models.map((model) => model.id))
+
+  const added = embeddingsModels.filter((model) => {
+    if (known.has(model.id)) return false
+    // A listing that repeats an id would otherwise add it twice.
+    known.add(model.id)
+    return true
+  })
+
+  return [
+    ...models,
+    // The endpoint is the evidence: everything it lists is an embeddings
+    // model, whatever its id looks like. This is the one thing an
+    // OpenAI-shaped listing can say about a model, so it is the one field set
+    // — prices and context windows still come from the registry and seed.
+    ...added.map((model) => ({ ...model, fields: { kind: 'embedding' as const } })),
+  ]
+}
+
+async function listFrom(
   client: OpenAI,
   ctx: ListModelsContext,
   path: string,

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   DEFAULT_PATHS,
+  deriveEmbeddingsModelsPath,
   MODEL_PATH_FIELDS,
   PATH_FIELDS,
   mergeProviderPaths,
@@ -290,4 +291,21 @@ test('a configured embeddings path resolves against the base URL origin', () => 
 test('the embeddings path is offered on both the provider and the model forms', () => {
   expect(PATH_FIELDS.map((f) => f.name)).toContain('embeddingsPath')
   expect(MODEL_PATH_FIELDS.map((f) => f.name)).toContain('embeddingsPath')
+})
+
+describe('deriveEmbeddingsModelsPath', () => {
+  test('turns the default models path into its embeddings sibling', () => {
+    expect(deriveEmbeddingsModelsPath(DEFAULT_PATHS.models)).toBe('/embeddings/models')
+  })
+
+  test('keeps whatever prefix a configured models path carries', () => {
+    const paths = resolveRequestPaths({ modelsPath: '/api/v1/models' }, 'https://openrouter.ai/api/v1')
+    expect(deriveEmbeddingsModelsPath(paths.models))
+      .toBe('https://openrouter.ai/api/v1/embeddings/models')
+  })
+
+  test('names nothing for a models path it cannot extrapolate from', () => {
+    expect(deriveEmbeddingsModelsPath('/api/list-models')).toBeNull()
+    expect(deriveEmbeddingsModelsPath('/v1/model')).toBeNull()
+  })
 })
