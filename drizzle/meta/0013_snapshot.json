@@ -1,5 +1,5 @@
 {
-  "id": "a7172526-00af-4f0d-acd9-b830e298f53d",
+  "id": "f834e309-ff82-4753-aedb-f54c62b249dc",
   "prevId": "2ee5d91f-2d8f-4af8-b824-30ead53a9dbf",
   "version": "7",
   "dialect": "postgresql",
@@ -292,6 +292,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "decisions_api_flavor": {
+          "name": "decisions_api_flavor",
+          "type": "decisions_api_flavor",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
         "chat_completions_path": {
           "name": "chat_completions_path",
           "type": "text",
@@ -467,6 +474,14 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'chat_completions'"
+        },
+        "decisions_api_flavor": {
+          "name": "decisions_api_flavor",
+          "type": "decisions_api_flavor",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'openai'"
         },
         "enabled": {
           "name": "enabled",
@@ -1387,6 +1402,13 @@
       "values": [
         "available",
         "missing"
+      ]
+    },
+    "public.decisions_api_flavor": {
+      "name": "decisions_api_flavor",
+      "schema": "public",
+      "values": [
+        "openai"
       ]
     },
     "public.model_kind": {

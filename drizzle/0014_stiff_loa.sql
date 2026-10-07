@@ -1,1 +1,0 @@
-ALTER TYPE "public"."api_flavor" ADD VALUE 'decisions';

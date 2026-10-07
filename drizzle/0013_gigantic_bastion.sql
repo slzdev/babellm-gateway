@@ -1,1 +1,0 @@
-ALTER TABLE "catalog_models" ADD COLUMN "decisions_path" text;

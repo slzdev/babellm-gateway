@@ -161,13 +161,6 @@ unpriced. Pinned service tiers are reported as dropped. Set `decisionsPath`
 on a provider or catalog model through the advanced path fields to use a
 custom endpoint; a model override inherits the provider path when cleared.
 
-Migration `0015` separates these settings after `0014` introduced a mistaken
-`decisions` chat-flavor value. Existing valid chat settings are preserved;
-providers using that sentinel return to `chat_completions`, and Catalog rows
-using it return to provider inheritance. There is no earlier chat value to
-recover for those rows. The independent Decisions shape defaults to `openai`
-on providers; Catalog rows inherit it until explicitly overridden.
-
 ## Why
 
 - **Your keys stay yours.** Provider credentials are encrypted at rest with
