@@ -1,3 +1,4 @@
+import type { DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import type { ApiFlavor } from '@/lib/api-flavors'
 import { decryptJson } from '@/lib/crypto'
 import type { ProviderRow } from '@/lib/db/schema'
@@ -6,10 +7,11 @@ import { createAnthropicAdapter } from './anthropic'
 import { createGeminiAdapter } from './gemini'
 import { createOpenAIAdapter } from './openai'
 import { createResponsesAdapter } from './openai/responses'
+import { createDecisionsOperation } from './openai/decisions'
 import type {
   ModelPathOverrides, ProviderAdapter, ProviderConfig, ProviderRuntime,
 } from './types'
-import { withEmbedUnsupported, withRespondViaChat, withTranscribeUnsupported } from './wrappers'
+import { withDecideUnsupported, withEmbedUnsupported, withRespondViaChat, withTranscribeUnsupported } from './wrappers'
 
 export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
   return {
@@ -27,28 +29,39 @@ export function createAdapter(
   flavor: ApiFlavor = provider.apiFlavor,
   paths?: ModelPathOverrides | null,
   maxOutputTokens?: number | null,
+  decisionsApiFlavor: DecisionsApiFlavor = provider.decisionsApiFlavor,
 ): ProviderAdapter {
   const runtime = withModelPaths(resolveProviderRuntime(provider), paths)
 
   switch (runtime.adapter) {
     case 'openai':
-      return flavoredAdapter(runtime, flavor, maxOutputTokens ?? null)
+      return {
+        ...flavoredAdapter(runtime, flavor, maxOutputTokens ?? null),
+        ...createDecisionsOperation(runtime, decisionsApiFlavor),
+      }
     case 'openai_compatible':
       if (!runtime.baseUrl) {
         throw new Error(
           `Provider "${runtime.name}" is openai_compatible but has no base URL configured.`,
         )
       }
-      return flavoredAdapter(runtime, flavor, maxOutputTokens ?? null)
+      return {
+        ...flavoredAdapter(runtime, flavor, maxOutputTokens ?? null),
+        ...createDecisionsOperation(runtime, decisionsApiFlavor),
+      }
     case 'gemini':
-      // Gemini speaks neither OpenAI dialect natively, so flavor says nothing
+      // Gemini speaks none of the OpenAI protocols natively, so flavor says nothing
       // about it: the adapter translates from Chat Completions either way,
       // and gets `respond`/`respondStream` from the same wrapper any
       // chat-only adapter does. `transcribe` and `embed` are both real and
       // translated (transcriptions §3.6, embeddings §3.4) —
       // createGeminiAdapter supplies them directly, so neither
       // `withTranscribeUnsupported` nor `withEmbedUnsupported` belongs here.
-      return withRespondViaChat(createGeminiAdapter(runtime), runtime.name)
+      return withDecideUnsupported(
+        withRespondViaChat(createGeminiAdapter(runtime), runtime.name),
+        runtime.name,
+        'the Gemini API has no Decisions endpoint',
+      )
     case 'bedrock':
       throw new UnsupportedOperationError(
         `The "${runtime.adapter}" adapter is not available yet.`,
@@ -68,7 +81,7 @@ export function withModelPaths(
 ): ProviderRuntime {
   if (
     !paths?.chatCompletionsPath && !paths?.responsesPath && !paths?.messagesPath
-    && !paths?.audioTranscriptionsPath && !paths?.embeddingsPath
+    && !paths?.audioTranscriptionsPath && !paths?.embeddingsPath && !paths?.decisionsPath
   ) return runtime
 
   const config: ProviderConfig = { ...runtime.config }
@@ -77,13 +90,13 @@ export function withModelPaths(
   if (paths.messagesPath) config.messagesPath = paths.messagesPath
   if (paths.audioTranscriptionsPath) config.audioTranscriptionsPath = paths.audioTranscriptionsPath
   if (paths.embeddingsPath) config.embeddingsPath = paths.embeddingsPath
+  if (paths.decisionsPath) config.decisionsPath = paths.decisionsPath
   return { ...runtime, config }
 }
 
 /**
- * Dispatches on the flavor the model resolved to. Two of the three branches
- * need `withRespondViaChat`; the Responses adapter already implements
- * chat/chatStream through chat-to-responses.ts and is returned as-is.
+ * Dispatches on the model's resolved chat protocol. Decisions is composed
+ * independently by createAdapter.
  */
 function flavoredAdapter(
   runtime: ProviderRuntime,
@@ -99,7 +112,7 @@ function flavoredAdapter(
     // ingress's all-ineligible fallback means both are reachable through the
     // gateway: a model whose only target is `anthropic_messages` reaches this
     // adapter and gets one of these throws as its 501.
-    return withEmbedUnsupported(
+    const chatAdapter = withEmbedUnsupported(
       withTranscribeUnsupported(
         withRespondViaChat(createAnthropicAdapter(runtime, maxOutputTokens), runtime.name),
         runtime.name,
@@ -108,6 +121,7 @@ function flavoredAdapter(
       runtime.name,
       'the Anthropic Messages API has no embeddings endpoint',
     )
+    return withDecideUnsupported(chatAdapter, runtime.name, 'this chat adapter does not provide a Decisions transport')
   }
   return withRespondViaChat(createOpenAIAdapter(runtime), runtime.name)
 }

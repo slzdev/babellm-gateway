@@ -2,6 +2,7 @@ import 'server-only'
 import { z } from 'zod'
 import { createAdapter as defaultCreateAdapter } from '@/lib/adapters/registry'
 import type { AttemptContext, ModelPathOverrides, ProviderAdapter } from '@/lib/adapters/types'
+import type { DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ProviderRow } from '@/lib/db/schema'
 import { logRequest, resolveRequestLogStore } from '@/lib/logs'
@@ -32,6 +33,7 @@ export interface GatewayDeps {
     flavor: ApiFlavor,
     paths: ModelPathOverrides | null,
     maxOutputTokens: number | null,
+    decisionsApiFlavor: DecisionsApiFlavor,
   ) => ProviderAdapter
 }
 
@@ -75,9 +77,7 @@ export interface Ingress<Req, Res, Chunk> {
   cost(prices: PricingSnapshot | null, usage: LogUsage | null): CostBreakdown | null
   /** Renders the finished result. Both JSON dialects pass `Response.json`. */
   toResponse(res: Res, headers: HeadersInit): Response
-  /** Which candidates can serve this dialect. Absent means "all of them" —
-   *  Chat and Responses can be served by any candidate the routing tables
-   *  hand back, so neither implements this.
+  /** Which candidates can serve this dialect. Absent means "all of them".
    *
    *  The request is a parameter, not just the candidate, because capability is
    *  not always a property of the target alone: a Gemini target transcribes,
@@ -86,9 +86,9 @@ export interface Ingress<Req, Res, Chunk> {
    *  target selection happened to pick, and non-deterministic success is not a
    *  behaviour a gateway may have.
    *
-   *  This hook **steers**, it does not refuse. When it rejects every
-   *  candidate the handler falls back to the unfiltered list, so the answer
-   *  comes from the adapter that knows why — see the fallback below. That
+   *  This hook **steers**. When it rejects every candidate, an ingress
+   *  may give a protocol-wide `unsupportedMessage`; otherwise the handler
+   *  falls back to the unfiltered list so the adapter explains why. That
    *  makes one invariant binding on every implementation: **`supports` may
    *  never encode a rule the adapter cannot also refuse.** All three of
    *  transcription's rules satisfy it (`assertTranscribable` refuses the
@@ -96,6 +96,9 @@ export interface Ingress<Req, Res, Chunk> {
    *  refuses the Anthropic flavor). A rule that did not would send a doomed
    *  request upstream instead of refusing it. */
   supports?(candidate: Candidate, req: Req): boolean
+  /** A protocol-wide refusal when no candidate is eligible. Sibling APIs
+   *  omit this so their adapter can explain request-specific restrictions. */
+  unsupportedMessage?: string
   /** The body to send to one particular target, when a dialect has anything
    *  per-target to say. Absent means the client's request reaches every
    *  candidate unchanged — which is what a dialect with no `service_tier`
@@ -440,7 +443,13 @@ export async function runGatewayRequest<Req, Res, Chunk>(
     // bookkeeping depend on which ingress asked.
     const supports = ingress.supports
     const eligible = supports ? candidates.filter((candidate) => supports(candidate, body)) : candidates
-    // `supports` steers; it does not refuse. When it leaves nothing, the
+    if (eligible.length === 0 && ingress.unsupportedMessage) {
+      throw new GatewayError({
+        status: 501, type: 'invalid_request_error', code: 'unsupported_operation',
+        message: ingress.unsupportedMessage,
+      })
+    }
+    // Otherwise `supports` steers; it does not refuse. When it leaves nothing, the
     // unfiltered chain is ordered instead, so the request reaches the adapter
     // and is refused by the code that knows *why* — a Gemini target asked for
     // `srt` answers assertTranscribable's 400 naming the format and the

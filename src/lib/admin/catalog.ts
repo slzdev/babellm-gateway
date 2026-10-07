@@ -14,6 +14,7 @@ import { effectiveColumns } from '@/lib/catalog/sync'
 import type {
   CatalogFields, FieldSources, Modalities, ModelKind,
 } from '@/lib/catalog/types'
+import { DECISIONS_API_FLAVORS, type DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import { API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
 import { parseProviderPath, resolveProviderPaths } from '@/lib/adapters/paths'
 import type { ProviderConfig } from '@/lib/adapters/types'
@@ -41,14 +42,17 @@ export interface CatalogListItem {
   override: CatalogFields
   lastSeenAt: Date
   routeTargetCount: number
+  decisionsApiFlavor: DecisionsApiFlavor | null
   apiFlavor: ApiFlavor | null
   chatCompletionsPath: string | null
   responsesPath: string | null
   messagesPath: string | null
   audioTranscriptionsPath: string | null
   embeddingsPath: string | null
+  decisionsPath: string | null
   /** What a blank field on this row would inherit, so the dialog can show it
    *  as a placeholder instead of sending an operator to the Providers page. */
+  providerDecisionsApiFlavor: DecisionsApiFlavor
   providerApiFlavor: ApiFlavor
   providerPaths: ProviderPathDefaults
 }
@@ -56,7 +60,7 @@ export interface CatalogListItem {
 /** The provider's resolved path for each endpoint a model may override —
  *  keyed like the columns above so the dialog can pair a row's value with the
  *  placeholder it would fall back to. Named rather than written inline at both
- *  of its uses: with five overridable endpoints the second copy is where the
+ *  of its uses: with six overridable endpoints the second copy is where the
  *  two drift apart. */
 interface ProviderPathDefaults {
   chatCompletionsPath: string
@@ -64,6 +68,7 @@ interface ProviderPathDefaults {
   messagesPath: string
   audioTranscriptionsPath: string
   embeddingsPath: string
+  decisionsPath: string
 }
 
 export interface CatalogFilter {
@@ -82,6 +87,7 @@ function toItem(
   providerName: string,
   providerAdapter: AdapterType,
   providerApiFlavor: ApiFlavor,
+  providerDecisionsApiFlavor: DecisionsApiFlavor,
   providerPaths: ProviderPathDefaults,
   routeTargetCount: number,
 ): CatalogListItem {
@@ -108,12 +114,15 @@ function toItem(
     lastSeenAt: row.lastSeenAt,
     routeTargetCount,
     apiFlavor: row.apiFlavor,
+    decisionsApiFlavor: row.decisionsApiFlavor,
     chatCompletionsPath: row.chatCompletionsPath,
     responsesPath: row.responsesPath,
     messagesPath: row.messagesPath,
     audioTranscriptionsPath: row.audioTranscriptionsPath,
     embeddingsPath: row.embeddingsPath,
+    decisionsPath: row.decisionsPath,
     providerApiFlavor,
+    providerDecisionsApiFlavor,
     providerPaths,
   }
 }
@@ -131,6 +140,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
       providerName: providers.name,
       providerAdapter: providers.adapter,
       providerApiFlavor: providers.apiFlavor,
+      providerDecisionsApiFlavor: providers.decisionsApiFlavor,
       providerConfig: providers.config,
     })
     .from(catalogModels)
@@ -144,10 +154,10 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
   return rows
     .filter(({ model }) => !search || model.modelId.toLowerCase().includes(search))
     .map(({
-      model, providerName, providerAdapter, providerApiFlavor, providerConfig,
+      model, providerName, providerAdapter, providerApiFlavor, providerDecisionsApiFlavor, providerConfig,
     }) => {
       const {
-        chatCompletions, responses, messages, audioTranscriptions, embeddings,
+        chatCompletions, responses, messages, audioTranscriptions, embeddings, decisions,
       } = resolveProviderPaths(
         JSON.parse(providerConfig) as ProviderConfig,
       )
@@ -156,12 +166,14 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
         providerName,
         providerAdapter,
         providerApiFlavor,
+        providerDecisionsApiFlavor,
         {
           chatCompletionsPath: chatCompletions,
           responsesPath: responses,
           messagesPath: messages,
           audioTranscriptionsPath: audioTranscriptions,
           embeddingsPath: embeddings,
+          decisionsPath: decisions,
         },
         targets.filter(
           (t) => t.providerId === model.providerId && t.upstreamModel === model.modelId,
@@ -359,12 +371,14 @@ export async function targetWarnings(): Promise<Record<string, TargetWarning>> {
 }
 
 export interface ModelGatewayInput {
+  decisionsApiFlavor?: DecisionsApiFlavor | null
   apiFlavor?: ApiFlavor | null
   chatCompletionsPath?: string | null
   responsesPath?: string | null
   messagesPath?: string | null
   audioTranscriptionsPath?: string | null
   embeddingsPath?: string | null
+  decisionsPath?: string | null
 }
 
 /**
@@ -389,6 +403,12 @@ export async function setModelGateway(
     }
     patch.apiFlavor = input.apiFlavor
   }
+  if (input.decisionsApiFlavor !== undefined) {
+    if (input.decisionsApiFlavor !== null && !DECISIONS_API_FLAVORS.includes(input.decisionsApiFlavor)) {
+      throw new Error(`"${input.decisionsApiFlavor}" is not a supported Decisions API flavor.`)
+    }
+    patch.decisionsApiFlavor = input.decisionsApiFlavor
+  }
   // parseProviderPath returns null for a blank value and throws on a shape
   // that would fail silently upstream, so validation and clearing are the
   // same call — the same one the provider form goes through.
@@ -403,6 +423,9 @@ export async function setModelGateway(
   }
   if (input.audioTranscriptionsPath !== undefined) {
     patch.audioTranscriptionsPath = parseProviderPath(input.audioTranscriptionsPath ?? '')
+  }
+  if (input.decisionsPath !== undefined) {
+    patch.decisionsPath = parseProviderPath(input.decisionsPath ?? '')
   }
   if (input.embeddingsPath !== undefined) {
     patch.embeddingsPath = parseProviderPath(input.embeddingsPath ?? '')

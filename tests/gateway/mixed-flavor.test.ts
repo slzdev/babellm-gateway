@@ -5,7 +5,7 @@ import { handleResponses } from '@/lib/gateway/responses-handler'
 import { createResponsesAdapter } from '@/lib/adapters/openai/responses'
 import { createAnthropicAdapter } from '@/lib/adapters/anthropic'
 import {
-  withEmbedUnsupported, withRespondViaChat, withTranscribeUnsupported,
+  withDecideUnsupported, withEmbedUnsupported, withRespondViaChat, withTranscribeUnsupported,
 } from '@/lib/adapters/wrappers'
 import type {
   ChatCompletion, ChatCompletionChunk, ChatOnlyAdapter, ProviderAdapter, ProviderRuntime,
@@ -63,11 +63,11 @@ function anthropicAdapter(name: string, create: unknown): ProviderAdapter {
     name,
     'the Anthropic Messages API has no transcription endpoint and no audio input at all',
   )
-  return withEmbedUnsupported(
+  return withDecideUnsupported(withEmbedUnsupported(
     transcribable,
     name,
     'the Anthropic Messages API has no embeddings endpoint',
-  )
+  ), name, 'this chat-only fixture has no Decisions implementation')
 }
 
 function anthropicMessage(text: string) {
@@ -117,11 +117,11 @@ function chatOnlyRespondingVia(
     providerName,
     'this test fixture has no transcription implementation',
   )
-  return withEmbedUnsupported(
+  return withDecideUnsupported(withEmbedUnsupported(
     transcribable,
     providerName,
     'this test fixture has no embeddings implementation',
-  )
+  ), providerName, 'this chat-only fixture has no Decisions implementation')
 }
 
 function apiError(status: number, message = 'boom') {
@@ -151,11 +151,11 @@ function chatOnlyStreamingVia(
     providerName,
     'this test fixture has no transcription implementation',
   )
-  return withEmbedUnsupported(
+  return withDecideUnsupported(withEmbedUnsupported(
     transcribable,
     providerName,
     'this test fixture has no embeddings implementation',
-  )
+  ), providerName, 'this chat-only fixture has no Decisions implementation')
 }
 
 beforeEach(async () => {

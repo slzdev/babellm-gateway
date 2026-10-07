@@ -436,3 +436,18 @@ test('the list item reports the provider audio transcriptions path as the inheri
   const [item] = await listCatalog()
   expect(item.providerPaths.audioTranscriptionsPath).toBe('/audio/transcriptions')
 })
+
+
+test('catalog Decisions shape override clears to provider inheritance without changing chat or metadata', async () => {
+  const provider = await seedCatalog(['gpt-4o'])
+  await db.update(providers).set({ apiFlavor: 'responses' }).where(eq(providers.id, provider.id))
+  const [before] = await listCatalog()
+  expect(before).toMatchObject({ decisionsApiFlavor: null, providerDecisionsApiFlavor: 'openai' })
+  await setModelGateway(before.id, { apiFlavor: 'anthropic_messages', decisionsApiFlavor: 'openai' })
+  await syncProvider(provider.id, { registry, createAdapterImpl: () => listing(['gpt-4o']) })
+  const [updated] = await listCatalog()
+  expect(updated).toMatchObject({ apiFlavor: 'anthropic_messages', decisionsApiFlavor: 'openai', override: before.override })
+  await setModelGateway(before.id, { decisionsApiFlavor: null })
+  expect((await listCatalog())[0]).toMatchObject({ apiFlavor: 'anthropic_messages', decisionsApiFlavor: null })
+  await expect(setModelGateway(before.id, { decisionsApiFlavor: 'unsupported' as never })).rejects.toThrow('supported Decisions API flavor')
+})

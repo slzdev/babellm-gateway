@@ -1,3 +1,4 @@
+import { API_FLAVOR_LABELS } from '@/lib/api-flavors'
 import { Badge } from '@/components/ui/badge'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -86,7 +87,7 @@ export default async function ProvidersPage() {
                 <TableCell className="text-muted-foreground">
                   {provider.adapter}
                   {provider.apiFlavor === 'responses' ? (
-                    <Badge variant="secondary" className="ml-2">responses</Badge>
+                    <Badge variant="secondary" className="ml-2">{API_FLAVOR_LABELS[provider.apiFlavor]}</Badge>
                   ) : null}
                 </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">
