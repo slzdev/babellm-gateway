@@ -5,7 +5,7 @@ import type { ClassifiedError } from '../errors'
 import { withUsageCost } from '../cost'
 import { parseWith, readJson, withServiceTier, type Ingress } from '../handler'
 import { newCompletionId, rewriteChunk, rewriteCompletion } from '../identity'
-import { droppedForChat } from './dropped'
+import { droppedForChat, supportsChat } from './dropped'
 import type { StreamCapture, StreamProtocol } from '../sse'
 import { usageFrom } from '../usage'
 
@@ -62,6 +62,7 @@ export const chatIngress: Ingress<ChatCompletionRequest, ChatCompletion, ChatCom
   modelOf: (req) => req.model,
   isStream: (req) => req.stream === true,
   bodyFor: withServiceTier,
+  supports: supportsChat,
   droppedFor: (candidate, req) => droppedForChat(candidate, req),
   run: (adapter, ctx, req) => adapter.chat(req, ctx),
   runStream: (adapter, ctx, req) => adapter.chatStream(req, ctx),

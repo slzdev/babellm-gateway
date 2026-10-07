@@ -10,7 +10,7 @@ import type {
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { embed } from './embeddings'
-import { decide } from './decisions'
+import { withDecideUnsupported } from '../wrappers'
 import { toProviderError } from './errors'
 import { transcribeVia } from './audio'
 import { deriveEmbeddingsModelsPath, resolveRequestPaths } from '../paths'
@@ -41,8 +41,7 @@ export function createOpenAIAdapter(
     return { ...req, model: ctx.upstreamModel }
   }
 
-  return {
-    decide: (req, ctx) => decide(client, req, ctx, paths.decisions),
+  return withDecideUnsupported<ChatOnlyAdapter & Pick<ProviderAdapter, 'transcribe' | 'embed'>>({
     async chat(req, ctx): Promise<ChatCompletion> {
       const params = {
         ...upstreamParams(req, ctx),
@@ -100,5 +99,5 @@ export function createOpenAIAdapter(
     // which flavor this provider's chat endpoint speaks.
     transcribe: transcribeVia(client, paths.audioTranscriptions),
     embed: (req, ctx) => embed(client, req, ctx, paths.embeddings),
-  }
+  }, runtime.name, 'select Decisions API as the API flavor on the provider or Catalog model')
 }

@@ -118,7 +118,7 @@ export function withEmbedUnsupported<A extends ChatOnlyAdapter>(
   }
 }
 
-/** Gemini has no Decisions API; refusing here also protects direct adapter calls. */
+/** Non-Decisions adapters refuse here, including direct calls outside routing. */
 export function withDecideUnsupported<A extends ChatOnlyAdapter>(
   adapter: A,
   providerName: string,

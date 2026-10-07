@@ -228,3 +228,19 @@ test('listProviders reports each provider flavor', async () => {
   const [item] = await listProviders()
   expect(item.apiFlavor).toBe('responses')
 })
+
+
+test.each(['openai', 'openai_compatible'] as const)('persists the Decisions flavor through %s provider create, edit and list', async (adapter) => {
+  const created = await createProvider({
+    name: 'decision-provider', adapter, credentials: { apiKey: 'sk-a' },
+    baseUrl: adapter === 'openai_compatible' ? 'https://clone.example/v1' : undefined,
+    apiFlavor: 'decisions',
+  })
+  expect((await listProviders())[0].apiFlavor).toBe('decisions')
+  await updateProvider(created.id, { apiFlavor: 'chat_completions' })
+  expect((await listProviders())[0].apiFlavor).toBe('chat_completions')
+  await updateProvider(created.id, { apiFlavor: 'decisions' })
+  await updateProvider(created.id, { name: 'renamed' })
+  const [stored] = await db.select().from(providers).where(eq(providers.id, created.id))
+  expect(stored.apiFlavor).toBe('decisions')
+})

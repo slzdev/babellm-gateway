@@ -61,10 +61,9 @@ export function CreateProviderDialog() {
               ))}
             </select>
             <p className="text-xs text-muted-foreground">
-              Choose Responses if this endpoint returns 404 on
-              {' '}<code>/v1/chat/completions</code>. This is the default for
-              every model on the provider — override it per model on the
-              Catalog page.
+              Choose the primary inference protocol. Select Decisions API
+              to use <code>/v1/decisions</code>; it cannot serve chat requests.
+              This is the provider default — override it per model on the Catalog page.
             </p>
           </div>
         ) : null}

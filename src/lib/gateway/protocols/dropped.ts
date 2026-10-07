@@ -6,6 +6,12 @@ import type { ChatCompletionRequest } from '@/lib/schemas/chat'
 import type { EmbeddingsRequest } from '@/lib/schemas/embeddings'
 import type { Candidate } from '../resolve'
 
+/** OpenAI Decisions models have no chat translation; Gemini still translates chat regardless of flavor. */
+export function supportsChat(candidate: Candidate): boolean {
+  return candidate.apiFlavor !== 'decisions'
+    || (candidate.provider.adapter !== 'openai' && candidate.provider.adapter !== 'openai_compatible')
+}
+
 /**
  * What one candidate cannot express of a Chat Completions request.
  *

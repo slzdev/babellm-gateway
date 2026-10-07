@@ -7,7 +7,7 @@ import { withUsageCost } from '../cost'
 import type { ClassifiedError } from '../errors'
 import { parseWith, readJson, withServiceTier, type Ingress } from '../handler'
 import { newResponseId, rewriteResponse } from '../identity'
-import { droppedForChat } from './dropped'
+import { droppedForChat, supportsChat } from './dropped'
 import type { StreamCapture, StreamProtocol } from '../sse'
 import { usageFromResponses } from '../usage'
 
@@ -86,6 +86,7 @@ export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, Respon
   modelOf: (req) => req.model,
   isStream: (req) => req.stream === true,
   bodyFor: withServiceTier,
+  supports: supportsChat,
   droppedFor: (candidate, req) => {
     // A Responses-native candidate expresses everything it is sent; every
     // other one loses whatever responses-to-chat cannot carry, plus whatever

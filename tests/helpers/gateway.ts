@@ -7,6 +7,7 @@ import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ProviderAdapter } from '@/lib/adapters/types'
 
 export interface SeedOptions {
+  apiFlavor?: ApiFlavor
   virtualModel?: string
   upstreamModel?: string
   serviceTier?: ServiceTier | null
@@ -29,6 +30,7 @@ export async function seedGateway(options: SeedOptions = {}) {
   const [provider] = await db.insert(providers).values({
     name: 'test-provider',
     adapter: options.adapter ?? 'openai',
+    apiFlavor: options.apiFlavor ?? 'chat_completions',
     credentials: encryptJson(options.credentials ?? { apiKey: 'sk-upstream' }),
   }).returning()
 

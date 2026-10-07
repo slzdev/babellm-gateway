@@ -140,7 +140,8 @@ export function GatewaySettingsDialog({
           providerDefault={item.providerApiFlavor}
         />
         <p className="text-xs text-muted-foreground">
-          Which endpoint this model is called on. Only meaningful for OpenAI-shaped providers.
+          Primary inference protocol for OpenAI-shaped providers. Select Decisions API for
+          /v1/decisions; Decisions models cannot serve chat requests.
         </p>
       </div>
 

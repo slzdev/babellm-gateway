@@ -529,3 +529,54 @@ test('gemini embeds through the translated embedContent rather than refusing', a
   expect(error).not.toBeInstanceOf(UnsupportedOperationError)
   expect(fetchSpy).toHaveBeenCalled()
 })
+
+
+const decisionsBody = { model: 'house-model', input: 'Evidence', questions: [{ type: 'predicate' as const, instructions: 'Damaged?' }] }
+
+test.each(['chat_completions', 'responses', 'anthropic_messages'] as const)('%s refuses Decisions without transport', async (apiFlavor) => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(provider({ apiFlavor }))
+  await expect(adapter.decide(decisionsBody, chatCtx)).rejects.toThrow(UnsupportedOperationError)
+  await expect(adapter.decide(decisionsBody, chatCtx)).rejects.toThrow('Decisions API')
+  expect(fetchSpy).not.toHaveBeenCalled()
+})
+
+test('a Decisions-flavored model uses its dedicated endpoint override', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(provider({ baseUrl: 'https://api.openai.com/v1' }), 'decisions', { decisionsPath: '/api/classify' })
+  await adapter.decide(decisionsBody, chatCtx)
+  expect(calledPath(fetchSpy)).toBe('https://api.openai.com/api/classify')
+})
+
+test.each(['chat', 'chatStream', 'respond', 'respondStream'] as const)('the Decisions adapter refuses %s without transport', async (method) => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(provider(), 'decisions')
+  const call = async () => {
+    if (method === 'chat') return adapter.chat(chatBody, chatCtx)
+    if (method === 'respond') return adapter.respond({ model: 'fast', input: 'hi' }, chatCtx)
+    const stream = method === 'chatStream'
+      ? adapter.chatStream(chatBody, chatCtx)
+      : adapter.respondStream({ model: 'fast', input: 'hi' }, chatCtx)
+    for await (const chunk of stream) void chunk
+  }
+  await expect(call()).rejects.toThrow(UnsupportedOperationError)
+  expect(fetchSpy).not.toHaveBeenCalled()
+})
+
+test('a Decisions-flavored OpenAI provider retains sibling embeddings and transcription', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(provider({ apiFlavor: 'decisions' }))
+  await adapter.embed(embedBody, embedCtx)
+  expect(lastCalledPath(fetchSpy)).toMatch(/\/embeddings$/)
+  await adapter.transcribe(transcribeRequest(), transcribeCtx)
+  expect(lastCalledPath(fetchSpy)).toMatch(/\/audio\/transcriptions$/)
+})
+
+test('Gemini still translates chat when its model is labeled Decisions, but refuses Decisions', async () => {
+  const fetchSpy = stubFetch()
+  const adapter = createAdapter(provider({ adapter: 'gemini', credentials: encryptJson({ apiKey: 'g-key' }) }), 'decisions')
+  await expect(adapter.decide(decisionsBody, chatCtx)).rejects.toThrow(UnsupportedOperationError)
+  expect(fetchSpy).not.toHaveBeenCalled()
+  await adapter.chat(chatBody, chatCtx).catch(() => {})
+  expect(calledPath(fetchSpy)).toContain('generateContent')
+})

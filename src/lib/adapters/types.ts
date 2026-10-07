@@ -111,7 +111,7 @@ export interface ListModelsContext {
 }
 
 export interface ProviderAdapter {
-  /** JSON-only sibling API, independent of chat flavor. */
+  /** JSON-only inference for Decisions-flavored OpenAI models; other adapters refuse. */
   decide(req: DecisionsRequest, ctx: AttemptContext): Promise<DecisionsResult>
   chat(req: ChatCompletionRequest, ctx: AttemptContext): Promise<ChatCompletion>
   chatStream(
@@ -124,9 +124,9 @@ export interface ProviderAdapter {
    */
   listModels?(ctx: ListModelsContext): Promise<DiscoveredModel[]>
   /**
-   * Every adapter must be able to serve a Responses request: either
-   * natively, or through `withRespondViaChat` (see adapters/wrappers.ts),
-   * which every chat-only adapter is wrapped in at construction time.
+   * Chat adapters serve Responses natively or through `withRespondViaChat`
+   * (see adapters/wrappers.ts). Decisions adapters explicitly refuse both
+   * Responses methods, including direct calls.
    */
   respond(req: ResponsesRequest, ctx: AttemptContext): Promise<ResponsesResult>
   respondStream(
@@ -161,8 +161,8 @@ export interface ProviderAdapter {
  * about the Responses API, transcription, embeddings, or Decisions.
  * `respond`/`respondStream` are supplied by `withRespondViaChat`,
  * `transcribe` by `withTranscribeUnsupported` and `embed` by
- * `withEmbedUnsupported`, and `decide` by `withDecideUnsupported` or the
- * OpenAI sibling implementation. The wrappers are the places allowed to know
+ * `withEmbedUnsupported`, and `decide` by `withDecideUnsupported`.
+ * The dedicated Decisions adapter supplies its native inference separately. The wrappers are the places allowed to know
  * these methods are missing.
  */
 export type ChatOnlyAdapter =

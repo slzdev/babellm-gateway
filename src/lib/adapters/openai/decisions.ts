@@ -1,13 +1,16 @@
 import type OpenAI from 'openai'
 import type { DecisionsRequest, DecisionsResult } from '@/lib/schemas/decisions'
-import type { AttemptContext, ChatOnlyAdapter, ProviderAdapter, ProviderRuntime } from '../types'
-import { createOpenAIClient, type OpenAIClientFactory } from './client'
-import { resolveRequestPaths } from '../paths'
+import type { AttemptContext, ProviderAdapter, ProviderRuntime } from '../types'
+import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
+import { deriveEmbeddingsModelsPath, resolveRequestPaths } from '../paths'
 import { toProviderError } from './errors'
+import { UnsupportedOperationError } from '@/lib/gateway/errors'
+import { embed } from './embeddings'
+import { transcribeVia } from './audio'
 
 const PATH_HINT = 'If this provider serves decisions from another path, set its decisions path — or this one model\'s, on the Catalog page. A provider with no Decisions endpoint cannot answer this request.'
 
-/** Decisions is a sibling API, independent of the model's chat flavor. */
+/** Native Decisions transport; keep the upstream result and its extensions intact. */
 export async function decide(
   client: OpenAI,
   req: DecisionsRequest,
@@ -24,13 +27,28 @@ export async function decide(
   }
 }
 
-/** The Anthropic chat flavor still reaches Decisions through an OpenAI client. */
-export function withDecideViaOpenAI<A extends ChatOnlyAdapter>(
-  adapter: A,
+/** The primary inference protocol for a Decisions-flavored OpenAI model. */
+export function createDecisionsAdapter(
   runtime: ProviderRuntime,
   factory?: OpenAIClientFactory,
-): A & Pick<ProviderAdapter, 'decide'> {
+): ProviderAdapter {
   const client = createOpenAIClient(runtime, factory)
-  const path = resolveRequestPaths(runtime.config, runtime.baseUrl).decisions
-  return { ...adapter, decide: (req, ctx) => decide(client, req, ctx, path) }
+  const paths = resolveRequestPaths(runtime.config, runtime.baseUrl)
+  const embeddingsModelsPath = runtime.adapter === 'openai_compatible'
+    ? deriveEmbeddingsModelsPath(paths.models)
+    : null
+  const unsupported = () => new UnsupportedOperationError(
+    `"${runtime.name}" uses Decisions API and cannot serve Chat Completions or Responses. Select a chat-capable API flavor on the provider or Catalog model to use those endpoints. Decisions answers are not translated into chat.`,
+  )
+
+  return {
+    decide: (req, ctx) => decide(client, req, ctx, paths.decisions),
+    async chat() { throw unsupported() },
+    async *chatStream() { throw unsupported() },
+    async respond() { throw unsupported() },
+    async *respondStream() { throw unsupported() },
+    listModels: (ctx) => listModels(client, ctx, paths.models, embeddingsModelsPath),
+    embed: (req, ctx) => embed(client, req, ctx, paths.embeddings),
+    transcribe: transcribeVia(client, paths.audioTranscriptions),
+  }
 }

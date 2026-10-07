@@ -14,7 +14,7 @@ import type {
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { embed } from './embeddings'
-import { decide } from './decisions'
+import { withDecideUnsupported } from '../wrappers'
 import { toProviderError } from './errors'
 import { transcribeVia } from './audio'
 import { deriveEmbeddingsModelsPath, resolveRequestPaths } from '../paths'
@@ -48,8 +48,7 @@ export function createResponsesAdapter(
     ? deriveEmbeddingsModelsPath(paths.models)
     : null
 
-  return {
-    decide: (req, ctx) => decide(client, req, ctx, paths.decisions),
+  return withDecideUnsupported<Omit<ProviderAdapter, 'decide'>>({
     async chat(req, ctx): Promise<ChatCompletion> {
       try {
         const result = await client.responses.create(
@@ -147,5 +146,5 @@ export function createResponsesAdapter(
     // Responses-flavored provider gets the identical implementation a
     // Chat-Completions-flavored one does, from the same shared function.
     transcribe: transcribeVia(client, paths.audioTranscriptions),
-  }
+  }, runtime.name, 'select Decisions API as the API flavor on the provider or Catalog model')
 }

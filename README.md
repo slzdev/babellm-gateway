@@ -115,7 +115,9 @@ await client.embeddings.create({
   so the log row records `stream = false`, and the cost arrives with the body.
 
 `POST /v1/decisions` evaluates ordered predicate, choice, and score questions
-against shared input. Use the generic SDK method while the installed SDK has
+against shared input. First select **Decisions API** as the API flavor on an
+`openai` or `openai_compatible` provider, or override the flavor for one model
+on the Catalog page. Use the generic SDK method while the installed SDK has
 no Decisions resource:
 
 ```ts
@@ -132,10 +134,15 @@ await client.post("/decisions", {
 });
 ```
 
-Decisions works with `openai` and `openai_compatible` providers, independently
-of their chat API flavor (including `anthropic_messages`). Mixed chains steer
-to eligible providers before selection; Gemini-only or Bedrock-only chains
-return `501` without calling upstream. Input can also be user messages with
+Only candidates whose resolved API flavor is `decisions` and whose adapter
+is `openai` or `openai_compatible` can serve Decisions. Mixed chains skip other
+flavors and unsupported adapters before policy selection and `maxAttempts`.
+Chat Completions and Responses requests, including streams, skip OpenAI
+Decisions targets in the same way; classification answers and probabilities
+are never translated into chat. A chain with no eligible target returns an
+actionable `501` without calling upstream. Gemini and Bedrock cannot serve
+Decisions, even when labeled `decisions`. Existing providers and models keep
+their flavor until an operator changes it. Input can also be user messages with
 `input_text` and inline base64 image data URLs, with at most 128 images per
 request. Other roles, external image URLs, files, audio, and `stream: true`
 are rejected.
@@ -199,21 +206,26 @@ flowchart LR
 
 Clients can speak either Chat Completions or Responses, upload audio to
 `/v1/audio/transcriptions`, embed text at `/v1/embeddings`, or evaluate
-questions at `/v1/decisions`. Every
-OpenAI-shaped provider is called on one of three APIs, whichever its
-`api_flavor` says — Chat Completions, Responses, or Anthropic Messages — set
-per provider and overridable per catalog model, so one virtual model can mix a
+questions at `/v1/decisions`. Every OpenAI-shaped model uses a primary inference protocol, whichever its
+`api_flavor` says — Chat Completions, Responses, Anthropic Messages, or
+Decisions API — set per provider and overridable per catalog model, so one
+virtual model can mix a
 `chat_completions` target with a `responses` one, or either with an
-`anthropic_messages` one. Anything behind the gateway that speaks none of the
-three — Gemini's `generateContent` — is translated in both directions, and so
-is any request that crosses ingress and provider flavor (a Responses request
+`anthropic_messages` one. The three chat flavors translate between Chat
+Completions and Responses.
+Decisions models serve `/v1/decisions` through a dedicated adapter and do not
+translate into chat. Anything behind the gateway that speaks none of the
+chat protocols — Gemini's `generateContent` — is translated in both
+directions, and so is any chat request that crosses ingress and provider flavor (a Responses request
 served by a Chat Completions target, a Chat Completions request served by an
 Anthropic Messages target, and so on). Transcriptions and embeddings sit
-outside that choice: each is a sibling of all three chat dialects rather than
-one of them, so a `responses`-flavored target embeds through the same client a
+outside that primary inference choice: each is a sibling endpoint, so a
+`responses`-flavored target embeds through the same client a
 `chat_completions` one does, only Gemini needs translating, and an
-`anthropic_messages` target has neither endpoint to be pointed at. Both paths
-are configurable per provider and per model, like the three chat ones.
+`anthropic_messages` target has neither endpoint to be pointed at.
+Decisions-flavored OpenAI models retain the same native transcription and
+embeddings endpoints, plus the usual model discovery. Both paths are
+configurable per provider and per model.
 
 An `anthropic_messages` model is called on `/v1/messages` — the path is
 configurable per provider and per model, like the other flavors'. There is no
@@ -232,8 +244,8 @@ as the SDK's own `@deprecated` notes on `temperature` and `top_p` document.
 
 | Provider type | Status |
 | --- | --- |
-| `openai` | ✅ Chat Completions, Responses, and Anthropic Messages flavors |
-| `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped — Chat Completions, Responses, and Anthropic Messages flavors |
+| `openai` | ✅ Chat Completions, Responses, Anthropic Messages, and Decisions API flavors |
+| `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped — Chat Completions, Responses, Anthropic Messages, and Decisions API flavors |
 | `gemini` | ✅ Native `@google/genai`, including thinking and media by URL |
 | `bedrock` | 🚧 Configurable, not yet served |
 
