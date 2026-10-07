@@ -28,6 +28,7 @@ test.each([
   { input: [{ role: 'user', content: [{ ...image, image_url: 'data:image/png;base64,a' }] }] },
   { input: [{ role: 'user', content: [{ ...image, file_id: 'file_1' }] }] },
   { input: [{ role: 'user', content: [{ ...image, image_url: 'data:image/png,not-base64' }] }] },
+  { input: [{ role: 'user', content: [{ ...image, image_url: 'data:image/png;base64\n,AAAA' }] }] },
   { questions: [{ type: 'predicate' }] },
   { questions: [{ type: 'choice', instructions: 'Choose', choices: [{ value: 1 }] }] },
   { questions: [{ type: 'score', instructions: 'Rate', levels: [{ label: true }] }] },
@@ -53,4 +54,32 @@ test('allows empty documented arrays and enforces documented string bounds', () 
   expect(decisionsRequestSchema.safeParse({ ...body, questions: [{ type: 'choice', instructions: '', choices: [] }] }).success).toBe(true)
   expect(decisionsRequestSchema.safeParse({ ...body, questions: [{ ...predicate, name: 'x'.repeat(1048577) }] }).success).toBe(false)
   expect(decisionsRequestSchema.safeParse({ ...body, safety_identifier: 'x'.repeat(128) }).success).toBe(true)
+})
+
+test('accepts a six-megabyte inline image without exhausting the validation stack', () => {
+  const image_url = `data:image/png;base64,${'A'.repeat(8_000_000)}`
+  const result = decisionsRequestSchema.safeParse({
+    ...body, input: [{ role: 'user', content: [{ ...image, image_url }] }],
+  })
+  expect(result.success).toBe(true)
+})
+
+test('rejects a large malformed image as a validation result instead of throwing', () => {
+  const image_url = `data:image/png;base64,${'A'.repeat(7_999_999)}!`
+  const result = decisionsRequestSchema.safeParse({
+    ...body, input: [{ role: 'user', content: [{ ...image, image_url }] }],
+  })
+  expect(result.success).toBe(false)
+})
+
+test.each(['AAAA', 'AA', 'AAA', 'AA==', 'AAA='])('keeps valid padded and unpadded base64: %s', (payload) => {
+  expect(decisionsRequestSchema.safeParse({
+    ...body, input: [{ role: 'user', content: [{ ...image, image_url: `data:image/png;base64,${payload}` }] }],
+  }).success).toBe(true)
+})
+
+test.each(['', 'A', 'AAAA=', 'AA=', 'AAA==', '=AAA', 'AA==AA', 'AA==='])('rejects invalid base64 length or padding: %s', (payload) => {
+  expect(decisionsRequestSchema.safeParse({
+    ...body, input: [{ role: 'user', content: [{ ...image, image_url: `data:image/png;base64,${payload}` }] }],
+  }).success).toBe(false)
 })

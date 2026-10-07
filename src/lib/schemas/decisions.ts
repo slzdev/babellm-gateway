@@ -3,10 +3,27 @@ import { z } from 'zod'
 // Bounds from the Decisions API reference, in characters as for the other
 // gateway schemas. Arrays have no documented minimum length.
 const shortText = z.string().max(1_048_576)
+/** Validate in linear passes: repeated regex groups overflow V8's stack on
+ * ordinary multi-megabyte inline images. */
+function isInlineBase64ImageUrl(value: string): boolean {
+  const comma = value.indexOf(',')
+  if (comma < 0 || !/^data:image\/[a-zA-Z0-9.+-]+;base64$/.test(value.slice(0, comma))) return false
+
+  const encoded = value.slice(comma + 1)
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0
+  const payload = padding ? encoded.slice(0, -padding) : encoded
+  if (!payload.length || /[^A-Za-z0-9+/]/.test(payload)) return false
+
+  // Unpadded base64 may end with two or three characters, never one. Padded
+  // encodings must fill a four-character block with exactly the missing '='s.
+  if (!padding) return payload.length % 4 !== 1
+  return encoded.length % 4 === 0 && payload.length % 4 === 4 - padding
+}
+
 const image = z.looseObject({
   type: z.literal('input_image'),
-  image_url: z.string().max(1_073_741_824).regex(
-    /^data:image\/[a-zA-Z0-9.+-]+;base64,(?=[A-Za-z0-9+/])(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}(?:==)?|[A-Za-z0-9+/]{3}=?)?$/,
+  image_url: z.string().max(1_073_741_824).refine(
+    isInlineBase64ImageUrl,
     'Images must be base64-encoded image data URLs; external URLs and file IDs are not supported.',
   ),
   detail: z.enum(['low', 'high', 'auto', 'original']).nullable().optional(),

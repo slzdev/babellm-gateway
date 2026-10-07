@@ -177,3 +177,16 @@ test('persists model/provider paths and inherits/overrides them for virtual and 
   const runtime = withModelPaths({ id: provider.id, name: provider.name, adapter: 'openai', credentials: {}, baseUrl: 'https://example.com/prefix/v1', config }, candidate.pathOverrides)
   expect(resolveRequestPaths(runtime.config, runtime.baseUrl).decisions).toBe('https://example.com/provider/decide')
 })
+
+test('a large malformed inline image returns invalid-request 400 before calling upstream', async () => {
+  const { apiKey } = await seedGateway()
+  const decide = vi.fn()
+  const res = await handleDecisions(request(apiKey, {
+    ...body, input: [{ role: 'user', content: [{
+      type: 'input_image', image_url: `data:image/png;base64,${'A'.repeat(7_999_999)}!`,
+    }] }],
+  }), fakeAdapterDeps({ decide }))
+  expect(res.status).toBe(400)
+  expect((await res.json()).error.type).toBe('invalid_request_error')
+  expect(decide).not.toHaveBeenCalled()
+})
