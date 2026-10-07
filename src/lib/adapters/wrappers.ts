@@ -118,7 +118,7 @@ export function withEmbedUnsupported<A extends ChatOnlyAdapter>(
   }
 }
 
-/** Non-Decisions adapters refuse here, including direct calls outside routing. */
+/** Adapters without a Decisions operation refuse here, including direct calls outside routing. */
 export function withDecideUnsupported<A extends ChatOnlyAdapter>(
   adapter: A,
   providerName: string,

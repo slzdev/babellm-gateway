@@ -115,10 +115,11 @@ await client.embeddings.create({
   so the log row records `stream = false`, and the cost arrives with the body.
 
 `POST /v1/decisions` evaluates ordered predicate, choice, and score questions
-against shared input. First select **Decisions API** as the API flavor on an
-`openai` or `openai_compatible` provider, or override the flavor for one model
-on the Catalog page. Use the generic SDK method while the installed SDK has
-no Decisions resource:
+against shared input on `openai` or `openai_compatible` providers with a
+Decisions endpoint. The independent **Decisions API Flavor** setting defaults
+to **OpenAI** on providers; Catalog models inherit it or can override it.
+No opt-in or change to the chat **API Flavor** is required. Use the generic
+SDK method while the installed SDK has no Decisions resource:
 
 ```ts
 await client.post("/decisions", {
@@ -228,12 +229,13 @@ chat protocols — Gemini's `generateContent` — is translated in both
 directions, and so is any chat request that crosses ingress and provider flavor (a Responses request
 served by a Chat Completions target, a Chat Completions request served by an
 Anthropic Messages target, and so on). Transcriptions and embeddings sit
-outside that primary inference choice: each is a sibling endpoint, so a
+outside that chat protocol choice: each is a sibling endpoint, so a
 `responses`-flavored target embeds through the same client a
 `chat_completions` one does, only Gemini needs translating, and an
 `anthropic_messages` target has neither endpoint to be pointed at.
-Decisions-flavored OpenAI models retain the same native transcription and
-embeddings endpoints, plus the usual model discovery. Both paths are
+The independent Decisions shape leaves transcription, embeddings, and model
+discovery governed by the existing chat adapter, including the Anthropic
+sibling restrictions above. Transcription and embeddings paths are
 configurable per provider and per model.
 
 An `anthropic_messages` model is called on `/v1/messages` — the path is
@@ -253,8 +255,8 @@ as the SDK's own `@deprecated` notes on `temperature` and `top_p` document.
 
 | Provider type | Status |
 | --- | --- |
-| `openai` | ✅ Chat Completions, Responses, Anthropic Messages, and Decisions API flavors |
-| `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped — Chat Completions, Responses, Anthropic Messages, and Decisions API flavors |
+| `openai` | ✅ Three chat API flavors: Chat Completions, Responses, Anthropic Messages; independent OpenAI Decisions shape |
+| `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped — three chat API flavors plus the independent OpenAI Decisions shape when a Decisions endpoint is available |
 | `gemini` | ✅ Native `@google/genai`, including thinking and media by URL |
 | `bedrock` | 🚧 Configurable, not yet served |
 
