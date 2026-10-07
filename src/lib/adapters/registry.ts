@@ -6,10 +6,11 @@ import { createAnthropicAdapter } from './anthropic'
 import { createGeminiAdapter } from './gemini'
 import { createOpenAIAdapter } from './openai'
 import { createResponsesAdapter } from './openai/responses'
+import { withDecideViaOpenAI } from './openai/decisions'
 import type {
   ModelPathOverrides, ProviderAdapter, ProviderConfig, ProviderRuntime,
 } from './types'
-import { withEmbedUnsupported, withRespondViaChat, withTranscribeUnsupported } from './wrappers'
+import { withDecideUnsupported, withEmbedUnsupported, withRespondViaChat, withTranscribeUnsupported } from './wrappers'
 
 export function resolveProviderRuntime(provider: ProviderRow): ProviderRuntime {
   return {
@@ -48,7 +49,11 @@ export function createAdapter(
       // translated (transcriptions §3.6, embeddings §3.4) —
       // createGeminiAdapter supplies them directly, so neither
       // `withTranscribeUnsupported` nor `withEmbedUnsupported` belongs here.
-      return withRespondViaChat(createGeminiAdapter(runtime), runtime.name)
+      return withDecideUnsupported(
+        withRespondViaChat(createGeminiAdapter(runtime), runtime.name),
+        runtime.name,
+        'the Gemini API has no Decisions endpoint',
+      )
     case 'bedrock':
       throw new UnsupportedOperationError(
         `The "${runtime.adapter}" adapter is not available yet.`,
@@ -68,7 +73,7 @@ export function withModelPaths(
 ): ProviderRuntime {
   if (
     !paths?.chatCompletionsPath && !paths?.responsesPath && !paths?.messagesPath
-    && !paths?.audioTranscriptionsPath && !paths?.embeddingsPath
+    && !paths?.audioTranscriptionsPath && !paths?.embeddingsPath && !paths?.decisionsPath
   ) return runtime
 
   const config: ProviderConfig = { ...runtime.config }
@@ -77,6 +82,7 @@ export function withModelPaths(
   if (paths.messagesPath) config.messagesPath = paths.messagesPath
   if (paths.audioTranscriptionsPath) config.audioTranscriptionsPath = paths.audioTranscriptionsPath
   if (paths.embeddingsPath) config.embeddingsPath = paths.embeddingsPath
+  if (paths.decisionsPath) config.decisionsPath = paths.decisionsPath
   return { ...runtime, config }
 }
 
@@ -99,7 +105,7 @@ function flavoredAdapter(
     // ingress's all-ineligible fallback means both are reachable through the
     // gateway: a model whose only target is `anthropic_messages` reaches this
     // adapter and gets one of these throws as its 501.
-    return withEmbedUnsupported(
+    const chatAdapter = withEmbedUnsupported(
       withTranscribeUnsupported(
         withRespondViaChat(createAnthropicAdapter(runtime, maxOutputTokens), runtime.name),
         runtime.name,
@@ -108,6 +114,7 @@ function flavoredAdapter(
       runtime.name,
       'the Anthropic Messages API has no embeddings endpoint',
     )
+    return withDecideViaOpenAI(chatAdapter, runtime)
   }
   return withRespondViaChat(createOpenAIAdapter(runtime), runtime.name)
 }

@@ -142,6 +142,7 @@ export async function setModelGatewayAction(
       messagesPath: String(formData.get('messagesPath') ?? ''),
       audioTranscriptionsPath: String(formData.get('audioTranscriptionsPath') ?? ''),
       embeddingsPath: String(formData.get('embeddingsPath') ?? ''),
+      decisionsPath: String(formData.get('decisionsPath') ?? ''),
     })
   } catch (err) {
     return {

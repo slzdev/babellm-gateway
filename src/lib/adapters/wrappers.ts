@@ -117,3 +117,19 @@ export function withEmbedUnsupported<A extends ChatOnlyAdapter>(
     },
   }
 }
+
+/** Gemini has no Decisions API; refusing here also protects direct adapter calls. */
+export function withDecideUnsupported<A extends ChatOnlyAdapter>(
+  adapter: A,
+  providerName: string,
+  reason: string,
+): A & Pick<ProviderAdapter, 'decide'> {
+  return {
+    ...adapter,
+    async decide() {
+      throw new UnsupportedOperationError(
+        `"${providerName}" cannot serve decisions: ${reason}.`,
+      )
+    },
+  }
+}

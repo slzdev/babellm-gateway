@@ -64,6 +64,7 @@ function modelPaths(
     messagesPath: string | null
     audioTranscriptionsPath: string | null
     embeddingsPath: string | null
+    decisionsPath: string | null
   } | null,
 ): ModelPathOverrides | null {
   if (!catalog) return null
@@ -73,6 +74,7 @@ function modelPaths(
     messagesPath: catalog.messagesPath,
     audioTranscriptionsPath: catalog.audioTranscriptionsPath,
     embeddingsPath: catalog.embeddingsPath,
+    decisionsPath: catalog.decisionsPath,
   }
 }
 

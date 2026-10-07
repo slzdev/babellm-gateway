@@ -47,6 +47,7 @@ export interface CatalogListItem {
   messagesPath: string | null
   audioTranscriptionsPath: string | null
   embeddingsPath: string | null
+  decisionsPath: string | null
   /** What a blank field on this row would inherit, so the dialog can show it
    *  as a placeholder instead of sending an operator to the Providers page. */
   providerApiFlavor: ApiFlavor
@@ -56,7 +57,7 @@ export interface CatalogListItem {
 /** The provider's resolved path for each endpoint a model may override —
  *  keyed like the columns above so the dialog can pair a row's value with the
  *  placeholder it would fall back to. Named rather than written inline at both
- *  of its uses: with five overridable endpoints the second copy is where the
+ *  of its uses: with six overridable endpoints the second copy is where the
  *  two drift apart. */
 interface ProviderPathDefaults {
   chatCompletionsPath: string
@@ -64,6 +65,7 @@ interface ProviderPathDefaults {
   messagesPath: string
   audioTranscriptionsPath: string
   embeddingsPath: string
+  decisionsPath: string
 }
 
 export interface CatalogFilter {
@@ -113,6 +115,7 @@ function toItem(
     messagesPath: row.messagesPath,
     audioTranscriptionsPath: row.audioTranscriptionsPath,
     embeddingsPath: row.embeddingsPath,
+    decisionsPath: row.decisionsPath,
     providerApiFlavor,
     providerPaths,
   }
@@ -147,7 +150,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
       model, providerName, providerAdapter, providerApiFlavor, providerConfig,
     }) => {
       const {
-        chatCompletions, responses, messages, audioTranscriptions, embeddings,
+        chatCompletions, responses, messages, audioTranscriptions, embeddings, decisions,
       } = resolveProviderPaths(
         JSON.parse(providerConfig) as ProviderConfig,
       )
@@ -162,6 +165,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
           messagesPath: messages,
           audioTranscriptionsPath: audioTranscriptions,
           embeddingsPath: embeddings,
+          decisionsPath: decisions,
         },
         targets.filter(
           (t) => t.providerId === model.providerId && t.upstreamModel === model.modelId,
@@ -365,6 +369,7 @@ export interface ModelGatewayInput {
   messagesPath?: string | null
   audioTranscriptionsPath?: string | null
   embeddingsPath?: string | null
+  decisionsPath?: string | null
 }
 
 /**
@@ -403,6 +408,9 @@ export async function setModelGateway(
   }
   if (input.audioTranscriptionsPath !== undefined) {
     patch.audioTranscriptionsPath = parseProviderPath(input.audioTranscriptionsPath ?? '')
+  }
+  if (input.decisionsPath !== undefined) {
+    patch.decisionsPath = parseProviderPath(input.decisionsPath ?? '')
   }
   if (input.embeddingsPath !== undefined) {
     patch.embeddingsPath = parseProviderPath(input.embeddingsPath ?? '')

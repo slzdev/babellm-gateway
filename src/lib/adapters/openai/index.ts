@@ -10,6 +10,7 @@ import type {
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { embed } from './embeddings'
+import { decide } from './decisions'
 import { toProviderError } from './errors'
 import { transcribeVia } from './audio'
 import { deriveEmbeddingsModelsPath, resolveRequestPaths } from '../paths'
@@ -24,7 +25,7 @@ const FLAVOR_HINT =
 export function createOpenAIAdapter(
   runtime: ProviderRuntime,
   createClient?: OpenAIClientFactory,
-): ChatOnlyAdapter & Pick<ProviderAdapter, 'transcribe' | 'embed'> {
+): ChatOnlyAdapter & Pick<ProviderAdapter, 'transcribe' | 'embed' | 'decide'> {
   const client = createOpenAIClient(runtime, createClient)
   const paths = resolveRequestPaths(runtime.config, runtime.baseUrl)
 
@@ -41,6 +42,7 @@ export function createOpenAIAdapter(
   }
 
   return {
+    decide: (req, ctx) => decide(client, req, ctx, paths.decisions),
     async chat(req, ctx): Promise<ChatCompletion> {
       const params = {
         ...upstreamParams(req, ctx),

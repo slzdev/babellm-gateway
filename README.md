@@ -77,7 +77,7 @@ Gemini, and the same routing, failover, and logs as everything else. The
 limitations are worth reading *before* you route audio through it:
 [Audio transcriptions](#audio-transcriptions).
 
-`/v1/embeddings` completes the set — the fourth shape a client can send, on the
+`/v1/embeddings` serves vectors on the
 same key and the same virtual models:
 
 ```ts
@@ -113,6 +113,41 @@ await client.embeddings.create({
   named in `x-babellm-dropped-params` as usual.
 - There is no streaming form to support — the OpenAI embeddings API has none —
   so the log row records `stream = false`, and the cost arrives with the body.
+
+`POST /v1/decisions` evaluates ordered predicate, choice, and score questions
+against shared input. Use the generic SDK method while the installed SDK has
+no Decisions resource:
+
+```ts
+await client.post("/decisions", {
+  body: {
+    model: "smart",
+    input: "The package arrived with a broken screen.",
+    questions: [{
+      type: "predicate",
+      name: "damaged",
+      instructions: "Does the customer report a damaged item?",
+    }],
+  },
+});
+```
+
+Decisions works with `openai` and `openai_compatible` providers, independently
+of their chat API flavor (including `anthropic_messages`). Mixed chains steer
+to eligible providers before selection; Gemini-only or Bedrock-only chains
+return `501` without calling upstream. Input can also be user messages with
+`input_text` and inline base64 image data URLs, with at most 128 images per
+request. Other roles, external image URLs, files, audio, and `stream: true`
+are rejected.
+
+Answers keep their order, typed choice values, refusals, and complete usage;
+the response model names the virtual or direct model the client requested.
+Authentication, limits, failover, breakers, logs, payload capture, tags, and
+`usage.cost` follow the shared gateway pipeline. Costs use the usual input,
+cached-input, and output token rates; absent usage or catalog rates remains
+unpriced. Pinned service tiers are reported as dropped. Set `decisionsPath`
+on a provider or catalog model through the advanced path fields to use a
+custom endpoint; a model override inherits the provider path when cleared.
 
 ## Why
 
@@ -154,7 +189,7 @@ Set `GATEWAY_PORT` to publish elsewhere (`GATEWAY_PORT=3100 docker compose …`)
 
 ```mermaid
 flowchart LR
-    A["Your app<br/><sub>OpenAI SDK</sub>"] -->|"sk-bab-…"| B["BabeLLM<br/><sub>/v1/chat/completions<br/>/v1/responses<br/>/v1/audio/transcriptions<br/>/v1/embeddings</sub>"]
+    A["Your app<br/><sub>OpenAI SDK</sub>"] -->|"sk-bab-…"| B["BabeLLM<br/><sub>/v1/chat/completions<br/>/v1/responses<br/>/v1/audio/transcriptions<br/>/v1/embeddings<br/>/v1/decisions</sub>"]
     B --> C{"Virtual model<br/><sub>policy + targets</sub>"}
     C -->|1| D["OpenAI"]
     C -->|2| E["Any OpenAI-compatible<br/><sub>Groq, OpenRouter, vLLM…</sub>"]
@@ -163,7 +198,8 @@ flowchart LR
 ```
 
 Clients can speak either Chat Completions or Responses, upload audio to
-`/v1/audio/transcriptions`, or embed text at `/v1/embeddings`. Every
+`/v1/audio/transcriptions`, embed text at `/v1/embeddings`, or evaluate
+questions at `/v1/decisions`. Every
 OpenAI-shaped provider is called on one of three APIs, whichever its
 `api_flavor` says — Chat Completions, Responses, or Anthropic Messages — set
 per provider and overridable per catalog model, so one virtual model can mix a
@@ -240,8 +276,8 @@ fails over on the same loop until its first chunk lands.
 `x-babellm-provider` and `x-babellm-upstream-model` on the response name who
 actually served. Targets can pin a service tier (`flex`, `priority`,
 `ultrafast`, …) where the provider supports one. A pinned tier applies to the
-two chat shapes only: neither `/v1/audio/transcriptions` nor `/v1/embeddings`
-has such a parameter, and a provider answers an argument it does not recognise
+two chat shapes only: `/v1/audio/transcriptions`, `/v1/embeddings`, and
+`/v1/decisions` have no such parameter, and a provider answers an argument it does not recognise
 with a `400` rather than ignoring it, so injecting one there would turn a
 setting that means nothing on those endpoints into every request to that target
 failing. A pin that lands on one of them is reported in
@@ -268,7 +304,8 @@ the way the gateway billed it:
 }
 ```
 
-Same field on `/v1/chat/completions`, `/v1/responses` and `/v1/embeddings`, and
+Same field on `/v1/chat/completions`, `/v1/responses`, `/v1/decisions` and
+`/v1/embeddings`, and
 on a `json` transcription whose provider reported token usage it could be
 priced from — see [Audio transcriptions](#audio-transcriptions) for which
 providers that is. Streaming puts it on the final usage chunk (chat) or the

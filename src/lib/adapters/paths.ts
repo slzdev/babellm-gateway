@@ -20,6 +20,7 @@ export const DEFAULT_PATHS = {
   messages: '/messages',
   audioTranscriptions: '/audio/transcriptions',
   embeddings: '/embeddings',
+  decisions: '/decisions',
 } as const
 
 /**
@@ -39,6 +40,7 @@ const CONFIG_KEYS: Record<keyof ProviderPaths, string> = {
   messages: 'messagesPath',
   audioTranscriptions: 'audioTranscriptionsPath',
   embeddings: 'embeddingsPath',
+  decisions: 'decisionsPath',
 }
 
 /**
@@ -84,6 +86,12 @@ export const PATH_FIELDS = [
     placeholder: DEFAULT_PATHS.embeddings,
     help: 'Where this provider serves embeddings.',
   },
+  {
+    name: 'decisionsPath',
+    label: 'Decisions path',
+    placeholder: DEFAULT_PATHS.decisions,
+    help: 'Where this provider serves the Decisions API.',
+  },
 ] as const
 
 /**
@@ -122,6 +130,12 @@ export const MODEL_PATH_FIELDS = [
     label: 'Embeddings path',
     placeholder: DEFAULT_PATHS.embeddings,
     help: 'Where this one model is embedded, if not where the provider embeds the rest.',
+  },
+  {
+    name: 'decisionsPath',
+    label: 'Decisions path',
+    placeholder: DEFAULT_PATHS.decisions,
+    help: 'Where this one model answers the Decisions API.',
   },
 ] as const
 
@@ -210,6 +224,7 @@ export function resolveProviderPaths(config: ProviderConfig): ProviderPaths {
     messages: resolveOne(config, 'messages').path,
     audioTranscriptions: resolveOne(config, 'audioTranscriptions').path,
     embeddings: resolveOne(config, 'embeddings').path,
+    decisions: resolveOne(config, 'decisions').path,
   }
 }
 
@@ -251,6 +266,7 @@ export function resolveRequestPaths(
     messages: resolve('messages'),
     audioTranscriptions: resolve('audioTranscriptions'),
     embeddings: resolve('embeddings'),
+    decisions: resolve('decisions'),
   }
 }
 

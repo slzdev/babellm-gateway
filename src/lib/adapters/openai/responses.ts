@@ -14,6 +14,7 @@ import type {
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { embed } from './embeddings'
+import { decide } from './decisions'
 import { toProviderError } from './errors'
 import { transcribeVia } from './audio'
 import { deriveEmbeddingsModelsPath, resolveRequestPaths } from '../paths'
@@ -48,6 +49,7 @@ export function createResponsesAdapter(
     : null
 
   return {
+    decide: (req, ctx) => decide(client, req, ctx, paths.decisions),
     async chat(req, ctx): Promise<ChatCompletion> {
       try {
         const result = await client.responses.create(

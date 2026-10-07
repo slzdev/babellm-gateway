@@ -159,6 +159,7 @@ export const catalogModels = pgTable(
     messagesPath: text('messages_path'),
     audioTranscriptionsPath: text('audio_transcriptions_path'),
     embeddingsPath: text('embeddings_path'),
+    decisionsPath: text('decisions_path'),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
