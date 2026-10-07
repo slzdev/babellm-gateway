@@ -2,6 +2,7 @@ import 'server-only'
 import { z } from 'zod'
 import { createAdapter as defaultCreateAdapter } from '@/lib/adapters/registry'
 import type { AttemptContext, ModelPathOverrides, ProviderAdapter } from '@/lib/adapters/types'
+import type { DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ProviderRow } from '@/lib/db/schema'
 import { logRequest, resolveRequestLogStore } from '@/lib/logs'
@@ -32,6 +33,7 @@ export interface GatewayDeps {
     flavor: ApiFlavor,
     paths: ModelPathOverrides | null,
     maxOutputTokens: number | null,
+    decisionsApiFlavor: DecisionsApiFlavor,
   ) => ProviderAdapter
 }
 
@@ -76,8 +78,6 @@ export interface Ingress<Req, Res, Chunk> {
   /** Renders the finished result. Both JSON dialects pass `Response.json`. */
   toResponse(res: Res, headers: HeadersInit): Response
   /** Which candidates can serve this dialect. Absent means "all of them".
-   *  Chat and Responses exclude OpenAI Decisions models; Gemini continues
-   *  to translate chat regardless of its otherwise irrelevant flavor label.
    *
    *  The request is a parameter, not just the candidate, because capability is
    *  not always a property of the target alone: a Gemini target transcribes,

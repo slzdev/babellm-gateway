@@ -39,7 +39,7 @@ function request(apiKey: string | null, payload: unknown = body, headers: Record
     body: JSON.stringify(payload),
   })
 }
-const seedGateway = (options: Parameters<typeof seedBaseGateway>[0] = {}) => seedBaseGateway({ apiFlavor: 'decisions', ...options })
+const seedGateway = (options: Parameters<typeof seedBaseGateway>[0] = {}) => seedBaseGateway({ apiFlavor: 'chat_completions', ...options })
 const deps = () => fakeAdapterDeps({ decide: async () => upstream as never })
 beforeEach(async () => {
   process.env.ENCRYPTION_KEY = 'e'.repeat(64)
@@ -94,21 +94,21 @@ test('rejects streaming before making an upstream call', async () => {
   expect(decide).not.toHaveBeenCalled()
 })
 
-test('steers wrong flavors and unsupported adapters before maxAttempts to a Decisions model', async () => {
+test('steers unsupported adapters before maxAttempts while retaining every chat flavor', async () => {
   const { apiKey } = await seedTargets({ maxAttempts: 1, targets: [
-    { name: 'gem', adapter: 'gemini', apiFlavor: 'decisions', priority: 0 },
-    { name: 'bed', adapter: 'bedrock', apiFlavor: 'decisions', priority: 1 },
+    { name: 'gem', adapter: 'gemini', apiFlavor: 'chat_completions', priority: 0 },
+    { name: 'bed', adapter: 'bedrock', apiFlavor: 'chat_completions', priority: 1 },
     { name: 'chat', priority: 2 },
     { name: 'responses', apiFlavor: 'responses', priority: 3 },
     { name: 'anthropic', apiFlavor: 'anthropic_messages', priority: 4 },
-    { name: 'clone', apiFlavor: 'decisions', priority: 5 },
+    { name: 'clone', apiFlavor: 'chat_completions', priority: 5 },
   ] })
   const never = vi.fn()
   const res = await handleDecisions(request(apiKey), fakeAdapterByProvider({
-    gem: { decide: never }, bed: { decide: never }, chat: { decide: never }, responses: { decide: never }, anthropic: { decide: never }, clone: { decide: async () => upstream as never },
+    gem: { decide: never }, bed: { decide: never }, chat: { decide: async () => upstream as never }, responses: { decide: never }, anthropic: { decide: never }, clone: { decide: never },
   }))
   expect(res.status).toBe(200)
-  expect(res.headers.get('x-babellm-provider')).toBe('clone')
+  expect(res.headers.get('x-babellm-provider')).toBe('chat')
   expect(never).not.toHaveBeenCalled()
   await waitForLogs()
   const [row] = (await postgresStore.query({ limit: 1 })).rows
@@ -125,7 +125,7 @@ test.each(['gemini', 'bedrock'] as const)('an unsupported-only %s chain returns 
 })
 
 test('a Decisions-flavored OpenAI clone calls the dedicated Decisions endpoint through the real registry', async () => {
-  const { apiKey, targets } = await seedTargets({ targets: [{ name: 'clone', apiFlavor: 'decisions', adapter: 'openai_compatible' }] })
+  const { apiKey, targets } = await seedTargets({ targets: [{ name: 'clone', apiFlavor: 'chat_completions', adapter: 'openai_compatible' }] })
   await db.update(providers).set({ baseUrl: 'https://clone.example/gwt/v1', config: JSON.stringify({ decisionsPath: '/api/decide' }) }).where(eq(providers.id, targets[0].provider.id))
   let sentUrl: string | undefined
   let sentBody: unknown
@@ -141,7 +141,7 @@ test('a Decisions-flavored OpenAI clone calls the dedicated Decisions endpoint t
 })
 
 test('retryable failure walks to backup and records both attempts', async () => {
-  const { apiKey } = await seedTargets({ targets: [{ name: 'primary', apiFlavor: 'decisions' }, { name: 'backup', apiFlavor: 'decisions', priority: 1 }] })
+  const { apiKey } = await seedTargets({ targets: [{ name: 'primary', apiFlavor: 'chat_completions' }, { name: 'backup', apiFlavor: 'chat_completions', priority: 1 }] })
   const res = await handleDecisions(request(apiKey), fakeAdapterByProvider({
     primary: { decide: async () => { throw new OpenAI.APIError(429, { message: 'slow' }, 'slow', undefined) } },
     backup: { decide: async () => upstream as never },
@@ -196,37 +196,38 @@ test('a large malformed inline image returns invalid-request 400 before calling 
 })
 
 
-test.each(['chat_completions', 'responses', 'anthropic_messages'] as const)('wrong-flavor %s returns an actionable 501 without fetch', async (apiFlavor) => {
+test.each(['chat_completions', 'responses', 'anthropic_messages'] as const)('Decisions uses OpenAI shape independently of %s chat flavor', async (apiFlavor) => {
   const { apiKey, provider } = await seedGateway()
   await db.update(providers).set({ apiFlavor }).where(eq(providers.id, provider.id))
   const transport = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(upstream))
   const res = await handleDecisions(request(apiKey))
-  expect(res.status).toBe(501)
-  expect((await res.json()).error.message).toContain('Decisions API')
-  expect(transport).not.toHaveBeenCalled()
+  expect(res.status).toBe(200)
+  expect(String(transport.mock.calls[0][0])).toBe('https://api.openai.com/v1/decisions')
+  expect(JSON.parse(transport.mock.calls[0][1]!.body as string)).toMatchObject({ model: 'gpt-4o-mini', input: 'Broken screen', questions: body.questions })
 })
 
-
-test('resolved model overrides and provider inheritance control virtual and direct Decisions eligibility', async () => {
+test('independent model shape overrides and inheritance reach adapter construction for virtual and direct routing', async () => {
+  const { createAdapter: realCreateAdapter } = await import('@/lib/adapters/registry')
   const { apiKey, provider } = await seedBaseGateway()
+  await db.update(providers).set({ apiFlavor: 'responses' }).where(eq(providers.id, provider.id))
   const [catalog] = await db.insert(catalogModels).values({ providerId: provider.id, modelId: 'gpt-4o-mini' }).returning()
   vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(upstream))
-  for (const apiFlavor of ['decisions', 'chat_completions', null] as const) {
-    await db.update(providers).set({ apiFlavor: 'decisions' }).where(eq(providers.id, provider.id))
-    await setModelGateway(catalog.id, { apiFlavor })
+  const createAdapter = vi.fn(realCreateAdapter)
+  for (const decisionsApiFlavor of ['openai', null] as const) {
+    await setModelGateway(catalog.id, { apiFlavor: 'anthropic_messages', decisionsApiFlavor })
     const [item] = await listCatalog()
-    expect(item.apiFlavor).toBe(apiFlavor)
-    expect(item.providerApiFlavor).toBe('decisions')
+    expect(item).toMatchObject({ apiFlavor: 'anthropic_messages', providerApiFlavor: 'responses', decisionsApiFlavor, providerDecisionsApiFlavor: 'openai' })
     for (const model of ['house-model', 'test-provider/gpt-4o-mini']) {
-      expect((await resolveModel(model)).candidates[0].apiFlavor).toBe(apiFlavor ?? 'decisions')
-      const res = await handleDecisions(request(apiKey, { ...body, model }))
-      expect(res.status).toBe(apiFlavor === 'chat_completions' ? 501 : 200)
+      expect((await resolveModel(model)).candidates[0]).toMatchObject({ apiFlavor: 'anthropic_messages', decisionsApiFlavor: 'openai' })
+      const res = await handleDecisions(request(apiKey, { ...body, model }), { createAdapter })
+      expect(res.status).toBe(200)
+      expect(createAdapter.mock.lastCall?.[4]).toBe('openai')
     }
   }
 })
 
 test('all-ineligible Decisions refusal logs status without charging tokens or constructing an adapter', async () => {
-  const { apiKey } = await seedBaseGateway({ limits: { tpmLimit: 1 } })
+  const { apiKey } = await seedBaseGateway({ adapter: 'gemini', limits: { tpmLimit: 1 } })
   const createAdapter = vi.fn()
   for (let n = 0; n < 2; n++) {
     const res = await handleDecisions(request(apiKey), { createAdapter })

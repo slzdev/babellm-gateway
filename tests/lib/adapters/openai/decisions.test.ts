@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest'
 import OpenAI from 'openai'
-import { createDecisionsAdapter } from '@/lib/adapters/openai/decisions'
+import { createDecisionsOperation } from '@/lib/adapters/openai/decisions'
 import type { ProviderRuntime } from '@/lib/adapters/types'
 
 const runtime: ProviderRuntime = {
@@ -24,7 +24,7 @@ test.each([
       return Response.json(response)
     },
   })
-  const result = await createDecisionsAdapter({ ...runtime, config }, factory).decide(body, ctx)
+  const result = await createDecisionsOperation({ ...runtime, config }, 'openai', factory).decide(body, ctx)
   expect(sentUrl).toBe(expectedUrl)
   expect(sentBody).toEqual({ ...body, model: 'decision-model' })
   expect(result).toEqual(response)
@@ -32,14 +32,14 @@ test.each([
 
 test('forwards the attempt abort signal to the SDK', async () => {
   const post = vi.fn().mockResolvedValue(response)
-  const adapter = createDecisionsAdapter(runtime, () => ({ post }) as unknown as OpenAI)
+  const adapter = createDecisionsOperation(runtime, 'openai', () => ({ post }) as unknown as OpenAI)
   await adapter.decide(body, ctx)
   expect(post.mock.calls[0]).toEqual(['/decisions', { body: { ...body, model: 'decision-model' }, signal: ctx.signal }])
 })
 
 test.each([[429, true], [400, false], [404, false]])('classifies SDK %i errors for the gateway', async (status, retryable) => {
   const post = vi.fn().mockRejectedValue(new OpenAI.APIError(status, { message: 'bad' }, 'bad', undefined))
-  const adapter = createDecisionsAdapter(runtime, () => ({ post }) as unknown as OpenAI)
+  const adapter = createDecisionsOperation(runtime, 'openai', () => ({ post }) as unknown as OpenAI)
   await expect(adapter.decide(body, ctx)).rejects.toMatchObject({ status, retryable })
   if (status === 404) await expect(adapter.decide(body, ctx)).rejects.toThrow('decisions path')
 })
@@ -47,7 +47,7 @@ test.each([[429, true], [400, false], [404, false]])('classifies SDK %i errors f
 test('the Decisions SDK transport sends credentials and never retries a failed attempt', async () => {
   let calls = 0
   let authorization: string | null = null
-  const adapter = createDecisionsAdapter(runtime, (opts) => new OpenAI({ ...opts, fetch: async (_url, init) => {
+  const adapter = createDecisionsOperation(runtime, 'openai', (opts) => new OpenAI({ ...opts, fetch: async (_url, init) => {
     calls++
     authorization = new Headers(init?.headers).get('authorization')
     return Response.json({ error: { message: 'retry later' } }, { status: 429 })
@@ -61,7 +61,7 @@ test('an already canceled Decisions attempt makes no SDK fetch', async () => {
   const controller = new AbortController()
   controller.abort()
   const transport = vi.fn(async () => Response.json(response))
-  const adapter = createDecisionsAdapter(runtime, (opts) => new OpenAI({ ...opts, fetch: transport }))
+  const adapter = createDecisionsOperation(runtime, 'openai', (opts) => new OpenAI({ ...opts, fetch: transport }))
   await expect(adapter.decide(body, { ...ctx, signal: controller.signal })).rejects.toThrow('Request was aborted')
   expect(transport).not.toHaveBeenCalled()
 })

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createAdapter, resolveProviderRuntime, withModelPaths } from '@/lib/adapters/registry'
+import * as decisionsShape from '@/lib/adapters/openai/decisions'
 import { UnsupportedOperationError } from '@/lib/gateway/errors'
 import { encryptJson } from '@/lib/crypto'
 import type { ProviderRow } from '@/lib/db/schema'
@@ -72,6 +73,7 @@ function provider(overrides: Partial<ProviderRow> = {}): ProviderRow {
     credentials: encryptJson({ apiKey: 'sk-test' }),
     config: '{}',
     apiFlavor: 'chat_completions',
+    decisionsApiFlavor: 'openai',
     enabled: true,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -533,50 +535,49 @@ test('gemini embeds through the translated embedContent rather than refusing', a
 
 const decisionsBody = { model: 'house-model', input: 'Evidence', questions: [{ type: 'predicate' as const, instructions: 'Damaged?' }] }
 
-test.each(['chat_completions', 'responses', 'anthropic_messages'] as const)('%s refuses Decisions without transport', async (apiFlavor) => {
+test.each((['openai', 'openai_compatible'] as const).flatMap((adapter) =>
+  (['chat_completions', 'responses', 'anthropic_messages'] as const).map((apiFlavor) => ({ adapter, apiFlavor })),
+))('$adapter with $apiFlavor composes the independent OpenAI Decisions shape', async ({ adapter: adapterType, apiFlavor }) => {
   const fetchSpy = stubFetch()
-  const adapter = createAdapter(provider({ apiFlavor }))
-  await expect(adapter.decide(decisionsBody, chatCtx)).rejects.toThrow(UnsupportedOperationError)
-  await expect(adapter.decide(decisionsBody, chatCtx)).rejects.toThrow('Decisions API')
-  expect(fetchSpy).not.toHaveBeenCalled()
+  const adapter = createAdapter(provider({ adapter: adapterType, baseUrl: 'https://api.openai.com/v1', apiFlavor, decisionsApiFlavor: 'openai' }))
+  await adapter.decide(decisionsBody, chatCtx)
+  expect(calledPath(fetchSpy)).toBe('https://api.openai.com/v1/decisions')
+  expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toEqual({ ...decisionsBody, model: 'model-x' })
 })
 
-test('a Decisions-flavored model uses its dedicated endpoint override', async () => {
+test('a model Decisions path overrides the provider independently of chat flavor', async () => {
   const fetchSpy = stubFetch()
-  const adapter = createAdapter(provider({ baseUrl: 'https://api.openai.com/v1' }), 'decisions', { decisionsPath: '/api/classify' })
+  const adapter = createAdapter(provider({ apiFlavor: 'responses', baseUrl: 'https://api.openai.com/v1' }), 'responses', { decisionsPath: '/api/classify' })
   await adapter.decide(decisionsBody, chatCtx)
   expect(calledPath(fetchSpy)).toBe('https://api.openai.com/api/classify')
 })
 
-test.each(['chat', 'chatStream', 'respond', 'respondStream'] as const)('the Decisions adapter refuses %s without transport', async (method) => {
+test('independent Decisions shape retains sibling embeddings and transcription', async () => {
   const fetchSpy = stubFetch()
-  const adapter = createAdapter(provider(), 'decisions')
-  const call = async () => {
-    if (method === 'chat') return adapter.chat(chatBody, chatCtx)
-    if (method === 'respond') return adapter.respond({ model: 'fast', input: 'hi' }, chatCtx)
-    const stream = method === 'chatStream'
-      ? adapter.chatStream(chatBody, chatCtx)
-      : adapter.respondStream({ model: 'fast', input: 'hi' }, chatCtx)
-    for await (const chunk of stream) void chunk
-  }
-  await expect(call()).rejects.toThrow(UnsupportedOperationError)
-  expect(fetchSpy).not.toHaveBeenCalled()
-})
-
-test('a Decisions-flavored OpenAI provider retains sibling embeddings and transcription', async () => {
-  const fetchSpy = stubFetch()
-  const adapter = createAdapter(provider({ apiFlavor: 'decisions' }))
+  const adapter = createAdapter(provider({ apiFlavor: 'responses', decisionsApiFlavor: 'openai' }))
   await adapter.embed(embedBody, embedCtx)
   expect(lastCalledPath(fetchSpy)).toMatch(/\/embeddings$/)
   await adapter.transcribe(transcribeRequest(), transcribeCtx)
   expect(lastCalledPath(fetchSpy)).toMatch(/\/audio\/transcriptions$/)
 })
 
-test('Gemini still translates chat when its model is labeled Decisions, but refuses Decisions', async () => {
+test('Gemini translates chat regardless of flavor but refuses Decisions without transport', async () => {
   const fetchSpy = stubFetch()
-  const adapter = createAdapter(provider({ adapter: 'gemini', credentials: encryptJson({ apiKey: 'g-key' }) }), 'decisions')
+  const adapter = createAdapter(provider({ adapter: 'gemini', credentials: encryptJson({ apiKey: 'g-key' }), decisionsApiFlavor: 'openai' }), 'responses')
   await expect(adapter.decide(decisionsBody, chatCtx)).rejects.toThrow(UnsupportedOperationError)
   expect(fetchSpy).not.toHaveBeenCalled()
   await adapter.chat(chatBody, chatCtx).catch(() => {})
   expect(calledPath(fetchSpy)).toContain('generateContent')
+})
+
+
+test('registry dispatches the resolved Decisions setting to the independent shape factory', async () => {
+  const fetchSpy = stubFetch()
+  const shapeFactory = vi.spyOn(decisionsShape, 'createDecisionsOperation')
+  try {
+    const adapter = createAdapter(provider({ apiFlavor: 'responses', decisionsApiFlavor: 'openai' }), 'anthropic_messages', null, null, 'openai')
+    await adapter.decide(decisionsBody, chatCtx)
+    expect(shapeFactory).toHaveBeenCalledWith(expect.objectContaining({ name: 'p' }), 'openai')
+    expect(calledPath(fetchSpy)).toBe('https://api.openai.com/v1/decisions')
+  } finally { shapeFactory.mockRestore() }
 })

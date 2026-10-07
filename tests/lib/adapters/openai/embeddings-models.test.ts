@@ -1,6 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
 import { createOpenAIAdapter } from '@/lib/adapters/openai'
-import { createDecisionsAdapter } from '@/lib/adapters/openai/decisions'
 import { createResponsesAdapter } from '@/lib/adapters/openai/responses'
 import type { ProviderConfig, ProviderRuntime } from '@/lib/adapters/types'
 
@@ -91,7 +90,7 @@ describe('a provider that splits its listing', () => {
     expect(models.at(-1)!.raw).toEqual({ id: 'google/gemini-embedding-001' })
   })
 
-  test.each([['Chat', createOpenAIAdapter], ['Decisions', createDecisionsAdapter]])('%s asks for the sibling of wherever the provider lists its models', async (_name, create) => {
+  test.each([['Chat', createOpenAIAdapter]])('%s asks for the sibling of wherever the provider lists its models', async (_name, create) => {
     const { list, factory } = fakeClient({
       'https://openrouter.ai/api/v1/models': [{ id: 'openai/gpt-4o' }],
       'https://openrouter.ai/api/v1/embeddings/models': [{ id: 'openai/text-embedding-3-small' }],
@@ -116,7 +115,7 @@ describe('a provider that splits its listing', () => {
     expect(list.mock.calls[1][0]).toMatchObject({ path: '/embeddings/models', signal })
   })
 
-  test.each([['Responses', createResponsesAdapter], ['Decisions', createDecisionsAdapter]])('discovers the same way for a %s provider', async (_name, create) => {
+  test.each([['Responses', createResponsesAdapter]])('discovers the same way for a %s provider', async (_name, create) => {
     const { factory } = fakeClient(listings)
     const adapter = create(runtime(), factory as never)
 

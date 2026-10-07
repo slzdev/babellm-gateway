@@ -86,7 +86,7 @@ export default async function ProvidersPage() {
                 <TableCell className="font-medium">{provider.name}</TableCell>
                 <TableCell className="text-muted-foreground">
                   {provider.adapter}
-                  {provider.apiFlavor === 'responses' || provider.apiFlavor === 'decisions' ? (
+                  {provider.apiFlavor === 'responses' ? (
                     <Badge variant="secondary" className="ml-2">{API_FLAVOR_LABELS[provider.apiFlavor]}</Badge>
                   ) : null}
                 </TableCell>

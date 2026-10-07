@@ -99,5 +99,5 @@ export function createOpenAIAdapter(
     // which flavor this provider's chat endpoint speaks.
     transcribe: transcribeVia(client, paths.audioTranscriptions),
     embed: (req, ctx) => embed(client, req, ctx, paths.embeddings),
-  }, runtime.name, 'select Decisions API as the API flavor on the provider or Catalog model')
+  }, runtime.name, 'this chat adapter does not provide a Decisions transport')
 }

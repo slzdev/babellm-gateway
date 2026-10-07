@@ -8,9 +8,8 @@ export const decisionsIngress: Ingress<DecisionsRequest, DecisionsResult, never>
   read: async (request) => parseWith(decisionsRequestSchema, await readJson(request)),
   modelOf: (req) => req.model,
   isStream: () => false,
-  supports: (candidate) => candidate.apiFlavor === 'decisions'
-    && (candidate.provider.adapter === 'openai' || candidate.provider.adapter === 'openai_compatible'),
-  unsupportedMessage: 'No eligible Decisions target. Select Decisions API as the API flavor on an openai or openai_compatible provider or its Catalog model before using /v1/decisions. Gemini and Bedrock do not support Decisions.',
+  supports: (candidate) => (candidate.provider.adapter === 'openai' || candidate.provider.adapter === 'openai_compatible'),
+  unsupportedMessage: 'No eligible Decisions API target. Decisions requires an openai or openai_compatible provider with a Decisions endpoint. Gemini and Bedrock do not support Decisions.',
   // The API has no service tier. A pinned tier is reported, never injected.
   droppedFor: (candidate) => candidate.serviceTier ? ['service_tier'] : [],
   run: (adapter, ctx, req) => adapter.decide(req, ctx),

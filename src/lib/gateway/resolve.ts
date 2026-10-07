@@ -6,6 +6,7 @@ import {
   type ProviderRow,
 } from '@/lib/db/schema'
 import type { ModelPathOverrides } from '@/lib/adapters/types'
+import type { DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ServiceTier } from '@/lib/service-tiers'
 import { GatewayError } from './errors'
@@ -26,6 +27,7 @@ export interface Candidate {
   /** The protocol this target's endpoint speaks. Resolved rather than
    *  nullable: the routing loop must never have to work out where the
    *  answer came from. */
+  decisionsApiFlavor: DecisionsApiFlavor
   apiFlavor: ApiFlavor
   /** The paths this model is served on, or null when it names none. Only the
    *  OpenAI-shaped adapters read them. */
@@ -159,6 +161,7 @@ async function findVirtualModel(name: string): Promise<ResolvedModel | null> {
       weight: target.weight,
       serviceTier: target.serviceTier,
       apiFlavor: catalog?.apiFlavor ?? provider.apiFlavor,
+      decisionsApiFlavor: catalog?.decisionsApiFlavor ?? provider.decisionsApiFlavor,
       pathOverrides: modelPaths(catalog),
       maxOutputTokens: catalog?.maxOutputTokens ?? null,
       breakable: true,
@@ -218,6 +221,7 @@ async function resolveDirect(
       // breaker for it. The flavor comes from the catalog row itself.
       serviceTier: null,
       apiFlavor: row.catalog.apiFlavor ?? row.provider.apiFlavor,
+      decisionsApiFlavor: row.catalog.decisionsApiFlavor ?? row.provider.decisionsApiFlavor,
       pathOverrides: modelPaths(row.catalog),
       maxOutputTokens: row.catalog.maxOutputTokens,
       breakable: false,

@@ -1,3 +1,4 @@
+import type { DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import type { ApiFlavor } from '@/lib/api-flavors'
 import { decryptJson } from '@/lib/crypto'
 import type { ProviderRow } from '@/lib/db/schema'
@@ -6,7 +7,7 @@ import { createAnthropicAdapter } from './anthropic'
 import { createGeminiAdapter } from './gemini'
 import { createOpenAIAdapter } from './openai'
 import { createResponsesAdapter } from './openai/responses'
-import { createDecisionsAdapter } from './openai/decisions'
+import { createDecisionsOperation } from './openai/decisions'
 import type {
   ModelPathOverrides, ProviderAdapter, ProviderConfig, ProviderRuntime,
 } from './types'
@@ -28,19 +29,26 @@ export function createAdapter(
   flavor: ApiFlavor = provider.apiFlavor,
   paths?: ModelPathOverrides | null,
   maxOutputTokens?: number | null,
+  decisionsApiFlavor: DecisionsApiFlavor = provider.decisionsApiFlavor,
 ): ProviderAdapter {
   const runtime = withModelPaths(resolveProviderRuntime(provider), paths)
 
   switch (runtime.adapter) {
     case 'openai':
-      return flavoredAdapter(runtime, flavor, maxOutputTokens ?? null)
+      return {
+        ...flavoredAdapter(runtime, flavor, maxOutputTokens ?? null),
+        ...createDecisionsOperation(runtime, decisionsApiFlavor),
+      }
     case 'openai_compatible':
       if (!runtime.baseUrl) {
         throw new Error(
           `Provider "${runtime.name}" is openai_compatible but has no base URL configured.`,
         )
       }
-      return flavoredAdapter(runtime, flavor, maxOutputTokens ?? null)
+      return {
+        ...flavoredAdapter(runtime, flavor, maxOutputTokens ?? null),
+        ...createDecisionsOperation(runtime, decisionsApiFlavor),
+      }
     case 'gemini':
       // Gemini speaks none of the OpenAI protocols natively, so flavor says nothing
       // about it: the adapter translates from Chat Completions either way,
@@ -87,15 +95,14 @@ export function withModelPaths(
 }
 
 /**
- * Dispatches on the model's resolved primary inference protocol. Chat flavors
- * translate between Chat Completions and Responses; Decisions refuses both.
+ * Dispatches on the model's resolved chat protocol. Decisions is composed
+ * independently by createAdapter.
  */
 function flavoredAdapter(
   runtime: ProviderRuntime,
   flavor: ApiFlavor,
   maxOutputTokens: number | null,
 ): ProviderAdapter {
-  if (flavor === 'decisions') return createDecisionsAdapter(runtime)
   if (flavor === 'responses') return createResponsesAdapter(runtime)
   if (flavor === 'anthropic_messages') {
     // The one true exception, and it is the exception twice over: Anthropic's
@@ -114,7 +121,7 @@ function flavoredAdapter(
       runtime.name,
       'the Anthropic Messages API has no embeddings endpoint',
     )
-    return withDecideUnsupported(chatAdapter, runtime.name, 'select Decisions API as the API flavor on the provider or Catalog model')
+    return withDecideUnsupported(chatAdapter, runtime.name, 'this chat adapter does not provide a Decisions transport')
   }
   return withRespondViaChat(createOpenAIAdapter(runtime), runtime.name)
 }

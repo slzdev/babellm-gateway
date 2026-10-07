@@ -146,5 +146,5 @@ export function createResponsesAdapter(
     // Responses-flavored provider gets the identical implementation a
     // Chat-Completions-flavored one does, from the same shared function.
     transcribe: transcribeVia(client, paths.audioTranscriptions),
-  }, runtime.name, 'select Decisions API as the API flavor on the provider or Catalog model')
+  }, runtime.name, 'this chat adapter does not provide a Decisions transport')
 }

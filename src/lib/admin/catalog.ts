@@ -14,6 +14,7 @@ import { effectiveColumns } from '@/lib/catalog/sync'
 import type {
   CatalogFields, FieldSources, Modalities, ModelKind,
 } from '@/lib/catalog/types'
+import { DECISIONS_API_FLAVORS, type DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import { API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
 import { parseProviderPath, resolveProviderPaths } from '@/lib/adapters/paths'
 import type { ProviderConfig } from '@/lib/adapters/types'
@@ -41,6 +42,7 @@ export interface CatalogListItem {
   override: CatalogFields
   lastSeenAt: Date
   routeTargetCount: number
+  decisionsApiFlavor: DecisionsApiFlavor | null
   apiFlavor: ApiFlavor | null
   chatCompletionsPath: string | null
   responsesPath: string | null
@@ -50,6 +52,7 @@ export interface CatalogListItem {
   decisionsPath: string | null
   /** What a blank field on this row would inherit, so the dialog can show it
    *  as a placeholder instead of sending an operator to the Providers page. */
+  providerDecisionsApiFlavor: DecisionsApiFlavor
   providerApiFlavor: ApiFlavor
   providerPaths: ProviderPathDefaults
 }
@@ -84,6 +87,7 @@ function toItem(
   providerName: string,
   providerAdapter: AdapterType,
   providerApiFlavor: ApiFlavor,
+  providerDecisionsApiFlavor: DecisionsApiFlavor,
   providerPaths: ProviderPathDefaults,
   routeTargetCount: number,
 ): CatalogListItem {
@@ -110,6 +114,7 @@ function toItem(
     lastSeenAt: row.lastSeenAt,
     routeTargetCount,
     apiFlavor: row.apiFlavor,
+    decisionsApiFlavor: row.decisionsApiFlavor,
     chatCompletionsPath: row.chatCompletionsPath,
     responsesPath: row.responsesPath,
     messagesPath: row.messagesPath,
@@ -117,6 +122,7 @@ function toItem(
     embeddingsPath: row.embeddingsPath,
     decisionsPath: row.decisionsPath,
     providerApiFlavor,
+    providerDecisionsApiFlavor,
     providerPaths,
   }
 }
@@ -134,6 +140,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
       providerName: providers.name,
       providerAdapter: providers.adapter,
       providerApiFlavor: providers.apiFlavor,
+      providerDecisionsApiFlavor: providers.decisionsApiFlavor,
       providerConfig: providers.config,
     })
     .from(catalogModels)
@@ -147,7 +154,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
   return rows
     .filter(({ model }) => !search || model.modelId.toLowerCase().includes(search))
     .map(({
-      model, providerName, providerAdapter, providerApiFlavor, providerConfig,
+      model, providerName, providerAdapter, providerApiFlavor, providerDecisionsApiFlavor, providerConfig,
     }) => {
       const {
         chatCompletions, responses, messages, audioTranscriptions, embeddings, decisions,
@@ -159,6 +166,7 @@ export async function listCatalog(filter: CatalogFilter = {}): Promise<CatalogLi
         providerName,
         providerAdapter,
         providerApiFlavor,
+        providerDecisionsApiFlavor,
         {
           chatCompletionsPath: chatCompletions,
           responsesPath: responses,
@@ -363,6 +371,7 @@ export async function targetWarnings(): Promise<Record<string, TargetWarning>> {
 }
 
 export interface ModelGatewayInput {
+  decisionsApiFlavor?: DecisionsApiFlavor | null
   apiFlavor?: ApiFlavor | null
   chatCompletionsPath?: string | null
   responsesPath?: string | null
@@ -393,6 +402,12 @@ export async function setModelGateway(
       throw new Error(`"${input.apiFlavor}" is not a supported API flavor.`)
     }
     patch.apiFlavor = input.apiFlavor
+  }
+  if (input.decisionsApiFlavor !== undefined) {
+    if (input.decisionsApiFlavor !== null && !DECISIONS_API_FLAVORS.includes(input.decisionsApiFlavor)) {
+      throw new Error(`"${input.decisionsApiFlavor}" is not a supported Decisions API flavor.`)
+    }
+    patch.decisionsApiFlavor = input.decisionsApiFlavor
   }
   // parseProviderPath returns null for a blank value and throws on a shape
   // that would fail silently upstream, so validation and clearing are the

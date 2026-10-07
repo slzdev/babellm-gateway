@@ -6,7 +6,6 @@ import {
   createProvider, deleteProvider, listProviders, testProvider, updateProvider,
 } from '@/lib/admin/providers'
 import { decryptJson } from '@/lib/crypto'
-import { decisionsRequestSchema } from '@/lib/schemas/decisions'
 import { resetDb } from '../../helpers/db'
 
 beforeEach(async () => {
@@ -233,57 +232,30 @@ test('listProviders reports each provider flavor', async () => {
 })
 
 
-test.each(['openai', 'openai_compatible'] as const)('persists the Decisions flavor through %s provider create, edit and list', async (adapter) => {
+test.each(['openai', 'openai_compatible'] as const)('persists independent Decisions shape through %s create, edit and list', async (adapter) => {
   const created = await createProvider({
     name: 'decision-provider', adapter, credentials: { apiKey: 'sk-a' },
     baseUrl: adapter === 'openai_compatible' ? 'https://clone.example/v1' : undefined,
-    apiFlavor: 'decisions',
+    apiFlavor: 'responses', decisionsApiFlavor: 'openai',
   })
-  expect((await listProviders())[0].apiFlavor).toBe('decisions')
-  await updateProvider(created.id, { apiFlavor: 'chat_completions' })
-  expect((await listProviders())[0].apiFlavor).toBe('chat_completions')
-  await updateProvider(created.id, { apiFlavor: 'decisions' })
+  expect(created).toMatchObject({ apiFlavor: 'responses', decisionsApiFlavor: 'openai' })
+  expect((await listProviders())[0]).toMatchObject({ apiFlavor: 'responses', decisionsApiFlavor: 'openai' })
+  await updateProvider(created.id, { apiFlavor: 'anthropic_messages' })
+  await updateProvider(created.id, { decisionsApiFlavor: 'openai' })
   await updateProvider(created.id, { name: 'renamed' })
   const [stored] = await db.select().from(providers).where(eq(providers.id, created.id))
-  expect(stored.apiFlavor).toBe('decisions')
+  expect(stored).toMatchObject({ apiFlavor: 'anthropic_messages', decisionsApiFlavor: 'openai' })
 })
 
-
-const decisionsProbes = [
-  { adapter: 'openai' as const, baseUrl: undefined, config: {}, expectedUrl: 'https://api.openai.com/v1/decisions' },
-  { adapter: 'openai_compatible' as const, baseUrl: 'https://clone.example/prefix/v1', config: {}, expectedUrl: 'https://clone.example/prefix/v1/decisions' },
-  { adapter: 'openai' as const, baseUrl: 'https://api.openai.com/v1', config: { decisionsPath: '/gateway/classify' }, expectedUrl: 'https://api.openai.com/gateway/classify' },
-  { adapter: 'openai_compatible' as const, baseUrl: 'https://clone.example/prefix/v1', config: { decisionsPath: '/gateway/classify' }, expectedUrl: 'https://clone.example/gateway/classify' },
-]
-
-test.each(decisionsProbes)('connection probe calls Decisions for $adapter at $expectedUrl', async ({ adapter, baseUrl, config, expectedUrl }) => {
-  const provider = await createProvider({ name: 'decision-probe', adapter, baseUrl, config, credentials: { apiKey: 'sk-probe' }, apiFlavor: 'decisions' })
-  let sentUrl: string | undefined
-  let sentBody: unknown
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
-    sentUrl = String(url)
-    sentBody = JSON.parse(init!.body as string)
-    return Response.json({ model: 'decision-upstream', answers: [{ type: 'predicate', name: null, probability: 1 }], usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 } })
-  })
-  expect(await testProvider(provider.id, 'decision-upstream')).toEqual({ ok: true, message: 'Connection succeeded.' })
-  expect(sentUrl).toBe(expectedUrl)
-  expect(sentBody).toMatchObject({ model: 'decision-upstream', input: 'ping', questions: [{ type: 'predicate', instructions: expect.any(String) }] })
-  expect(decisionsRequestSchema.safeParse(sentBody).success).toBe(true)
-})
-
-test.each(['openai', 'openai_compatible'] as const)('connection probe reports the upstream Decisions error for %s', async (adapter) => {
-  const provider = await createProvider({ name: 'decision-error-probe', adapter, baseUrl: adapter === 'openai_compatible' ? 'https://clone.example/v1' : undefined, credentials: { apiKey: 'sk-probe' }, apiFlavor: 'decisions' })
-  let sentUrl: string | undefined
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-    sentUrl = String(url)
-    return Response.json({ error: { message: 'This Decisions model is unavailable.' } }, { status: 400 })
-  })
-  expect(await testProvider(provider.id, 'decision-upstream')).toMatchObject({ ok: false, message: expect.stringContaining('This Decisions model is unavailable.') })
-  expect(sentUrl).toMatch(/\/decisions$/)
+test('provider defaults the independent Decisions shape and rejects unsupported shapes', async () => {
+  const created = await createProvider({ name: 'plain', adapter: 'openai', credentials: { apiKey: 'sk-a' } })
+  expect(created.decisionsApiFlavor).toBe('openai')
+  await expect(updateProvider(created.id, { decisionsApiFlavor: 'unsupported' as never })).rejects.toThrow('supported Decisions API flavor')
+  await expect(createProvider({ name: 'bad', adapter: 'openai', credentials: { apiKey: 'sk-a' }, decisionsApiFlavor: 'unsupported' as never })).rejects.toThrow('supported Decisions API flavor')
 })
 
 test('connection probe retains OpenAI chat behavior for chat providers', async () => {
-  const provider = await createProvider({ name: 'chat-probe', adapter: 'openai', credentials: { apiKey: 'sk-probe' } })
+  const provider = await createProvider({ name: 'chat-probe', adapter: 'openai', credentials: { apiKey: 'sk-probe' }, decisionsApiFlavor: 'openai', config: { decisionsPath: '/classify' } })
   let sentUrl: string | undefined
   let sentBody: unknown
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
@@ -296,8 +268,8 @@ test('connection probe retains OpenAI chat behavior for chat providers', async (
   expect(sentBody).toMatchObject({ model: 'chat-upstream', messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
 })
 
-test('connection probe keeps Gemini chat even when its flavor is labeled Decisions', async () => {
-  const provider = await createProvider({ name: 'gemini-probe', adapter: 'gemini', credentials: { apiKey: 'g-probe' }, apiFlavor: 'decisions' })
+test('connection probe keeps Gemini chat with independent Decisions settings', async () => {
+  const provider = await createProvider({ name: 'gemini-probe', adapter: 'gemini', credentials: { apiKey: 'g-probe' }, apiFlavor: 'responses', decisionsApiFlavor: 'openai' })
   let sentUrl: string | undefined
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
     sentUrl = String(url)
@@ -305,4 +277,19 @@ test('connection probe keeps Gemini chat even when its flavor is labeled Decisio
   })
   expect(await testProvider(provider.id, 'gemini-upstream')).toEqual({ ok: true, message: 'Connection succeeded.' })
   expect(sentUrl).toContain('models/gemini-upstream:generateContent')
+})
+
+
+test('provider connection probe keeps Responses transport alongside independent Decisions shape', async () => {
+  const provider = await createProvider({ name: 'responses-probe', adapter: 'openai', credentials: { apiKey: 'sk-probe' }, apiFlavor: 'responses', decisionsApiFlavor: 'openai', config: { decisionsPath: '/classify' } })
+  let sentUrl: string | undefined
+  let sentBody: unknown
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    sentUrl = String(url)
+    sentBody = JSON.parse(init!.body as string)
+    return Response.json({ id: 'response-probe', object: 'response', created_at: 1, status: 'completed', model: 'chat-upstream', output: [{ type: 'message', id: 'msg', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'pong', annotations: [] }] }] })
+  })
+  expect(await testProvider(provider.id, 'chat-upstream')).toEqual({ ok: true, message: 'Connection succeeded.' })
+  expect(sentUrl).toBe('https://api.openai.com/v1/responses')
+  expect(sentBody).toMatchObject({ model: 'chat-upstream', input: [{ role: 'user', content: 'ping' }] })
 })

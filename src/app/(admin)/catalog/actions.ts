@@ -10,6 +10,7 @@ import { setCatalogSettings } from '@/lib/settings'
 import { loadRegistry } from '@/lib/catalog/registry'
 import { syncAllProviders } from '@/lib/catalog/sync'
 import { modelKinds, type CatalogFields } from '@/lib/catalog/types'
+import type { DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import type { ApiFlavor } from '@/lib/api-flavors'
 
 export interface ActionState {
@@ -137,6 +138,7 @@ export async function setModelGatewayAction(
   try {
     await setModelGateway(String(formData.get('id')), {
       apiFlavor: apiFlavorValue(formData.get('apiFlavor')),
+      decisionsApiFlavor: (String(formData.get('decisionsApiFlavor') ?? '') || null) as DecisionsApiFlavor | null,
       chatCompletionsPath: String(formData.get('chatCompletionsPath') ?? ''),
       responsesPath: String(formData.get('responsesPath') ?? ''),
       messagesPath: String(formData.get('messagesPath') ?? ''),

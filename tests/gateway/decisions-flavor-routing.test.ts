@@ -28,9 +28,9 @@ const ingresses = [
 ] as const
 
 for (const ingress of ingresses) {
-  test.each([false, true])(`${ingress.name} skips Decisions before maxAttempts (stream=%s)`, async (stream) => {
+  test.each([false, true])(`${ingress.name} uses a provider with independent Decisions settings before maxAttempts (stream=%s)`, async (stream) => {
     const { apiKey } = await seedTargets({ maxAttempts: 1, targets: [
-      { name: 'decisions', apiFlavor: 'decisions', priority: 0 },
+      { name: 'decisions', apiFlavor: 'chat_completions', priority: 0 },
       { name: 'chat', priority: 1 },
     ] })
     let sentUrl: string | undefined
@@ -42,24 +42,15 @@ for (const ingress of ingresses) {
     })
     const res = await ingress.handle(ingress.request({ ...ingress.body, stream }, apiKey))
     expect(res.status).toBe(200)
-    expect(res.headers.get('x-babellm-provider')).toBe('chat')
+    expect(res.headers.get('x-babellm-provider')).toBe('decisions')
     expect(sentUrl).toBe('https://api.openai.com/v1/chat/completions')
     const result = await res.text()
     expect(result).toContain('Chat answer')
     if (stream) expect(result).toContain(ingress.name === 'chat' ? '[DONE]' : 'response.completed')
   })
 
-  test.each([false, true])(`${ingress.name} refuses a Decisions-only chain without fetch (stream=%s)`, async (stream) => {
-    const { apiKey } = await seedTargets({ targets: [{ name: 'decisions', apiFlavor: 'decisions' }] })
-    const transport = vi.spyOn(globalThis, 'fetch')
-    const res = await ingress.handle(ingress.request({ ...ingress.body, stream }, apiKey))
-    expect(res.status).toBe(501)
-    expect((await res.json()).error.message).toContain('Decisions')
-    expect(transport).not.toHaveBeenCalled()
-  })
-
-  test(`${ingress.name} preserves Gemini adapter-first routing with a Decisions model label`, async () => {
-    const { apiKey } = await seedTargets({ targets: [{ name: 'gem', adapter: 'gemini', apiFlavor: 'decisions' }] })
+  test(`${ingress.name} preserves Gemini adapter-first routing with independent Decisions settings`, async () => {
+    const { apiKey } = await seedTargets({ targets: [{ name: 'gem', adapter: 'gemini', apiFlavor: 'chat_completions' }] })
     let sentUrl: string | undefined
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       sentUrl = String(url)
@@ -72,11 +63,11 @@ for (const ingress of ingresses) {
   })
 }
 
-test('a Decisions-flavored OpenAI model retains native embeddings and transcription ingress', async () => {
+test('an OpenAI model with independent Decisions settings retains native embeddings and transcription ingress', async () => {
   const { handleEmbeddings } = await import('@/lib/gateway/embeddings-handler')
   const { handleTranscriptions } = await import('@/lib/gateway/transcriptions-handler')
   const { embeddingsRequest } = await import('../helpers/gateway')
-  const { apiKey } = await seedTargets({ targets: [{ name: 'decisions', apiFlavor: 'decisions' }] })
+  const { apiKey } = await seedTargets({ targets: [{ name: 'decisions', apiFlavor: 'chat_completions' }] })
   const embedding = { object: 'list', model: 'decisions-model', data: [{ object: 'embedding', index: 0, embedding: [0.1, 0.2] }], usage: { prompt_tokens: 1, total_tokens: 1 } }
   const sentUrls: string[] = []
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {

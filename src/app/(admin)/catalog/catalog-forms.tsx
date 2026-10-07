@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { DecisionsApiFlavorSelect } from '@/components/admin/decisions-api-flavor-select'
 import { ApiFlavorSelect } from '@/components/admin/api-flavor-select'
 import { FormDialog } from '@/components/admin/form-dialog'
 import type { CatalogListItem } from '@/lib/admin/catalog'
@@ -133,15 +134,27 @@ export function GatewaySettingsDialog({
       <input type="hidden" name="id" value={item.id} />
 
       <div className="space-y-2">
-        <Label htmlFor={`gateway-flavor-${item.id}`}>API flavor</Label>
+        <Label htmlFor={`gateway-flavor-${item.id}`}>API Flavor</Label>
         <ApiFlavorSelect
           id={`gateway-flavor-${item.id}`}
           defaultValue={item.apiFlavor}
           providerDefault={item.providerApiFlavor}
         />
         <p className="text-xs text-muted-foreground">
-          Primary inference protocol for OpenAI-shaped providers. Select Decisions API for
-          /v1/decisions; Decisions models cannot serve chat requests.
+          Upstream protocol for chat and Responses requests on OpenAI-shaped providers.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor={`gateway-decisions-flavor-${item.id}`}>Decisions API Flavor</Label>
+        <DecisionsApiFlavorSelect
+          id={`gateway-decisions-flavor-${item.id}`}
+          defaultValue={item.decisionsApiFlavor}
+          providerDefault={item.providerDecisionsApiFlavor}
+        />
+        <p className="text-xs text-muted-foreground">
+          Request shape for /v1/decisions, independent of API Flavor.
+          Supported by openai and openai_compatible providers with a Decisions endpoint.
         </p>
       </div>
 

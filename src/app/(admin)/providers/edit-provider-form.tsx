@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FormDialog } from '@/components/admin/form-dialog'
 import type { AdapterType } from '@/lib/adapters/credentials'
+import { DecisionsApiFlavorSelect } from '@/components/admin/decisions-api-flavor-select'
 import { API_FLAVOR_LABELS, API_FLAVORS } from '@/lib/api-flavors'
 import type { ProviderListItem } from '@/lib/admin/providers'
 import { updateProviderAction, type ActionState } from './actions'
@@ -52,7 +53,7 @@ export function EditProviderDialog({
         </div>
         {provider.adapter === 'openai' || provider.adapter === 'openai_compatible' ? (
           <div className="space-y-2">
-            <Label htmlFor={`apiFlavor-${provider.id}`}>API flavor</Label>
+            <Label htmlFor={`apiFlavor-${provider.id}`}>API Flavor</Label>
             <select
               id={`apiFlavor-${provider.id}`}
               name="apiFlavor"
@@ -64,9 +65,18 @@ export function EditProviderDialog({
               ))}
             </select>
             <p className="text-xs text-muted-foreground">
-              Choose the primary inference protocol. Select Decisions API
-              to use <code>/v1/decisions</code>; it cannot serve chat requests.
+              Choose the upstream protocol for chat and Responses requests.
               This is the provider default — override it per model on the Catalog page.
+            </p>
+          </div>
+        ) : null}
+        {provider.adapter === 'openai' || provider.adapter === 'openai_compatible' ? (
+          <div className="space-y-2">
+            <Label htmlFor={`decisionsApiFlavor-${provider.id}`}>Decisions API Flavor</Label>
+            <DecisionsApiFlavorSelect id={`decisionsApiFlavor-${provider.id}`} defaultValue={provider.decisionsApiFlavor} />
+            <p className="text-xs text-muted-foreground">
+              Request shape for <code>/v1/decisions</code>, independent of API Flavor.
+              Override it per model on the Catalog page.
             </p>
           </div>
         ) : null}

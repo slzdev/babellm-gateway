@@ -2,6 +2,7 @@ import {
   bigint, boolean, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, unique,
   uniqueIndex, uuid, varchar,
 } from 'drizzle-orm/pg-core'
+import { DECISIONS_API_FLAVORS } from '@/lib/decisions-api-flavors'
 import { API_FLAVORS } from '@/lib/api-flavors'
 import { SERVICE_TIERS } from '@/lib/service-tiers'
 
@@ -23,6 +24,8 @@ export const modelKindEnum = pgEnum('model_kind', [
 
 export const syncStatusEnum = pgEnum('sync_status', ['ok', 'failed', 'unsupported'])
 
+export const decisionsApiFlavorEnum = pgEnum('decisions_api_flavor', DECISIONS_API_FLAVORS)
+
 export const apiFlavorEnum = pgEnum('api_flavor', API_FLAVORS)
 
 export const serviceTierEnum = pgEnum('service_tier', SERVICE_TIERS)
@@ -38,6 +41,8 @@ export const providers = pgTable('providers', {
   // `config` key because it decides whether a request can be served at all,
   // which is the same class of fact as `adapter` and `base_url`.
   apiFlavor: apiFlavorEnum('api_flavor').notNull().default('chat_completions'),
+  // Independent request shape; it does not change chat endpoint semantics.
+  decisionsApiFlavor: decisionsApiFlavorEnum('decisions_api_flavor').notNull().default('openai'),
   enabled: boolean('enabled').notNull().default(true),
   lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
   lastSyncStatus: syncStatusEnum('last_sync_status'),
@@ -152,8 +157,9 @@ export const catalogModels = pgTable(
     // decide whether a request can be served at all. sync() and merge() never
     // touch them, so a re-sync cannot undo an operator's decision and a model
     // that goes missing keeps its settings for when it comes back.
-    // NULL means "inherit the provider" in all six.
+    // NULL means "inherit the provider" for each setting.
     apiFlavor: apiFlavorEnum('api_flavor'),
+    decisionsApiFlavor: decisionsApiFlavorEnum('decisions_api_flavor'),
     chatCompletionsPath: text('chat_completions_path'),
     responsesPath: text('responses_path'),
     messagesPath: text('messages_path'),

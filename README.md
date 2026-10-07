@@ -134,16 +134,20 @@ await client.post("/decisions", {
 });
 ```
 
-Only candidates whose resolved API flavor is `decisions` and whose adapter
-is `openai` or `openai_compatible` can serve Decisions. Mixed chains skip other
-flavors and unsupported adapters before policy selection and `maxAttempts`.
-Chat Completions and Responses requests, including streams, skip OpenAI
-Decisions targets in the same way; classification answers and probabilities
-are never translated into chat. A chain with no eligible target returns an
-actionable `501` without calling upstream. Gemini and Bedrock cannot serve
-Decisions, even when labeled `decisions`. Existing providers and models keep
-their flavor until an operator changes it. Input can also be user messages with
-`input_text` and inline base64 image data URLs, with at most 128 images per
+Providers have two independent settings, each overridable per Catalog model:
+**API Flavor** selects the chat protocol (Chat Completions, Responses, or
+Anthropic Messages); **Decisions API Flavor** selects the Decisions request
+shape, initially **OpenAI**. A provider using API Flavor **Responses** can
+send chat through Responses and Decisions through the OpenAI Decisions shape
+at the same time. The Decisions shape does not disable chat or Responses,
+including streams.
+
+Decisions supports `openai` and `openai_compatible` adapters with a Decisions
+endpoint, regardless of their chat flavor. Mixed chains skip unsupported
+adapter types before policy selection and `maxAttempts`. A chain with no
+eligible target returns `501` without calling upstream. Gemini and Bedrock
+cannot serve Decisions. Input can also be user messages with `input_text` and
+inline base64 image data URLs, with at most 128 images per
 request. Other roles, external image URLs, files, audio, and `stream: true`
 are rejected.
 
@@ -155,6 +159,13 @@ cached-input, and output token rates; absent usage or catalog rates remains
 unpriced. Pinned service tiers are reported as dropped. Set `decisionsPath`
 on a provider or catalog model through the advanced path fields to use a
 custom endpoint; a model override inherits the provider path when cleared.
+
+Migration `0015` separates these settings after `0014` introduced a mistaken
+`decisions` chat-flavor value. Existing valid chat settings are preserved;
+providers using that sentinel return to `chat_completions`, and Catalog rows
+using it return to provider inheritance. There is no earlier chat value to
+recover for those rows. The independent Decisions shape defaults to `openai`
+on providers; Catalog rows inherit it until explicitly overridden.
 
 ## Why
 
@@ -206,15 +217,13 @@ flowchart LR
 
 Clients can speak either Chat Completions or Responses, upload audio to
 `/v1/audio/transcriptions`, embed text at `/v1/embeddings`, or evaluate
-questions at `/v1/decisions`. Every OpenAI-shaped model uses a primary inference protocol, whichever its
-`api_flavor` says — Chat Completions, Responses, Anthropic Messages, or
-Decisions API — set per provider and overridable per catalog model, so one
-virtual model can mix a
-`chat_completions` target with a `responses` one, or either with an
-`anthropic_messages` one. The three chat flavors translate between Chat
-Completions and Responses.
-Decisions models serve `/v1/decisions` through a dedicated adapter and do not
-translate into chat. Anything behind the gateway that speaks none of the
+questions at `/v1/decisions`. Every OpenAI-shaped model uses a chat protocol,
+whichever its `api_flavor` says — Chat Completions, Responses, or Anthropic
+Messages — set per provider and overridable per Catalog model, so one virtual
+model can mix these targets. All three chat flavors translate between Chat
+Completions and Responses. Independently, `decisions_api_flavor` selects the
+Decisions request shape, with the OpenAI shape available alongside chat.
+Anything behind the gateway that speaks none of the
 chat protocols — Gemini's `generateContent` — is translated in both
 directions, and so is any chat request that crosses ingress and provider flavor (a Responses request
 served by a Chat Completions target, a Chat Completions request served by an
