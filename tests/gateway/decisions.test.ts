@@ -225,7 +225,7 @@ test('resolved model overrides and provider inheritance control virtual and dire
   }
 })
 
-test('all-ineligible Decisions refusal logs status and releases limits without constructing an adapter', async () => {
+test('all-ineligible Decisions refusal logs status without charging tokens or constructing an adapter', async () => {
   const { apiKey } = await seedBaseGateway({ limits: { tpmLimit: 1 } })
   const createAdapter = vi.fn()
   for (let n = 0; n < 2; n++) {
@@ -234,7 +234,7 @@ test('all-ineligible Decisions refusal logs status and releases limits without c
     expect((await res.json()).error.code).toBe('unsupported_operation')
   }
   expect(createAdapter).not.toHaveBeenCalled()
-  await waitForLogs()
+  await waitForLogs(2)
   const rows = (await postgresStore.query({ limit: 2 })).rows
   expect(rows).toHaveLength(2)
   for (const row of rows) {

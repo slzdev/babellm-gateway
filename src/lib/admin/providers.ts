@@ -228,14 +228,23 @@ export async function testProvider(
 
   try {
     const adapter = createAdapter(row)
-    await adapter.chat(
-      { model: upstreamModel, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 },
-      {
-        upstreamModel,
-        requestId: 'provider-test',
-        signal: AbortSignal.timeout(20_000),
-      },
-    )
+    const context = {
+      upstreamModel,
+      requestId: 'provider-test',
+      signal: AbortSignal.timeout(20_000),
+    }
+    if (row.apiFlavor === 'decisions' && (row.adapter === 'openai' || row.adapter === 'openai_compatible')) {
+      await adapter.decide({
+        model: upstreamModel,
+        input: 'ping',
+        questions: [{ type: 'predicate', instructions: 'Is this input a ping?' }],
+      }, context)
+    } else {
+      await adapter.chat(
+        { model: upstreamModel, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 },
+        context,
+      )
+    }
     return { ok: true, message: 'Connection succeeded.' }
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : 'Connection failed.' }
