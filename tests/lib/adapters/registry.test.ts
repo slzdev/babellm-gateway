@@ -112,8 +112,14 @@ test('openai_compatible without a base URL is rejected', () => {
   ).toThrow(/base URL/i)
 })
 
-test('bedrock is not yet implemented', () => {
-  expect(() => createAdapter(provider({ adapter: 'bedrock' }))).toThrow(UnsupportedOperationError)
+test('bedrock exposes translated Chat/Responses and discovery independently of OpenAI flavor', async () => {
+  for (const apiFlavor of ['chat_completions', 'responses', 'anthropic_messages'] as const) {
+    const adapter = createAdapter(provider({ adapter: 'bedrock', apiFlavor, credentials: encryptJson({ region: 'us-east-1', useInstanceRole: true }) }))
+    expect(typeof adapter.chat).toBe('function')
+    expect(typeof adapter.respond).toBe('function')
+    expect(typeof adapter.listModels).toBe('function')
+    await expect(adapter.embed({ model: 'x', input: 'hi' }, chatCtx)).rejects.toThrow(UnsupportedOperationError)
+  }
 })
 
 test('gemini gets a real adapter', () => {

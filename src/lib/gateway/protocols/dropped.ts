@@ -1,3 +1,4 @@
+import { droppedParams as bedrockDropped } from '@/lib/translate/chat-to-bedrock'
 import { droppedParams as anthropicDropped } from '@/lib/translate/chat-to-anthropic'
 import { droppedParams as geminiDropped } from '@/lib/translate/chat-to-gemini'
 import { droppedParams as responsesDropped } from '@/lib/translate/chat-to-responses'
@@ -16,6 +17,7 @@ import type { Candidate } from '../resolve'
  * gets broken.
  */
 export function droppedForChat(candidate: Candidate, req: ChatCompletionRequest): string[] {
+  if (candidate.provider.adapter === 'bedrock') return bedrockDropped(req)
   if (candidate.provider.adapter === 'gemini') return geminiDropped(req)
   if (candidate.apiFlavor === 'responses') return responsesDropped(req)
   if (candidate.apiFlavor === 'anthropic_messages') return anthropicDropped(req)

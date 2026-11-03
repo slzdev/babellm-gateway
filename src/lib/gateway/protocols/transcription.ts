@@ -49,6 +49,7 @@ import { usageFromTranscription } from '../usage'
  * deterministic, and leaves it eligible for everything it does serve.
  */
 function supports(candidate: Candidate, req: TranscriptionRequest): boolean {
+  if (candidate.provider.adapter === 'bedrock') return false
   if (candidate.provider.adapter === 'gemini') {
     return !TIMESTAMPED_FORMATS.has(req.response_format) && req.file.size <= MAX_INLINE_BYTES
   }

@@ -94,19 +94,6 @@ test('streams a `provider/model` request', async () => {
   expect(await res.text()).toContain('"model":"xai/grok-4.5"')
 })
 
-test('answers 501 for a direct address on a provider with no adapter', async () => {
-  const { apiKey } = await seedCatalogOnly('bedrock')
-
-  // Deliberately the real adapter registry: a direct address is a chain of
-  // one, so execute's "skip this target and let a sibling serve" path has no
-  // sibling to fall to and must still surface the real reason.
-  const res = await handleChatCompletions(chatRequest(directBody('xai/grok-4.5'), apiKey))
-  const json = await res.json()
-
-  expect(res.status).toBe(501)
-  expect(json.error.code).toBe('unsupported_operation')
-})
-
 test('answers 404 for a model the provider’s catalog does not list', async () => {
   const { apiKey } = await seedCatalogOnly()
   const chat = vi.fn()

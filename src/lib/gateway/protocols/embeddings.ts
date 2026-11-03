@@ -45,6 +45,7 @@ import { droppedForEmbeddings } from './dropped'
  * all-ineligible fallback costs nothing.
  */
 function supports(candidate: Candidate, req: EmbeddingsRequest): boolean {
+  if (candidate.provider.adapter === 'bedrock') return false
   if (candidate.provider.adapter === 'gemini') return isTextInput(req.input)
   // Anthropic's API has no embeddings endpoint, and nothing can synthesize a
   // vector out of the completion it does serve — so this target could only
