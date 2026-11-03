@@ -10,6 +10,7 @@ import { AdvancedPathsFields } from './advanced-paths-fields'
 import { CredentialField } from './provider-fields'
 import { RegistryNamespaceField } from './registry-namespace-field'
 import type { AdapterType } from '@/lib/adapters/credentials'
+import { DecisionsApiFlavorSelect } from '@/components/admin/decisions-api-flavor-select'
 import { API_FLAVOR_LABELS, API_FLAVORS } from '@/lib/api-flavors'
 
 const ADAPTERS: AdapterType[] = ['openai', 'openai_compatible', 'gemini', 'bedrock']
@@ -49,7 +50,7 @@ export function CreateProviderDialog() {
 
         {adapter === 'openai' || adapter === 'openai_compatible' ? (
           <div className="space-y-2">
-            <Label htmlFor="apiFlavor">API flavor</Label>
+            <Label htmlFor="apiFlavor">API Flavor</Label>
             <select
               id="apiFlavor"
               name="apiFlavor"
@@ -61,14 +62,22 @@ export function CreateProviderDialog() {
               ))}
             </select>
             <p className="text-xs text-muted-foreground">
-              Choose Responses if this endpoint returns 404 on
-              {' '}<code>/v1/chat/completions</code>. This is the default for
-              every model on the provider — override it per model on the
-              Catalog page.
+              Choose the upstream protocol for chat and Responses requests.
+              This is the provider default — override it per model on the Catalog page.
             </p>
           </div>
         ) : null}
 
+        {adapter === 'openai' || adapter === 'openai_compatible' ? (
+          <div className="space-y-2">
+            <Label htmlFor={'decisionsApiFlavor'}>Decisions API Flavor</Label>
+            <DecisionsApiFlavorSelect id={'decisionsApiFlavor'}  />
+            <p className="text-xs text-muted-foreground">
+              Request shape for <code>/v1/decisions</code>, independent of API Flavor.
+              Override it per model on the Catalog page.
+            </p>
+          </div>
+        ) : null}
         <RegistryNamespaceField id="registryNamespace" adapter={adapter} />
       </div>
 

@@ -1,5 +1,6 @@
 import 'server-only'
 import type { AttemptContext, ModelPathOverrides, ProviderAdapter } from '@/lib/adapters/types'
+import type { DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import type { ApiFlavor } from '@/lib/api-flavors'
 import type { ProviderRow } from '@/lib/db/schema'
 import {
@@ -35,6 +36,7 @@ export interface ExecuteDeps {
     flavor: ApiFlavor,
     paths: ModelPathOverrides | null,
     maxOutputTokens: number | null,
+    decisionsApiFlavor: DecisionsApiFlavor,
   ) => ProviderAdapter
   /**
    * Reports an attempt's outcome to the circuit breaker.
@@ -155,6 +157,7 @@ export async function execute<T>(
         candidate.apiFlavor,
         candidate.pathOverrides,
         candidate.maxOutputTokens,
+        candidate.decisionsApiFlavor,
       )
     } catch (err) {
       // A provider the gateway cannot even construct an adapter for — an

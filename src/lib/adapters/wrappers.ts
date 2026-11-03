@@ -117,3 +117,19 @@ export function withEmbedUnsupported<A extends ChatOnlyAdapter>(
     },
   }
 }
+
+/** Adapters without a Decisions operation refuse here, including direct calls outside routing. */
+export function withDecideUnsupported<A extends ChatOnlyAdapter>(
+  adapter: A,
+  providerName: string,
+  reason: string,
+): A & Pick<ProviderAdapter, 'decide'> {
+  return {
+    ...adapter,
+    async decide() {
+      throw new UnsupportedOperationError(
+        `"${providerName}" cannot serve decisions: ${reason}.`,
+      )
+    },
+  }
+}

@@ -10,6 +10,7 @@ import type {
 } from '../types'
 import { createOpenAIClient, listModels, type OpenAIClientFactory } from './client'
 import { embed } from './embeddings'
+import { withDecideUnsupported } from '../wrappers'
 import { toProviderError } from './errors'
 import { transcribeVia } from './audio'
 import { deriveEmbeddingsModelsPath, resolveRequestPaths } from '../paths'
@@ -24,7 +25,7 @@ const FLAVOR_HINT =
 export function createOpenAIAdapter(
   runtime: ProviderRuntime,
   createClient?: OpenAIClientFactory,
-): ChatOnlyAdapter & Pick<ProviderAdapter, 'transcribe' | 'embed'> {
+): ChatOnlyAdapter & Pick<ProviderAdapter, 'transcribe' | 'embed' | 'decide'> {
   const client = createOpenAIClient(runtime, createClient)
   const paths = resolveRequestPaths(runtime.config, runtime.baseUrl)
 
@@ -40,7 +41,7 @@ export function createOpenAIAdapter(
     return { ...req, model: ctx.upstreamModel }
   }
 
-  return {
+  return withDecideUnsupported<ChatOnlyAdapter & Pick<ProviderAdapter, 'transcribe' | 'embed'>>({
     async chat(req, ctx): Promise<ChatCompletion> {
       const params = {
         ...upstreamParams(req, ctx),
@@ -98,5 +99,5 @@ export function createOpenAIAdapter(
     // which flavor this provider's chat endpoint speaks.
     transcribe: transcribeVia(client, paths.audioTranscriptions),
     embed: (req, ctx) => embed(client, req, ctx, paths.embeddings),
-  }
+  }, runtime.name, 'this chat adapter does not provide a Decisions transport')
 }

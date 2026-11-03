@@ -6,6 +6,7 @@ import {
   createProvider, deleteProvider, getProviderConfig, testProvider, updateProvider,
 } from '@/lib/admin/providers'
 import { adapterTypes, type AdapterType } from '@/lib/adapters/credentials'
+import type { DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import { API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
 import {
   PATH_FIELDS, mergeProviderPaths, type ProviderPathInput,
@@ -68,6 +69,12 @@ function apiFlavorFrom(formData: FormData): ApiFlavor | undefined {
     : undefined
 }
 
+function decisionsApiFlavorFrom(formData: FormData): DecisionsApiFlavor | undefined {
+  const value = formData.get('decisionsApiFlavor')
+  // The admin persistence boundary validates submitted values.
+  return typeof value === 'string' ? value as DecisionsApiFlavor : undefined
+}
+
 export async function createProviderAction(
   _prev: ActionState | undefined,
   formData: FormData,
@@ -101,6 +108,7 @@ export async function createProviderAction(
       credentials: credentialsFrom(formData, adapter),
       config,
       apiFlavor: apiFlavorFrom(formData),
+      decisionsApiFlavor: decisionsApiFlavorFrom(formData),
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not create the provider.' }
@@ -206,6 +214,7 @@ export async function updateProviderAction(
       ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
       config,
       apiFlavor: apiFlavorFrom(formData),
+      decisionsApiFlavor: decisionsApiFlavorFrom(formData),
     })
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Could not update the provider.' }

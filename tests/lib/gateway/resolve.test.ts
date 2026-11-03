@@ -353,6 +353,7 @@ test('a candidate carries the model path overrides', async () => {
     messagesPath: null,
     audioTranscriptionsPath: null,
     embeddingsPath: '/api/v2/embeddings',
+    decisionsPath: null,
   })
 })
 

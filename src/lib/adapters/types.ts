@@ -4,6 +4,7 @@ import type { CatalogFields } from '@/lib/catalog/types'
 import type { ChatCompletionRequest } from '@/lib/schemas/chat'
 import type { EmbeddingsRequest } from '@/lib/schemas/embeddings'
 import type { ResponsesRequest } from '@/lib/schemas/responses'
+import type { DecisionsRequest, DecisionsResult } from '@/lib/schemas/decisions'
 import type { TranscriptionRequest } from '@/lib/schemas/transcription'
 
 export type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion
@@ -55,6 +56,7 @@ export interface ProviderConfig {
   messagesPath?: string
   audioTranscriptionsPath?: string
   embeddingsPath?: string
+  decisionsPath?: string
   [key: string]: unknown
 }
 
@@ -73,6 +75,7 @@ export interface ModelPathOverrides {
   messagesPath?: string | null
   audioTranscriptionsPath?: string | null
   embeddingsPath?: string | null
+  decisionsPath?: string | null
 }
 
 export interface ProviderRuntime {
@@ -108,6 +111,9 @@ export interface ListModelsContext {
 }
 
 export interface ProviderAdapter {
+  /** JSON-only Decisions operation composed independently alongside the chat
+   * adapter for supported OpenAI provider types; unsupported types refuse. */
+  decide(req: DecisionsRequest, ctx: AttemptContext): Promise<DecisionsResult>
   chat(req: ChatCompletionRequest, ctx: AttemptContext): Promise<ChatCompletion>
   chatStream(
     req: ChatCompletionRequest,
@@ -119,9 +125,9 @@ export interface ProviderAdapter {
    */
   listModels?(ctx: ListModelsContext): Promise<DiscoveredModel[]>
   /**
-   * Every adapter must be able to serve a Responses request: either
-   * natively, or through `withRespondViaChat` (see adapters/wrappers.ts),
-   * which every chat-only adapter is wrapped in at construction time.
+   * Chat adapters serve Responses natively or through `withRespondViaChat`
+   * (see adapters/wrappers.ts). Composing the independent Decisions operation
+   * preserves both Responses methods and their existing transport.
    */
   respond(req: ResponsesRequest, ctx: AttemptContext): Promise<ResponsesResult>
   respondStream(
@@ -152,13 +158,14 @@ export interface ProviderAdapter {
 
 /**
  * What `createGeminiAdapter` builds (and what `createOpenAIAdapter` builds
- * before it layers on its own native `transcribe` and `embed` — see
- * openai/audio.ts and openai/embeddings.ts): chat-native, with no opinion
- * about the Responses API, transcription, or embeddings.
+ * before it layers on native sibling APIs): chat-native, with no opinion
+ * about the Responses API, transcription, embeddings, or Decisions.
  * `respond`/`respondStream` are supplied by `withRespondViaChat`,
  * `transcribe` by `withTranscribeUnsupported` and `embed` by
- * `withEmbedUnsupported`, all in wrappers.ts — the only places allowed to
- * know these methods are missing.
+ * `withEmbedUnsupported`, and `decide` by `withDecideUnsupported`.
+ * The registry composes a native Decisions operation alongside supported
+ * OpenAI adapters independently of their chat flavor. Unsupported-operation
+ * wrappers explain why a method cannot be served.
  */
 export type ChatOnlyAdapter =
-  Omit<ProviderAdapter, 'respond' | 'respondStream' | 'transcribe' | 'embed'>
+  Omit<ProviderAdapter, 'respond' | 'respondStream' | 'transcribe' | 'embed' | 'decide'>

@@ -7,7 +7,8 @@ import {
 import { decryptJson, encryptJson } from '@/lib/crypto'
 import { credentialSchemas, maskCredentials, type AdapterType } from '@/lib/adapters/credentials'
 import { createAdapter } from '@/lib/adapters/registry'
-import type { ApiFlavor } from '@/lib/api-flavors'
+import { API_FLAVORS, type ApiFlavor } from '@/lib/api-flavors'
+import { DECISIONS_API_FLAVORS, type DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import { PATH_FIELDS } from '@/lib/adapters/paths'
 import { parseProviderConfig, readRegistryNamespace } from '@/lib/catalog/config'
 
@@ -18,6 +19,7 @@ export interface ProviderInput {
   credentials: Record<string, unknown>
   config?: Record<string, unknown>
   enabled?: boolean
+  decisionsApiFlavor?: DecisionsApiFlavor
   apiFlavor?: ApiFlavor
 }
 
@@ -27,6 +29,7 @@ export interface ProviderListItem {
   adapter: AdapterType
   baseUrl: string | null
   enabled: boolean
+  decisionsApiFlavor: DecisionsApiFlavor
   apiFlavor: ApiFlavor
   maskedCredentials: Record<string, string>
   targetCount: number
@@ -59,6 +62,15 @@ function validate(adapter: AdapterType, credentials: unknown, baseUrl?: string |
     throw new Error('An openai_compatible provider requires a base URL.')
   }
   return result.data as Record<string, unknown>
+}
+
+function validateFlavors(input: Partial<ProviderInput>) {
+  if (input.apiFlavor !== undefined && !API_FLAVORS.includes(input.apiFlavor)) {
+    throw new Error(`"${input.apiFlavor}" is not a supported API flavor.`)
+  }
+  if (input.decisionsApiFlavor !== undefined && !DECISIONS_API_FLAVORS.includes(input.decisionsApiFlavor)) {
+    throw new Error(`"${input.decisionsApiFlavor}" is not a supported Decisions API flavor.`)
+  }
 }
 
 function readPathOverrides(config: string): Record<string, string> {
@@ -94,6 +106,7 @@ export async function listProviders(): Promise<ProviderListItem[]> {
     baseUrl: row.baseUrl,
     enabled: row.enabled,
     apiFlavor: row.apiFlavor,
+    decisionsApiFlavor: row.decisionsApiFlavor,
     maskedCredentials: maskCredentials(
       decryptJson<Record<string, unknown>>(row.credentials),
     ),
@@ -121,6 +134,7 @@ export async function getProviderConfig(id: string): Promise<Record<string, unkn
 }
 
 export async function createProvider(input: ProviderInput): Promise<ProviderRow> {
+  validateFlavors(input)
   const credentials = validate(input.adapter, input.credentials, input.baseUrl)
   const [row] = await db.insert(providers).values({
     name: input.name,
@@ -130,6 +144,7 @@ export async function createProvider(input: ProviderInput): Promise<ProviderRow>
     config: JSON.stringify(input.config ?? {}),
     enabled: input.enabled ?? true,
     apiFlavor: input.apiFlavor ?? 'chat_completions',
+    decisionsApiFlavor: input.decisionsApiFlavor ?? 'openai',
   }).returning()
   return row
 }
@@ -170,6 +185,7 @@ export async function updateProvider(
   const [existing] = await db.select().from(providers).where(eq(providers.id, id))
   if (!existing) throw new Error('Provider not found.')
 
+  validateFlavors(input)
   const adapter = input.adapter ?? existing.adapter
   const baseUrl = input.baseUrl === undefined ? existing.baseUrl : input.baseUrl
   const adapterChanged = input.adapter !== undefined && input.adapter !== existing.adapter
@@ -199,6 +215,7 @@ export async function updateProvider(
     config: input.config ? JSON.stringify(input.config) : existing.config,
     enabled: input.enabled ?? existing.enabled,
     apiFlavor: input.apiFlavor ?? existing.apiFlavor,
+    decisionsApiFlavor: input.decisionsApiFlavor ?? existing.decisionsApiFlavor,
     updatedAt: new Date(),
   }).where(eq(providers.id, id)).returning()
 
@@ -228,13 +245,14 @@ export async function testProvider(
 
   try {
     const adapter = createAdapter(row)
+    const context = {
+      upstreamModel,
+      requestId: 'provider-test',
+      signal: AbortSignal.timeout(20_000),
+    }
     await adapter.chat(
       { model: upstreamModel, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 },
-      {
-        upstreamModel,
-        requestId: 'provider-test',
-        signal: AbortSignal.timeout(20_000),
-      },
+      context,
     )
     return { ok: true, message: 'Connection succeeded.' }
   } catch (err) {

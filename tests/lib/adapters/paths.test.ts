@@ -54,6 +54,7 @@ describe('resolveProviderPaths', () => {
       messages: '/messages',
       audioTranscriptions: '/audio/transcriptions',
       embeddings: '/embeddings',
+      decisions: '/decisions',
     })
     expect(DEFAULT_PATHS).toEqual({
       models: '/models',
@@ -62,6 +63,7 @@ describe('resolveProviderPaths', () => {
       messages: '/messages',
       audioTranscriptions: '/audio/transcriptions',
       embeddings: '/embeddings',
+      decisions: '/decisions',
     })
   })
 
@@ -73,6 +75,7 @@ describe('resolveProviderPaths', () => {
       messages: '/messages',
       audioTranscriptions: '/audio/transcriptions',
       embeddings: '/embeddings',
+      decisions: '/decisions',
     })
   })
 
@@ -90,6 +93,7 @@ describe('resolveProviderPaths', () => {
       messages: '/api/messages',
       audioTranscriptions: '/audio/transcriptions',
       embeddings: '/api/embeddings',
+      decisions: '/decisions',
     })
   })
 
@@ -115,6 +119,7 @@ describe('resolveRequestPaths', () => {
       messages: '/messages',
       audioTranscriptions: '/audio/transcriptions',
       embeddings: '/embeddings',
+      decisions: '/decisions',
     })
   })
 
@@ -133,6 +138,7 @@ describe('resolveRequestPaths', () => {
       messages: '/messages',
       audioTranscriptions: '/audio/transcriptions',
       embeddings: '/embeddings',
+      decisions: '/decisions',
     })
   })
 
@@ -185,14 +191,14 @@ describe('PATH_FIELDS', () => {
   test('describes each endpoint once, keyed by the config key it writes', () => {
     expect(PATH_FIELDS.map((f) => f.name)).toEqual([
       'modelsPath', 'chatCompletionsPath', 'responsesPath', 'messagesPath',
-      'audioTranscriptionsPath', 'embeddingsPath',
+      'audioTranscriptionsPath', 'embeddingsPath', 'decisionsPath',
     ])
   })
 
   test('carries the default as the placeholder, so a blank box reads as "default"', () => {
     expect(PATH_FIELDS.map((f) => f.placeholder)).toEqual([
       '/models', '/chat/completions', '/responses', '/messages',
-      '/audio/transcriptions', '/embeddings',
+      '/audio/transcriptions', '/embeddings', '/decisions',
     ])
   })
 })

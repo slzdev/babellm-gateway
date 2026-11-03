@@ -77,7 +77,7 @@ Gemini, and the same routing, failover, and logs as everything else. The
 limitations are worth reading *before* you route audio through it:
 [Audio transcriptions](#audio-transcriptions).
 
-`/v1/embeddings` completes the set — the fourth shape a client can send, on the
+`/v1/embeddings` serves vectors on the
 same key and the same virtual models:
 
 ```ts
@@ -113,6 +113,53 @@ await client.embeddings.create({
   named in `x-babellm-dropped-params` as usual.
 - There is no streaming form to support — the OpenAI embeddings API has none —
   so the log row records `stream = false`, and the cost arrives with the body.
+
+`POST /v1/decisions` evaluates ordered predicate, choice, and score questions
+against shared input on `openai` or `openai_compatible` providers with a
+Decisions endpoint. The independent **Decisions API Flavor** setting defaults
+to **OpenAI** on providers; Catalog models inherit it or can override it.
+No opt-in or change to the chat **API Flavor** is required. Use the generic
+SDK method while the installed SDK has no Decisions resource:
+
+```ts
+await client.post("/decisions", {
+  body: {
+    model: "smart",
+    input: "The package arrived with a broken screen.",
+    questions: [{
+      type: "predicate",
+      name: "damaged",
+      instructions: "Does the customer report a damaged item?",
+    }],
+  },
+});
+```
+
+Providers have two independent settings, each overridable per Catalog model:
+**API Flavor** selects the chat protocol (Chat Completions, Responses, or
+Anthropic Messages); **Decisions API Flavor** selects the Decisions request
+shape, initially **OpenAI**. A provider using API Flavor **Responses** can
+send chat through Responses and Decisions through the OpenAI Decisions shape
+at the same time. The Decisions shape does not disable chat or Responses,
+including streams.
+
+Decisions supports `openai` and `openai_compatible` adapters with a Decisions
+endpoint, regardless of their chat flavor. Mixed chains skip unsupported
+adapter types before policy selection and `maxAttempts`. A chain with no
+eligible target returns `501` without calling upstream. Gemini and Bedrock
+cannot serve Decisions. Input can also be user messages with `input_text` and
+inline base64 image data URLs, with at most 128 images per
+request. Other roles, external image URLs, files, audio, and `stream: true`
+are rejected.
+
+Answers keep their order, typed choice values, refusals, and complete usage;
+the response model names the virtual or direct model the client requested.
+Authentication, limits, failover, breakers, logs, payload capture, tags, and
+`usage.cost` follow the shared gateway pipeline. Costs use the usual input,
+cached-input, and output token rates; absent usage or catalog rates remains
+unpriced. Pinned service tiers are reported as dropped. Set `decisionsPath`
+on a provider or catalog model through the advanced path fields to use a
+custom endpoint; a model override inherits the provider path when cleared.
 
 ## Why
 
@@ -154,7 +201,7 @@ Set `GATEWAY_PORT` to publish elsewhere (`GATEWAY_PORT=3100 docker compose …`)
 
 ```mermaid
 flowchart LR
-    A["Your app<br/><sub>OpenAI SDK</sub>"] -->|"sk-bab-…"| B["BabeLLM<br/><sub>/v1/chat/completions<br/>/v1/responses<br/>/v1/audio/transcriptions<br/>/v1/embeddings</sub>"]
+    A["Your app<br/><sub>OpenAI SDK</sub>"] -->|"sk-bab-…"| B["BabeLLM<br/><sub>/v1/chat/completions<br/>/v1/responses<br/>/v1/audio/transcriptions<br/>/v1/embeddings<br/>/v1/decisions</sub>"]
     B --> C{"Virtual model<br/><sub>policy + targets</sub>"}
     C -->|1| D["OpenAI"]
     C -->|2| E["Any OpenAI-compatible<br/><sub>Groq, OpenRouter, vLLM…</sub>"]
@@ -163,21 +210,26 @@ flowchart LR
 ```
 
 Clients can speak either Chat Completions or Responses, upload audio to
-`/v1/audio/transcriptions`, or embed text at `/v1/embeddings`. Every
-OpenAI-shaped provider is called on one of three APIs, whichever its
-`api_flavor` says — Chat Completions, Responses, or Anthropic Messages — set
-per provider and overridable per catalog model, so one virtual model can mix a
-`chat_completions` target with a `responses` one, or either with an
-`anthropic_messages` one. Anything behind the gateway that speaks none of the
-three — Gemini's `generateContent` — is translated in both directions, and so
-is any request that crosses ingress and provider flavor (a Responses request
+`/v1/audio/transcriptions`, embed text at `/v1/embeddings`, or evaluate
+questions at `/v1/decisions`. Every OpenAI-shaped model uses a chat protocol,
+whichever its `api_flavor` says — Chat Completions, Responses, or Anthropic
+Messages — set per provider and overridable per Catalog model, so one virtual
+model can mix these targets. All three chat flavors translate between Chat
+Completions and Responses. Independently, `decisions_api_flavor` selects the
+Decisions request shape, with the OpenAI shape available alongside chat.
+Anything behind the gateway that speaks none of the
+chat protocols — Gemini's `generateContent` — is translated in both
+directions, and so is any chat request that crosses ingress and provider flavor (a Responses request
 served by a Chat Completions target, a Chat Completions request served by an
 Anthropic Messages target, and so on). Transcriptions and embeddings sit
-outside that choice: each is a sibling of all three chat dialects rather than
-one of them, so a `responses`-flavored target embeds through the same client a
+outside that chat protocol choice: each is a sibling endpoint, so a
+`responses`-flavored target embeds through the same client a
 `chat_completions` one does, only Gemini needs translating, and an
-`anthropic_messages` target has neither endpoint to be pointed at. Both paths
-are configurable per provider and per model, like the three chat ones.
+`anthropic_messages` target has neither endpoint to be pointed at.
+The independent Decisions shape leaves transcription, embeddings, and model
+discovery governed by the existing chat adapter, including the Anthropic
+sibling restrictions above. Transcription and embeddings paths are
+configurable per provider and per model.
 
 An `anthropic_messages` model is called on `/v1/messages` — the path is
 configurable per provider and per model, like the other flavors'. There is no
@@ -196,8 +248,8 @@ as the SDK's own `@deprecated` notes on `temperature` and `top_p` document.
 
 | Provider type | Status |
 | --- | --- |
-| `openai` | ✅ Chat Completions, Responses, and Anthropic Messages flavors |
-| `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped — Chat Completions, Responses, and Anthropic Messages flavors |
+| `openai` | ✅ Three chat API flavors: Chat Completions, Responses, Anthropic Messages; independent OpenAI Decisions shape |
+| `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped — three chat API flavors plus the independent OpenAI Decisions shape when a Decisions endpoint is available |
 | `gemini` | ✅ Native `@google/genai`, including thinking and media by URL |
 | `bedrock` | 🚧 Configurable, not yet served |
 
@@ -240,8 +292,8 @@ fails over on the same loop until its first chunk lands.
 `x-babellm-provider` and `x-babellm-upstream-model` on the response name who
 actually served. Targets can pin a service tier (`flex`, `priority`,
 `ultrafast`, …) where the provider supports one. A pinned tier applies to the
-two chat shapes only: neither `/v1/audio/transcriptions` nor `/v1/embeddings`
-has such a parameter, and a provider answers an argument it does not recognise
+two chat shapes only: `/v1/audio/transcriptions`, `/v1/embeddings`, and
+`/v1/decisions` have no such parameter, and a provider answers an argument it does not recognise
 with a `400` rather than ignoring it, so injecting one there would turn a
 setting that means nothing on those endpoints into every request to that target
 failing. A pin that lands on one of them is reported in
@@ -268,7 +320,8 @@ the way the gateway billed it:
 }
 ```
 
-Same field on `/v1/chat/completions`, `/v1/responses` and `/v1/embeddings`, and
+Same field on `/v1/chat/completions`, `/v1/responses`, `/v1/decisions` and
+`/v1/embeddings`, and
 on a `json` transcription whose provider reported token usage it could be
 priced from — see [Audio transcriptions](#audio-transcriptions) for which
 providers that is. Streaming puts it on the final usage chunk (chat) or the
