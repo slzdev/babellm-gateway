@@ -1,6 +1,7 @@
 import { GatewayError, ProviderError, UnsupportedOperationError } from '@/lib/gateway/errors'
 
 const STATUSES: Record<string, number> = {
+  CredentialsProviderError: 403,
   ValidationException: 400, AccessDeniedException: 403, UnrecognizedClientException: 403,
   InvalidSignatureException: 403, ExpiredTokenException: 403, ResourceNotFoundException: 404,
   ThrottlingException: 429, ModelNotReadyException: 429, ModelTimeoutException: 408,

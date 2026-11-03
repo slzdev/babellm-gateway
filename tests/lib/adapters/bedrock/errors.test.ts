@@ -19,3 +19,9 @@ test('transport failures are retryable and existing typed errors retain identity
     else expect(() => toProviderError(error)).toThrow(error)
   }
 })
+
+test('default AWS credential-chain configuration failure is nonretryable and preserves its actionable diagnostic', () => {
+  const error = Object.assign(new Error('Could not load credentials from any providers'), { name: 'CredentialsProviderError' })
+  expect(toProviderError(error)).toMatchObject({ status: 403, code: 'CredentialsProviderError', retryable: false,
+    message: 'Could not load credentials from any providers' })
+})

@@ -83,3 +83,21 @@ test('total timeout continues into stream consumption after the opening operatio
   }) as unknown as BedrockRuntimeClient })
   await expect(Array.fromAsync(adapter.chatStream(req, ctx))).rejects.toMatchObject({ status: 504, retryable: true })
 })
+
+test('timeout after messageStop rejects even when the SDK stream ends normally on abort', async () => {
+  const chunks: { choices: { finish_reason: string | null }[] }[] = []
+  const adapter = createBedrockAdapter({ ...runtime, config: { timeoutMs: 15 } }, { runtime: () => ({
+    send: async (_command: unknown, options: { abortSignal: AbortSignal }) => ({ stream: (async function* () {
+      yield { messageStart: { role: 'assistant' } }
+      yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'hello' } } }
+      yield { contentBlockStop: { contentBlockIndex: 0 } }
+      yield { messageStop: { stopReason: 'end_turn' } }
+      // Smithy's HTTP/2 abort path can close the already-resolved response
+      // stream normally, so this must not simulate an iterator rejection.
+      await new Promise<void>((resolve) => options.abortSignal.addEventListener('abort', () => resolve(), { once: true }))
+    })() }),
+  }) as unknown as BedrockRuntimeClient })
+  const consume = async () => { for await (const chunk of adapter.chatStream(req, ctx)) chunks.push(chunk) }
+  await expect(consume()).rejects.toMatchObject({ status: 504, retryable: true })
+  expect(chunks.some((chunk) => chunk.choices.some((choice) => choice.finish_reason !== null))).toBe(false)
+})

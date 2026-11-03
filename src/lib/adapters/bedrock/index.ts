@@ -26,9 +26,25 @@ export function createBedrockAdapter(runtime: ProviderRuntime, factory?: Bedrock
       try {
         // The total-duration signal stays active while draining the stream;
         // HTTP/2 requestTimeout alone is only an idle timeout.
-        const output = await client.send(new ConverseStreamCommand(toConverseRequest(req, ctx.upstreamModel)), options(ctx.signal))
+        const requestOptions = options(ctx.signal)
+        const output = await client.send(new ConverseStreamCommand(toConverseRequest(req, ctx.upstreamModel)), requestOptions)
         if (!output.stream) throw new ProviderError({ status: 502, message: 'Bedrock returned no response stream.', retryable: true })
-        yield* fromConverseStream(output.stream, req, ctx.upstreamModel)
+        const stream = output.stream
+        const signal = requestOptions.abortSignal
+        async function* checkedEvents() {
+          for await (const event of stream) {
+            signal.throwIfAborted()
+            yield event
+          }
+          // HTTP/2 can close a response normally on abort after its opening
+          // promise resolved. Prevent that EOF becoming a successful finish.
+          signal.throwIfAborted()
+        }
+        for await (const chunk of fromConverseStream(checkedEvents(), req, ctx.upstreamModel)) {
+          signal.throwIfAborted()
+          yield chunk
+        }
+        signal.throwIfAborted()
       } catch (err) { throw toProviderError(err) }
     },
     async listModels(ctx) {
