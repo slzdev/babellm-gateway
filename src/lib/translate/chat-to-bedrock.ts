@@ -153,7 +153,9 @@ function finishReason(reason: string | undefined, hasTools: boolean): 'stop' | '
   switch (reason) {
     case 'max_tokens': case 'model_context_window_exceeded': return 'length'
     case 'guardrail_intervened': case 'content_filtered': return 'content_filter'
-    case 'tool_use': return 'tool_calls'
+    case 'tool_use':
+      if (!hasTools) throw upstreamError('Bedrock stopped for tool use without returning a tool call.')
+      return 'tool_calls'
     case 'end_turn': case 'stop_sequence': return hasTools ? 'tool_calls' : 'stop'
     default: throw upstreamError(`Bedrock returned an invalid stop reason: ${reason ?? 'missing'}.`)
   }

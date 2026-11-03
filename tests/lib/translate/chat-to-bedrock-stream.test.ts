@@ -58,7 +58,12 @@ test.each([
   ['max_tokens', 'length'], ['model_context_window_exceeded', 'length'],
   ['guardrail_intervened', 'content_filter'], ['content_filtered', 'content_filter'],
 ] as const)('maps stream stop reason %s', async (stopReason, expected) => {
-  const chunks = await collect([start, { messageStop: { stopReason } }])
+  const toolEvents = stopReason === 'tool_use' ? [
+    { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: 'a', name: 'weather' } } } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{}' } } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+  ] : []
+  const chunks = await collect([start, ...toolEvents, { messageStop: { stopReason } }])
   expect(chunks.at(-1)?.choices[0].finish_reason).toBe(expected)
 })
 
@@ -92,4 +97,14 @@ test('does not fabricate usage and honors explicit usage suppression', async () 
   expect((await collect([start, stop])).some((c) => c.usage)).toBe(false)
   expect((await collect([start, stop, { metadata: { usage: { inputTokens: 2 }, metrics: { latencyMs: 1 } } }])).some((c) => c.usage)).toBe(false)
   expect((await collect([start, stop, metadata], { ...req, stream_options: { include_usage: false } })).some((c) => c.usage)).toBe(false)
+})
+
+// Both an empty message and a completed text block lack an executable call.
+test.each([
+  [],
+  [{ contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'No call provided' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } }],
+].map((events) => [events]))('rejects streamed tool_use without a tool call (%#)', async (events) => {
+  await expect(collect([start, ...events, { messageStop: { stopReason: 'tool_use' } }]))
+    .rejects.toMatchObject({ name: 'ProviderError', status: 502, retryable: true })
 })

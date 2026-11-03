@@ -28,7 +28,8 @@ test.each([
   ['max_tokens', 'length'], ['model_context_window_exceeded', 'length'],
   ['guardrail_intervened', 'content_filter'], ['content_filtered', 'content_filter'],
 ] as const)('maps documented stop reason %s', (stopReason, expected) => {
-  expect(fromConverse({ ...fixture, stopReason, output: { message: { role: 'assistant', content: [{ text: 'ok' }] } } }, 'm').choices[0].finish_reason).toBe(expected)
+  const output = stopReason === 'tool_use' ? fixture.output : { message: { role: 'assistant' as const, content: [{ text: 'ok' }] } }
+  expect(fromConverse({ ...fixture, stopReason, output }, 'm').choices[0].finish_reason).toBe(expected)
 })
 
 test.each(['malformed_model_output', 'malformed_tool_use', 'new_unknown_reason', undefined])('does not invent success for stop reason %s', (stopReason) => {
@@ -51,7 +52,7 @@ test('missing or partial usage is omitted instead of fabricated as zero', () => 
 })
 
 test('redacted reasoning is not emitted as text or invented reasoning usage', () => {
-  const result = fromConverse({ ...fixture, output: { message: { role: 'assistant', content: [
+  const result = fromConverse({ ...fixture, stopReason: 'end_turn', output: { message: { role: 'assistant', content: [
     { reasoningContent: { redactedContent: new Uint8Array([1]) } }, { text: 'ok' },
   ] } } }, 'm')
   expect(result.choices[0].message).toEqual({ role: 'assistant', content: 'ok' })
@@ -60,4 +61,10 @@ test('redacted reasoning is not emitted as text or invented reasoning usage', ()
 test.each([null, {}, { text: 12 }, { toolUse: { toolUseId: 'a', name: 'f', input: [] } }])('classifies malformed content block %j as an upstream failure', (block) => {
   expect(() => fromConverse({ ...fixture, output: { message: { role: 'assistant', content: [block] } } } as ConverseCommandOutput, 'm'))
     .toThrow(expect.objectContaining({ name: 'ProviderError', retryable: true }))
+})
+
+// A tool_use stop cannot promise an executable call when AWS supplied none.
+test.each([[], [{ text: 'No call provided' }]].map((content) => [content]))('rejects tool_use without a tool call (%#)', (content) => {
+  expect(() => fromConverse({ ...fixture, output: { message: { role: 'assistant', content } } }, 'm'))
+    .toThrow(expect.objectContaining({ name: 'ProviderError', status: 502, retryable: true }))
 })
