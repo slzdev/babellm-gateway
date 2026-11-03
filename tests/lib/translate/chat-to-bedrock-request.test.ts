@@ -17,7 +17,7 @@ test('hoists system and developer text without demoting authority', () => {
 })
 
 test('preserves tool IDs and arguments and combines adjacent tool results', () => {
-  const result = toConverseRequest({ ...base, messages: [
+  const result = toConverseRequest({ ...base, tools: [tool], messages: [
     { role: 'assistant', content: 'Checking', tool_calls: [
       { id: 'a', type: 'function', function: { name: 'weather', arguments: '{"city":"Paris"}' } },
       { id: 'b', type: 'function', function: { name: 'clock', arguments: '{}' } },
@@ -112,4 +112,53 @@ test('reports unsupported known and unknown fields and unsigned reasoning replay
 
 test('does not report omitted or inert defaults as dropped', () => {
   expect(droppedParams({ ...base, n: 1, logprobs: false, seed: null, custom: {}, extra: [] })).toEqual([])
+})
+
+// These cases catch native history being sent without the toolConfig required
+// by Converse, and preserve both sides of parallel historical tool calls.
+test.each(['none', 'omitted', 'empty'] as const)('lowers completed multi-call history to historical data when tools are %s', (mode) => {
+  const settings: Pick<ChatCompletionRequest, 'tools' | 'tool_choice'> = mode === 'none'
+    ? { tools: [tool], tool_choice: 'none' } : mode === 'empty' ? { tools: [] } : {}
+  const req: ChatCompletionRequest = { ...base, ...settings, messages: [
+    { role: 'user', content: 'Check both cities' },
+    { role: 'assistant', content: 'Checking', tool_calls: [
+      { id: 'a', type: 'function', function: { name: 'weather', arguments: '{ "city": "Paris" }' } },
+      { id: 'b', type: 'function', function: { name: 'weather', arguments: '{"city":"Lyon"}' } },
+    ] },
+    { role: 'tool', tool_call_id: 'a', content: 'Sunny' },
+    { role: 'function', name: 'weather', content: 'Cloudy' },
+    { role: 'user', content: 'Summarize the results' },
+  ] }
+  const result = toConverseRequest(req, 'model')
+  expect(result.toolConfig).toBeUndefined()
+  expect(result.messages).toEqual([
+    { role: 'user', content: [{ text: 'Check both cities' }] },
+    { role: 'assistant', content: [
+      { text: 'Checking' },
+      { text: '[historical tool call] {"id":"a","name":"weather","arguments":{"city":"Paris"}}' },
+      { text: '[historical tool call] {"id":"b","name":"weather","arguments":{"city":"Lyon"}}' },
+    ] },
+    { role: 'user', content: [
+      { text: '[historical tool result] {"id":"a","name":"weather","output":"Sunny"}' },
+      { text: '[historical tool result] {"id":"b","name":"weather","output":"Cloudy"}' },
+      { text: 'Summarize the results' },
+    ] },
+  ])
+  expect(droppedParams(req)).toEqual(['tool_history'])
+})
+
+test.each(['', null, undefined])('preserves empty native tool output %j as explicit JSON', (content) => {
+  const req: ChatCompletionRequest = { ...base, tools: [tool], messages: [
+    { role: 'assistant', tool_calls: [
+      { id: 'a', type: 'function', function: { name: 'weather', arguments: '{}' } },
+    ] },
+    { role: 'tool', tool_call_id: 'a', content },
+  ] }
+  const result = toConverseRequest(req, 'model')
+  expect(result.toolConfig?.tools).toHaveLength(1)
+  expect(result.messages).toEqual([
+    { role: 'assistant', content: [{ toolUse: { toolUseId: 'a', name: 'weather', input: {} } }] },
+    { role: 'user', content: [{ toolResult: { toolUseId: 'a', content: [{ json: { output: '' } }] } }] },
+  ])
+  expect(droppedParams(req)).toEqual([])
 })

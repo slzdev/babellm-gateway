@@ -74,7 +74,12 @@ function toolChoice(choice: ChatCompletionRequest['tool_choice']): ToolChoice | 
   if (choice && choice !== 'none') return { tool: { name: choice.function.name } }
 }
 
+function toolsEnabled(req: ChatCompletionRequest): boolean {
+  return !!req.tools?.length && req.tool_choice !== 'none'
+}
+
 export function toConverseRequest(req: ChatCompletionRequest, upstreamModel: string): ConverseCommandInput {
+  const nativeTools = toolsEnabled(req)
   const messages: Message[] = []
   const system: { text: string }[] = []
   const calls = new Map<string, string>()
@@ -93,9 +98,13 @@ export function toConverseRequest(req: ChatCompletionRequest, upstreamModel: str
     }
     if (message.role === 'tool' || message.role === 'function') {
       const id = toolId(message, calls)
-      append('user', [id
-        ? { toolResult: { toolUseId: id, content: [{ text }] } }
-        : { text: `[tool result] ${text}` }])
+      // Native history requires toolConfig, which cannot express a prohibition
+      // on new calls. Preserve disabled tools as labeled historical data.
+      append('user', [!nativeTools
+        ? { text: `[historical tool result] ${JSON.stringify({ id: id ?? message.tool_call_id, name: id ? calls.get(id) : message.name, output: text })}` }
+        : id
+          ? { toolResult: { toolUseId: id, content: [text ? { text } : { json: { output: '' } }] } }
+          : { text: `[tool result] ${text}` }])
       if (id) calls.delete(id)
       return
     }
@@ -105,7 +114,9 @@ export function toConverseRequest(req: ChatCompletionRequest, upstreamModel: str
       for (const [ci, call] of (message.tool_calls ?? []).entries()) {
         const input = parseArguments(call.function.arguments)
         if (!input) throw clientError('Tool arguments must be a valid JSON object.', `messages[${mi}].tool_calls[${ci}].function.arguments`)
-        blocks.push({ toolUse: { toolUseId: call.id, name: call.function.name, input: input as JsonDocument } })
+        blocks.push(nativeTools
+          ? { toolUse: { toolUseId: call.id, name: call.function.name, input: input as JsonDocument } }
+          : { text: `[historical tool call] ${JSON.stringify({ id: call.id, name: call.function.name, arguments: input })}` })
         calls.set(call.id, call.function.name)
       }
     } else if (typeof message.content === 'string') {
@@ -138,8 +149,8 @@ export function toConverseRequest(req: ChatCompletionRequest, upstreamModel: str
     modelId: upstreamModel, messages,
     ...(system.length ? { system } : {}),
     ...(Object.keys(inferenceConfig).length ? { inferenceConfig } : {}),
-    ...(req.tools?.length && req.tool_choice !== 'none' ? { toolConfig: {
-      tools: req.tools.map((tool) => ({ toolSpec: {
+    ...(nativeTools ? { toolConfig: {
+      tools: req.tools!.map((tool) => ({ toolSpec: {
         name: tool.function.name,
         ...(tool.function.description ? { description: tool.function.description } : {}),
         inputSchema: { json: (tool.function.parameters ?? { type: 'object' }) as JsonDocument },
@@ -312,8 +323,10 @@ export function droppedParams(req: ChatCompletionRequest): string[] {
     if (!MAPPED.has(name) && !inert(name, value)) dropped.add(name)
   }
   const calls = new Map<string, string>()
+  const nativeTools = toolsEnabled(req)
   let sawTurn = false
   for (const message of req.messages) {
+    if (!nativeTools && (message.tool_calls?.length || message.role === 'tool' || message.role === 'function')) dropped.add('tool_history')
     if (message.role === 'system' || message.role === 'developer') {
       if (sawTurn) dropped.add('system_message_hoisted')
     } else sawTurn = true

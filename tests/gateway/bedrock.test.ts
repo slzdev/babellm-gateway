@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime'
+import { BedrockRuntimeClient, type ConverseCommandInput } from '@aws-sdk/client-bedrock-runtime'
 import { handleChatCompletions } from '@/lib/gateway/chat-handler'
 import { handleResponses } from '@/lib/gateway/responses-handler'
 import { handleEmbeddings } from '@/lib/gateway/embeddings-handler'
@@ -115,3 +115,104 @@ test.each(['embed', 'transcribe'] as const)('mixed %s routes skip Bedrock before
   expect(res.headers.get('x-babellm-provider')).toBe('openai')
   expect(blocked).not.toHaveBeenCalled()
 })
+
+const historyTools = [{ type: 'function', function: { name: 'weather', parameters: { type: 'object' } } }]
+const chatHistory = [
+  { role: 'user', content: 'Check both cities' },
+  { role: 'assistant', content: null, tool_calls: [
+    { id: 'a', type: 'function', function: { name: 'weather', arguments: '{ "city": "Paris" }' } },
+    { id: 'b', type: 'function', function: { name: 'weather', arguments: '{"city":"Lyon"}' } },
+  ] },
+  { role: 'tool', tool_call_id: 'a', content: 'Sunny' },
+  { role: 'tool', tool_call_id: 'b', content: 'Cloudy' },
+]
+const responsesHistory = [
+  { type: 'message', role: 'user', content: 'Check both cities' },
+  { type: 'function_call', call_id: 'a', name: 'weather', arguments: '{ "city": "Paris" }' },
+  { type: 'function_call', call_id: 'b', name: 'weather', arguments: '{"city":"Lyon"}' },
+  { type: 'function_call_output', call_id: 'a', output: 'Sunny' },
+  { type: 'function_call_output', call_id: 'b', output: 'Cloudy' },
+]
+
+// Stub only the external SDK dispatch: registry, ingress translation, adapter,
+// response framing, and request logging all retain their production behavior.
+function mockFollowup(stream: boolean) {
+  async function* events() {
+    yield { messageStart: { role: 'assistant' } }
+    yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'from AWS' } } }
+    yield { contentBlockStop: { contentBlockIndex: 0 } }
+    yield { messageStop: { stopReason: 'end_turn' } }
+    yield { metadata: { usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } } }
+  }
+  return vi.spyOn(BedrockRuntimeClient.prototype, 'send').mockResolvedValue((stream ? { stream: events() } : answer) as never)
+}
+
+for (const ingress of ['chat', 'responses'] as const) {
+  for (const stream of [false, true]) {
+    test.each(['none', 'omitted', 'empty'] as const)(`${ingress} stream=${stream} completes a tool-history followup when tools are %s`, async (mode) => {
+      const { apiKey } = await seedGateway({ adapter: 'bedrock', credentials })
+      const send = mockFollowup(stream)
+      const tools = ingress === 'chat' ? historyTools : [{ type: 'function', name: 'weather', parameters: { type: 'object' } }]
+      const settings = mode === 'none' ? { tools, tool_choice: 'none' } : mode === 'empty' ? { tools: [] } : {}
+      const request = { model: 'house-model', stream, ...settings }
+      const res = ingress === 'chat'
+        ? await handleChatCompletions(chatRequest({ ...request, messages: chatHistory }, apiKey))
+        : await handleResponses(responsesRequest({ ...request, input: responsesHistory }, apiKey))
+      const payload = await res.text()
+      expect(res.status).toBe(200)
+      expect(res.headers.get('x-babellm-dropped-params')).toBe('tool_history')
+      expect(payload).toContain('from AWS')
+      const command = send.mock.calls[0][0]
+      expect(command.constructor.name).toBe(stream ? 'ConverseStreamCommand' : 'ConverseCommand')
+      const input = command.input as ConverseCommandInput
+      expect(input.toolConfig).toBeUndefined()
+      expect(input.messages).toEqual([
+        { role: 'user', content: [{ text: 'Check both cities' }] },
+        { role: 'assistant', content: [
+          { text: '[historical tool call] {"id":"a","name":"weather","arguments":{"city":"Paris"}}' },
+          { text: '[historical tool call] {"id":"b","name":"weather","arguments":{"city":"Lyon"}}' },
+        ] },
+        { role: 'user', content: [
+          { text: '[historical tool result] {"id":"a","name":"weather","output":"Sunny"}' },
+          { text: '[historical tool result] {"id":"b","name":"weather","output":"Cloudy"}' },
+        ] },
+      ])
+      await Promise.all(pendingLogs)
+      expect(logs.logRequest).toHaveBeenCalledWith(expect.objectContaining({ status: 200, outcome: 'ok', droppedParams: ['tool_history'] }))
+    })
+
+    const emptyOutputs = ingress === 'chat' ? ['', null, undefined] : ['']
+    test.each(emptyOutputs)(`${ingress} stream=${stream} completes a native tool followup with output %j`, async (output) => {
+      const { apiKey } = await seedGateway({ adapter: 'bedrock', credentials })
+      const send = mockFollowup(stream)
+      const res = ingress === 'chat'
+        ? await handleChatCompletions(chatRequest({ model: 'house-model', stream, tools: historyTools, messages: [
+          ...chatHistory.slice(0, 2), { role: 'tool', tool_call_id: 'a', content: output }, chatHistory[3],
+        ] }, apiKey))
+        : await handleResponses(responsesRequest({ model: 'house-model', stream,
+          tools: [{ type: 'function', name: 'weather', parameters: { type: 'object' } }], input: [
+            ...responsesHistory.slice(0, 3), { type: 'function_call_output', call_id: 'a', output }, responsesHistory[4],
+          ],
+        }, apiKey))
+      const payload = await res.text()
+      expect(res.status).toBe(200)
+      expect(res.headers.get('x-babellm-dropped-params')).toBeNull()
+      expect(payload).toContain('from AWS')
+      const command = send.mock.calls[0][0]
+      expect(command.constructor.name).toBe(stream ? 'ConverseStreamCommand' : 'ConverseCommand')
+      const input = command.input as ConverseCommandInput
+      expect(input.toolConfig).toEqual({ tools: [{ toolSpec: { name: 'weather', inputSchema: { json: { type: 'object' } } } }] })
+      expect(input.messages).toEqual([
+        { role: 'user', content: [{ text: 'Check both cities' }] },
+        { role: 'assistant', content: [
+          { toolUse: { toolUseId: 'a', name: 'weather', input: { city: 'Paris' } } },
+          { toolUse: { toolUseId: 'b', name: 'weather', input: { city: 'Lyon' } } },
+        ] },
+        { role: 'user', content: [
+          { toolResult: { toolUseId: 'a', content: [{ json: { output: '' } }] } },
+          { toolResult: { toolUseId: 'b', content: [{ text: 'Cloudy' }] } },
+        ] },
+      ])
+    })
+  }
+}

@@ -307,6 +307,14 @@ and unsupported model-specific reasoning configuration are reported in
 `x-babellm-dropped-params` and the request log; there is no cross-model reasoning
 budget mapping or signed reasoning replay.
 
+When `tool_choice: "none"` is set, or `tools` is omitted or empty, prior tool
+calls and results become labeled historical text preserving IDs, names,
+arguments, and outputs. No callable tools are sent. This structural fallback is
+reported as `tool_history` in the dropped-params header and request log; it can
+change how the model interprets history. With tools enabled, history stays
+native. Empty native tool results use JSON `{"output":""}` because Bedrock
+rejects empty text blocks.
+
 Discovery provides model metadata, not AWS billing prices. Catalog pricing uses
 the existing models.dev/seed/override rules; profile ARNs and unrecognized IDs may
 not match registry entries. Set Catalog price overrides where needed before
