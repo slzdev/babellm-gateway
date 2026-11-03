@@ -33,7 +33,7 @@ function credentialsFrom(formData: FormData, adapter: AdapterType) {
   for (const field of fields) {
     const value = formData.get(field)
     if (field === 'useInstanceRole') {
-      if (value === 'on') entries.useInstanceRole = true
+      entries.useInstanceRole = value === 'on'
       continue
     }
     if (typeof value === 'string' && value.length > 0) entries[field] = value
@@ -209,8 +209,8 @@ export async function updateProviderAction(
       name: String(formData.get('name') ?? ''),
       adapter,
       baseUrl: (formData.get('baseUrl') as string) || null,
-      // An empty credential form means "keep what is stored" — the browser is
-      // never sent the current secret, so a blank field cannot mean "erase".
+      // Blank fields preserve stored values. Bedrock always submits its mode
+      // so unchecking default credentials cannot resurrect the stored flag.
       ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
       config,
       apiFlavor: apiFlavorFrom(formData),

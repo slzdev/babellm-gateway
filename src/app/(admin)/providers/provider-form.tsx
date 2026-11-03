@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { FormDialog } from '@/components/admin/form-dialog'
 import { createProviderAction, type ActionState } from './actions'
 import { AdvancedPathsFields } from './advanced-paths-fields'
@@ -84,11 +85,19 @@ export function CreateProviderDialog() {
       {adapter === 'bedrock' ? (
         <div className="grid gap-4 sm:grid-cols-2">
           <CredentialField id="region" name="region" label="Region" required placeholder="us-east-1" />
-          <label className="flex items-end gap-2 text-sm">
-            <input type="checkbox" name="useInstanceRole" /> Use the instance IAM role
-          </label>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Switch id="useInstanceRole" name="useInstanceRole" value="on" />
+              <Label htmlFor="useInstanceRole">Use AWS default credentials</Label>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Resolve credentials from the server environment, AWS profile, or workload/IAM role.
+              Leave the access keys and session token blank when enabled.
+            </p>
+          </div>
           <CredentialField id="accessKeyId" name="accessKeyId" label="Access key id" />
           <CredentialField id="secretAccessKey" name="secretAccessKey" label="Secret access key" type="password" />
+          <CredentialField id="sessionToken" name="sessionToken" label="Session token (optional)" type="password" />
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">

@@ -2,6 +2,7 @@
 
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { FormDialog } from '@/components/admin/form-dialog'
 import type { AdapterType } from '@/lib/adapters/credentials'
 import { DecisionsApiFlavorSelect } from '@/components/admin/decisions-api-flavor-select'
@@ -90,6 +91,7 @@ export function EditProviderDialog({
       <fieldset className="space-y-3">
         <legend className="text-xs text-muted-foreground">
           Credentials — leave a field blank to keep its stored value.
+          {provider.adapter === 'bedrock' ? ' Switching from default credentials to static keys requires both keys.' : ''}
         </legend>
         <div className="grid gap-4 sm:grid-cols-2">
           {CREDENTIAL_FIELDS[provider.adapter].map((field) => (
@@ -108,14 +110,21 @@ export function EditProviderDialog({
           ))}
         </div>
         {provider.adapter === 'bedrock' ? (
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              name="useInstanceRole"
-              defaultChecked={provider.maskedCredentials.useInstanceRole === 'true'}
-            />
-            Use the instance IAM role instead of access keys
-          </label>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Switch
+                id={`useInstanceRole-${provider.id}`}
+                name="useInstanceRole"
+                value="on"
+                defaultChecked={provider.maskedCredentials.useInstanceRole === 'true'}
+              />
+              <Label htmlFor={`useInstanceRole-${provider.id}`}>Use AWS default credentials</Label>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Resolve credentials from the server environment, AWS profile, or workload/IAM role.
+              Leave the access keys and session token blank when enabled; stored static keys will be removed.
+            </p>
+          </div>
         ) : null}
       </fieldset>
 

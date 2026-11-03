@@ -13,18 +13,37 @@ const geminiCredentials = z.object({
   apiKey: z.string().min(1, 'apiKey is required'),
 })
 
-const bedrockCredentials = z.union([
-  z.object({
-    region: z.string().min(1),
-    accessKeyId: z.string().min(1),
-    secretAccessKey: z.string().min(1),
-    sessionToken: z.string().optional(),
-  }),
-  z.object({
-    region: z.string().min(1),
-    useInstanceRole: z.literal(true),
-  }),
-])
+const bedrockCredentials = z.object({
+  region: z.string().min(1, 'region is required').prefault(''),
+  accessKeyId: z.string().optional(),
+  secretAccessKey: z.string().optional(),
+  sessionToken: z.string().optional(),
+  useInstanceRole: z.boolean().optional(),
+}).superRefine((credentials, ctx) => {
+  if (credentials.useInstanceRole === true) {
+    for (const field of ['accessKeyId', 'secretAccessKey', 'sessionToken'] as const) {
+      if (credentials[field] !== undefined) {
+        ctx.addIssue({
+          code: 'custom', path: [field],
+          message: 'Remove this field when using the AWS default credential chain.',
+        })
+      }
+    }
+  } else {
+    for (const field of ['accessKeyId', 'secretAccessKey'] as const) {
+      if (!credentials[field]) {
+        ctx.addIssue({ code: 'custom', path: [field], message: `${field} is required` })
+      }
+    }
+  }
+}).transform((credentials) => credentials.useInstanceRole === true
+  ? { region: credentials.region, useInstanceRole: true as const }
+  : {
+    region: credentials.region,
+    accessKeyId: credentials.accessKeyId!,
+    secretAccessKey: credentials.secretAccessKey!,
+    ...(credentials.sessionToken !== undefined ? { sessionToken: credentials.sessionToken } : {}),
+  })
 
 export const credentialSchemas: Record<AdapterType, z.ZodType> = {
   openai: openaiCredentials,

@@ -251,7 +251,68 @@ as the SDK's own `@deprecated` notes on `temperature` and `top_p` document.
 | `openai` | ✅ Three chat API flavors: Chat Completions, Responses, Anthropic Messages; independent OpenAI Decisions shape |
 | `openai_compatible` | ✅ Groq, OpenRouter, vLLM, LM Studio, anything OpenAI-shaped — three chat API flavors plus the independent OpenAI Decisions shape when a Decisions endpoint is available |
 | `gemini` | ✅ Native `@google/genai`, including thinking and media by URL |
-| `bedrock` | 🚧 Configurable, not yet served |
+| `bedrock` | ✅ Native AWS Converse / ConverseStream, tools, inline images, and automatic discovery |
+
+### Amazon Bedrock setup
+
+Add a `bedrock` provider with an AWS **region**, then choose one authentication
+mode:
+
+- **Static credentials:** enter an access key ID and secret access key. Temporary
+  credentials also require their session token, available on both create and edit.
+- **Use AWS default credentials:** leave all static credential fields blank. The
+  AWS SDK resolves credentials in the gateway server's environment, shared AWS
+  profile, or workload/IAM role. This setting is stored as `useInstanceRole: true`;
+  it is not limited to EC2 instance roles. The server needs access to that profile
+  or role; credentials on a dashboard user's computer are not used. See the
+  [AWS SDK credential chain](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/setting-credentials-node.html).
+
+Credentials are encrypted at rest. On edit, blank fields keep existing static
+values; switching to default credentials removes the stored keys and token.
+Switching back requires both keys. Submitting fresh keys or a token while default
+credentials are enabled returns a field error. Programmatic edits must explicitly
+set `useInstanceRole: false` when switching from default credentials to static keys.
+
+Grant the gateway identity `bedrock:ListFoundationModels` and
+`bedrock:ListInferenceProfiles` for automatic Catalog sync, plus
+`bedrock:InvokeModel` for non-streaming Converse and
+`bedrock:InvokeModelWithResponseStream` for streaming Converse. Scope invocation
+permissions to the models and inference profiles you use, including their
+underlying destination-region models for cross-region inference. Consult the
+[AWS Converse permissions](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html)
+and [inference profile permissions](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-prereq.html)
+for resource policies and account prerequisites.
+
+Saving the provider automatically discovers on-demand text foundation models and
+active inference profiles, using the same region and credentials. System profiles
+use their profile ID; application profiles use their ARN. Upstream IDs and ARNs
+are passed to AWS unchanged. If either listing operation fails, sync reports the
+failure and keeps the existing Catalog. Discovery does **not** guarantee your
+account has invocation access or that a model supports Converse; AWS decides at
+invocation time. Tools, streaming, and media support also depend on the model.
+
+The optional provider **Base URL** overrides only the Bedrock **Runtime** SDK
+endpoint, for example a runtime VPC endpoint. It does not override the regional
+Bedrock control-plane endpoint used for discovery, and it is not an
+OpenAI-compatible `/v1` URL. API Flavor settings do not change Bedrock's native
+Converse transport.
+
+Both `/v1/chat/completions` and `/v1/responses` work through Converse, including
+streaming text, tool calls/results, returned reasoning text, usage, and failover.
+Responses uses the gateway's existing Responses-to-chat translation; Bedrock does
+not offer native hosted or stateful Responses here. Inline base64 PNG, JPEG, GIF,
+and WebP image data URLs are supported for compatible models. Remote image URLs,
+audio, video, and documents are not sent to Bedrock. Generic `reasoning_effort`
+and unsupported model-specific reasoning configuration are reported in
+`x-babellm-dropped-params` and the request log; there is no cross-model reasoning
+budget mapping or signed reasoning replay.
+
+Discovery provides model metadata, not AWS billing prices. Catalog pricing uses
+the existing models.dev/seed/override rules; profile ARNs and unrecognized IDs may
+not match registry entries. Set Catalog price overrides where needed before
+relying on cost accounting or spend limits. Bedrock does not serve
+`/v1/embeddings`, `/v1/audio/transcriptions`, or `/v1/decisions`: mixed routes skip
+it, and a route with only unsupported targets returns `501`.
 
 ## Features
 
@@ -666,8 +727,7 @@ phases. What's still missing:
   key's total spend to zero.
 - **Round-robin state is per process**, so multiple instances skew the
   distribution.
-- **No Bedrock adapter and no `/v1/models`.** A `bedrock` provider is accepted
-  by the dashboard but returns `501`.
+- **No `/v1/models`.** Use the dashboard Catalog to inspect discovered models.
 - **Transcription spend can be invisible.** Duration-billed models bill by
   audio length, which the catalog can't express, so those requests log with no
   usage and no cost — see [Audio transcriptions](#audio-transcriptions).

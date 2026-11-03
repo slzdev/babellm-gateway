@@ -86,8 +86,7 @@ test('a bedrock edit that only touches one field succeeds via merge', async () =
     name: 'bedrock-keys', adapter: 'bedrock',
     credentials: { region: 'us-east-1', accessKeyId: 'AK', secretAccessKey: 'SK' },
   })
-  // A whole-object replace with only { region } would fail bedrock's
-  // credential union (neither branch is satisfied by region alone).
+  // A whole-object replace with only { region } would lose the required keys.
   const updated = await updateProvider(created.id, { credentials: { region: 'us-west-2' } })
   const stored = decryptJson<{ region: string; accessKeyId: string; secretAccessKey: string }>(
     updated.credentials,
@@ -292,4 +291,93 @@ test('provider connection probe keeps Responses transport alongside independent 
   expect(await testProvider(provider.id, 'chat-upstream')).toEqual({ ok: true, message: 'Connection succeeded.' })
   expect(sentUrl).toBe('https://api.openai.com/v1/responses')
   expect(sentBody).toMatchObject({ model: 'chat-upstream', input: [{ role: 'user', content: 'ping' }] })
+})
+
+
+test.each([
+  [{ useInstanceRole: true }, 'region'],
+  [{ region: '', useInstanceRole: true }, 'region'],
+  [{ region: 'us-east-1', secretAccessKey: 'SK' }, 'accessKeyId'],
+  [{ region: 'us-east-1', accessKeyId: '', secretAccessKey: 'SK' }, 'accessKeyId'],
+  [{ region: 'us-east-1', accessKeyId: 'AK' }, 'secretAccessKey'],
+  [{ region: 'us-east-1', accessKeyId: 'AK', secretAccessKey: '' }, 'secretAccessKey'],
+])('Bedrock credentials %j report the missing %s field', async (credentials, field) => {
+  await expect(createProvider({ name: 'invalid', adapter: 'bedrock', credentials }))
+    .rejects.toThrow(`${field}: ${field} is required`)
+  expect(await db.select().from(providers)).toHaveLength(0)
+})
+
+test.each(['accessKeyId', 'secretAccessKey', 'sessionToken'])(
+  'Bedrock default-chain creation rejects a supplied %s', async (field) => {
+    await expect(createProvider({
+      name: 'conflicting', adapter: 'bedrock',
+      credentials: { region: 'us-east-1', useInstanceRole: true, [field]: 'fresh-value' },
+    })).rejects.toThrow(new RegExp(`${field}:.*default credential chain`))
+    expect(await db.select().from(providers)).toHaveLength(0)
+  },
+)
+
+test.each(['accessKeyId', 'secretAccessKey', 'sessionToken'])(
+  'a conflicting default-chain edit with %s leaves stored keys untouched', async (field) => {
+    const created = await createProvider({
+      name: 'bedrock', adapter: 'bedrock',
+      credentials: { region: 'us-east-1', accessKeyId: 'AK', secretAccessKey: 'SK', sessionToken: 'TOKEN' },
+    })
+    await expect(updateProvider(created.id, {
+      credentials: { useInstanceRole: true, [field]: 'fresh-value' },
+    })).rejects.toThrow(new RegExp(`${field}:.*default credential chain`))
+    const [stored] = await db.select().from(providers).where(eq(providers.id, created.id))
+    expect(stored.credentials).toBe(created.credentials)
+  },
+)
+
+test('switching Bedrock from default chain to static requires keys and preserves rejected credentials', async () => {
+  const created = await createProvider({
+    name: 'bedrock', adapter: 'bedrock',
+    credentials: { region: 'us-east-1', useInstanceRole: true },
+  })
+  await expect(updateProvider(created.id, { credentials: { useInstanceRole: false } }))
+    .rejects.toThrow('accessKeyId: accessKeyId is required')
+  const [stored] = await db.select().from(providers).where(eq(providers.id, created.id))
+  expect(stored.credentials).toBe(created.credentials)
+})
+
+test('static keys cannot silently change a stored Bedrock default-chain mode', async () => {
+  const created = await createProvider({
+    name: 'bedrock', adapter: 'bedrock',
+    credentials: { region: 'us-east-1', useInstanceRole: true },
+  })
+  await expect(updateProvider(created.id, {
+    credentials: { accessKeyId: 'AK', secretAccessKey: 'SK' },
+  })).rejects.toThrow(/default credential chain/)
+  const [stored] = await db.select().from(providers).where(eq(providers.id, created.id))
+  expect(stored.credentials).toBe(created.credentials)
+})
+
+test('an explicit Bedrock static switch stores keys and token without the mode marker', async () => {
+  const created = await createProvider({
+    name: 'bedrock', adapter: 'bedrock',
+    credentials: { region: 'us-east-1', useInstanceRole: true },
+  })
+  const updated = await updateProvider(created.id, {
+    credentials: { useInstanceRole: false, accessKeyId: 'AK', secretAccessKey: 'SK', sessionToken: 'TOKEN' },
+  })
+  expect(decryptJson(updated.credentials)).toEqual({
+    region: 'us-east-1', accessKeyId: 'AK', secretAccessKey: 'SK', sessionToken: 'TOKEN',
+  })
+})
+
+test('Bedrock session tokens persist encrypted and are masked in provider listings', async () => {
+  const created = await createProvider({
+    name: 'bedrock', adapter: 'bedrock',
+    credentials: { region: 'us-east-1', useInstanceRole: false, accessKeyId: 'AK', secretAccessKey: 'secret-1234', sessionToken: 'session-5678' },
+  })
+  expect(created.credentials).not.toContain('session-5678')
+  expect(decryptJson(created.credentials)).toEqual({
+    region: 'us-east-1', accessKeyId: 'AK', secretAccessKey: 'secret-1234', sessionToken: 'session-5678',
+  })
+  const [item] = await listProviders()
+  expect(item.maskedCredentials).toEqual({
+    region: 'us-east-1', accessKeyId: 'AK', secretAccessKey: '••••1234', sessionToken: '••••5678',
+  })
 })
