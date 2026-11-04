@@ -1,6 +1,6 @@
 # Playground Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Let admins chat with configured virtual and direct catalog models from a new Playground page.
 
@@ -42,11 +42,11 @@
 - Produce `PlaygroundUsage` with optional `prompt_tokens`, `completion_tokens`, `total_tokens`, and `cost?: { total: string | null } | null`.
 - Produce `PlaygroundStreamEvent = { type: 'delta'; content: string; reasoning: string } | { type: 'usage'; usage: PlaygroundUsage } | { type: 'finish'; reason: string }` and `readChatResponse(response: Response): AsyncGenerator<PlaygroundStreamEvent>` in the stream helper. Support both streamed SSE and nonstream JSON responses.
 
-- [ ] Write model-list tests covering available virtual/direct models, disabled providers/targets/models, known non-chat versus unknown catalog kinds, empty configuration, virtual shadowing, missing entries, and slash-containing upstream IDs. Read existing DB fixture patterns.
-- [ ] Write reader tests using actual Response/ReadableStream objects. Cover content and reasoning deltas, split UTF-8 and CRLF boundaries, usage-only chunks, non-stream JSON, HTTP errors, SSE error envelopes, malformed data, and EOF without `[DONE]`.
-- [ ] Run the focused tests and record expected failures before implementing. Test configuration must come from `.env.test.example` on port 5434; controller owns database setup and full-suite execution to avoid concurrent DB resets.
-- [ ] Implement the helpers. Use TextDecoder streaming, preserve event boundaries, release/cancel stream readers, throw helpful gateway messages on HTTP/SSE errors. Never import server-only modules into the stream helper. Model eligibility follows the spec; enabled virtual names shadow direct addresses even when the virtual option has no usable chat target.
-- [ ] Run focused tests and lint of changed files; self-review and commit only this task's files. Report test evidence and any questions to the controller.
+- [x] Write model-list tests covering available virtual/direct models, disabled providers/targets/models, known non-chat versus unknown catalog kinds, empty configuration, virtual shadowing, missing entries, and slash-containing upstream IDs. Read existing DB fixture patterns.
+- [x] Write reader tests using actual Response/ReadableStream objects. Cover content and reasoning deltas, split UTF-8 and CRLF boundaries, usage-only chunks, non-stream JSON, HTTP errors, SSE error envelopes, malformed data, and EOF without `[DONE]`.
+- [x] Run the focused tests and record expected failures before implementing. Test configuration must come from `.env.test.example` on port 5434; controller owns database setup and full-suite execution to avoid concurrent DB resets.
+- [x] Implement the helpers. Use TextDecoder streaming, preserve event boundaries, release/cancel stream readers, throw helpful gateway messages on HTTP/SSE errors. Never import server-only modules into the stream helper. Model eligibility follows the spec; enabled virtual names shadow direct addresses even when the virtual option has no usable chat target.
+- [x] Run focused tests and lint of changed files; self-review and commit only this task's files. Report test evidence and any questions to the controller.
 
 ### Task 2: Playground page and conversation UI
 
@@ -62,18 +62,22 @@
 - Consume `PlaygroundModelOption`, `listPlaygroundModels`, `PlaygroundUsage`, and `readChatResponse` from Task 1 exactly as exported.
 - Produce a force-dynamic server page with `requireAdmin()` and a client `Playground({ models }: { models: PlaygroundModelOption[] })`.
 
-- [ ] Read installed Next.js guides for layouts/pages, server/client components and relevant route behavior, plus existing shadcn combobox/card/input/switch APIs before coding.
-- [ ] Write and run failing behavioral request tests for optional numeric settings, system prompt, multi-turn context, and exclusion of failed/stopped assistant turns. Do not write shallow render or implementation-mirroring tests for static markup.
-- [ ] Build the responsive settings/conversation layout from installed shadcn primitives. Implement the controls and state transitions specified in the design. A local conversation renderer has no shadcn equivalent. Use native form validation plus JS validation where request construction needs it; blank optional numbers are omitted. Use `max_completion_tokens` for the token cap.
-- [ ] Send same-origin fetches to `/v1/chat/completions`, `Authorization: Bearer <trimmed key>`, `Content-Type: application/json`, `x-babellm-tags: source=playground`, and AbortController.signal. Request usage on streamed requests. Keep all secrets in React state. Display returned routing/request headers, errors, reasoning, available usage/cost, dropped parameters, and elapsed time.
-- [ ] Keep in-flight state synchronized with a ref/controller so double submits and old request callbacks are guarded. Stop aborts and preserves partial output as incomplete. New conversation clears history/error/stats and draft while preserving configuration. Successful context contains only completed user/assistant pairs; the current failed prompt can be retried without adding an unmatched duplicate. Changing model starts a clean conversation.
-- [ ] Add sidebar link near Dashboard and README instructions mentioning gateway key, normal usage/limits/logs, and memory-only conversation. Use safe links to `/keys`, `/providers`, `/models`, and `/logs/<request-id>` as applicable.
-- [ ] Run focused tests, lint, and typecheck; self-review and commit only this task's files. Controller performs production build/full suite and browser verification with a disposable fake provider.
+- [x] Read installed Next.js guides for layouts/pages, server/client components and relevant route behavior, plus existing shadcn combobox/card/input/switch APIs before coding.
+- [x] Write and run failing behavioral request tests for optional numeric settings, system prompt, multi-turn context, and exclusion of failed/stopped assistant turns. Do not write shallow render or implementation-mirroring tests for static markup.
+- [x] Build the responsive settings/conversation layout from installed shadcn primitives. Implement the controls and state transitions specified in the design. A local conversation renderer has no shadcn equivalent. Use native form validation plus JS validation where request construction needs it; blank optional numbers are omitted. Use `max_completion_tokens` for the token cap.
+- [x] Send same-origin fetches to `/v1/chat/completions`, `Authorization: Bearer <trimmed key>`, `Content-Type: application/json`, `x-babellm-tags: source=playground`, and AbortController.signal. Request usage on streamed requests. Keep all secrets in React state. Display returned routing/request headers, errors, reasoning, available usage/cost, dropped parameters, and elapsed time.
+- [x] Keep in-flight state synchronized with a ref/controller so double submits and old request callbacks are guarded. Stop aborts and preserves partial output as incomplete. New conversation clears history/error/stats and draft while preserving configuration. Successful context contains only completed user/assistant pairs; the current failed prompt can be retried without adding an unmatched duplicate. Changing model starts a clean conversation.
+- [x] Add sidebar link near Dashboard and README instructions mentioning gateway key, normal usage/limits/logs, and memory-only conversation. Use safe links to `/keys`, `/providers`, `/models`, and `/logs/<request-id>` as applicable.
+- [x] Run focused tests, lint, and typecheck; self-review and commit only this task's files. Controller performs production build/full suite and browser verification with a disposable fake provider.
 
 ## Controller verification and finish
 
-- [ ] Task-scoped review after each task and fix confirmed defects through its implementer.
-- [ ] Full test suite on the disposable database, lint, typecheck, production build.
-- [ ] Browser check via `pnpm dev:test-db` on port 3001 with a locally mocked provider in the disposable DB: empty state, model selection, send/stream, follow-up context, errors, Stop/reset, and narrow layout. Do not use the existing developer server on port 3000.
-- [ ] Whole-branch review and required fixes, then recheck affected behavior.
+- [x] Task-scoped review after each task and fix confirmed defects through its implementer.
+- [x] Full test suite on the disposable database, lint, typecheck, production build.
+- [x] Browser check via `pnpm dev:test-db` on port 3001 with a locally mocked provider in the disposable DB: empty state, model selection, send/stream, follow-up context, errors, Stop/reset, and narrow layout. Do not use the existing developer server on port 3000.
+- [x] Whole-branch review and required fixes, then recheck affected behavior.
 - [ ] Ask how to integrate per AGENTS.md: merge into main, keep branch, or branch + PR.
+
+## Verification results
+
+Verified 2026-11-04: 147 test files and 1,990 tests pass on the disposable database. Full lint, typecheck, and production build pass. Browser verification used a local fake provider on the disposable database and covered streaming/JSON, reasoning, multi-turn context, generation settings, keyboard send, errors, Stop/retry/reset, model changes, empty configuration, and narrow layout. Independent task and final reviews pass. Browser-discovered Stop resubmission and forced scrolling were corrected and rechecked. No real provider calls or development database access were used.
