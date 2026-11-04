@@ -194,11 +194,12 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
           <fieldset disabled={busy} className="min-w-0 space-y-5">
             <div className="space-y-2">
               <Label htmlFor="playground-model">Model</Label>
+              {model ? <p className="text-xs text-muted-foreground">{model.group}</p> : null}
               <Combobox
                 items={models}
                 value={model}
                 disabled={busy}
-                itemToStringLabel={(option: PlaygroundModelOption) => option.value}
+                itemToStringLabel={(option: PlaygroundModelOption) => option.label}
                 itemToStringValue={(option: PlaygroundModelOption) => option.value}
                 isItemEqualToValue={(a: PlaygroundModelOption, b: PlaygroundModelOption) => a.value === b.value}
                 onValueChange={(next: PlaygroundModelOption | null) => {
@@ -214,8 +215,8 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
                     {(option: PlaygroundModelOption) => (
                       <ComboboxItem key={option.value} value={option}>
                         <div className="min-w-0">
-                          <div className="truncate font-mono text-xs" title={option.value}>{option.value}</div>
                           <div className="text-xs text-muted-foreground">{option.group}</div>
+                          <div className="truncate font-mono text-xs" title={option.label}>{option.label}</div>
                         </div>
                       </ComboboxItem>
                     )}
