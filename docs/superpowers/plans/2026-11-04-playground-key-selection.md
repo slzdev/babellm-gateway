@@ -1,6 +1,6 @@
 # Playground Key Selection Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Replace pasted gateway credentials with an existing-key picker while preserving each key's enforcement and accounting.
 
@@ -48,11 +48,11 @@
 - Route POST delegates to that handler, `runtime='nodejs'`, `dynamic='force-dynamic'`.
 - Request JSON is `{ apiKeyId: UUID, ...ordinaryChatFields }`; response is the untouched gateway Response.
 
-- [ ] Read installed Next route-handler docs, existing gateway deps/auth/error/logging test helpers, and TDD guidance before code. Controller owns full-suite and service management; run focused tests serially.
-- [ ] Write tests and observe behavioral RED for key-list safe projections, duplicate names, disabled/expired/no keys, ID resolution and revalidation; anonymous session401, bad/missing/cross-site Origin403, valid/proxied origins, malformed JSON/ID400, missing/deleted/disabled/expired key401; public gateway refuses a selected key ID without a valid Bearer token.
-- [ ] Write lifecycle tests with real DB and fake adapter: selected key differs from supplied Bearer key and owns logs, usage and lastUsedAt; limits reject; payload capture follows selected key; SSE remains incremental and carries metadata; key-ID field is stripped and source tag controlled by server; forwarded signal observes cancellation. Verify actual outcomes, not only mocks.
-- [ ] Implement minimal shared validation/resolver and handler. Validate access before parsing body or touching keys. Use existing `GatewayError`, `errorResponse`, `readJson`, and `parseWith` conventions. Same-origin logic follows spec including forwarded host and fetch metadata; require HTTP(S) Origin without a path. Validate UUID before DB lookup, strip ID, construct forwarded Request with JSON body and original signal, controlled source tag, then use handleChatCompletions with chosen-key resolver and adapter factory.
-- [ ] Run focused tests, relevant lint/typecheck, self-review and commit only Task 1 files. Report RED/GREEN evidence, exact commands and remaining concerns.
+- [x] Read installed Next route-handler docs, existing gateway deps/auth/error/logging test helpers, and TDD guidance before code. Controller owns full-suite and service management; run focused tests serially.
+- [x] Write tests and observe behavioral RED for key-list safe projections, duplicate names, disabled/expired/no keys, ID resolution and revalidation; anonymous session401, bad/missing/cross-site Origin403, valid/proxied origins, malformed JSON/ID400, missing/deleted/disabled/expired key401; public gateway refuses a selected key ID without a valid Bearer token.
+- [x] Write lifecycle tests with real DB and fake adapter: selected key differs from supplied Bearer key and owns logs, usage and lastUsedAt; limits reject; payload capture follows selected key; SSE remains incremental and carries metadata; key-ID field is stripped and source tag controlled by server; forwarded signal observes cancellation. Verify actual outcomes, not only mocks.
+- [x] Implement minimal shared validation/resolver and handler. Validate access before parsing body or touching keys. Use existing `GatewayError`, `errorResponse`, `readJson`, and `parseWith` conventions. Same-origin logic follows spec including forwarded host and fetch metadata; require HTTP(S) Origin without a path. Validate UUID before DB lookup, strip ID, construct forwarded Request with JSON body and original signal, controlled source tag, then use handleChatCompletions with chosen-key resolver and adapter factory.
+- [x] Run focused tests, relevant lint/typecheck, self-review and commit only Task 1 files. Report RED/GREEN evidence, exact commands and remaining concerns.
 
 ### Task 2: Existing-key picker and request integration
 
@@ -68,13 +68,17 @@
 - Client signature `Playground({ models, apiKeys }: { models: PlaygroundModelOption[]; apiKeys: PlaygroundApiKeyOption[] })`.
 - Rename `PlaygroundSettings.apiKey` to `apiKeyId`; `buildPlaygroundRequest(...)` returns `{ apiKeyId: string; body: ChatRequest }`. Trim/require ID, keep all other validation/history unchanged.
 
-- [ ] Update request tests first for selected key IDs, missing selection, and unchanged history/numeric settings; observe relevant RED.
-- [ ] Load model/key options concurrently after requireAdmin. Replace password field with installed shadcn Select or Combobox, showing key name, prefix, optional owner and API keys link. Default first eligible key; disable while busy. On selection change clear history/stats/draft with existing newConversation behavior. If no usable keys, show actionable empty copy and disable send, preserving model controls.
-- [ ] Fetch `/playground/chat` with `credentials:'same-origin'`, JSON `{ ...requestBody.body, apiKeyId: requestBody.apiKeyId }`, and existing AbortSignal. Remove Authorization and browser source tag (server sets it). Preserve stream reader, cancellation guards, model popup/layout and all returned metadata. Update send gating and copy to selected-key behavior.
-- [ ] Update README/current design to remove obsolete pasted-secret instructions, describe admin-session execution under selected key with its normal usage/limits/logs, and preserve memory-only conversation wording.
-- [ ] Focused tests/lint/typecheck, self-review and scoped commit. No shallow static markup tests; controller verifies actual picker interaction in browser.
+- [x] Update request tests first for selected key IDs, missing selection, and unchanged history/numeric settings; observe relevant RED.
+- [x] Load model/key options concurrently after requireAdmin. Replace password field with installed shadcn Select or Combobox, showing key name, prefix, optional owner and API keys link. Default first eligible key; disable while busy. On selection change clear history/stats/draft with existing newConversation behavior. If no usable keys, show actionable empty copy and disable send, preserving model controls.
+- [x] Fetch `/playground/chat` with `credentials:'same-origin'`, JSON `{ ...requestBody.body, apiKeyId: requestBody.apiKeyId }`, and existing AbortSignal. Remove Authorization and browser source tag (server sets it). Preserve stream reader, cancellation guards, model popup/layout and all returned metadata. Update send gating and copy to selected-key behavior.
+- [x] Update README/current design to remove obsolete pasted-secret instructions, describe admin-session execution under selected key with its normal usage/limits/logs, and preserve memory-only conversation wording.
+- [x] Focused tests/lint/typecheck, self-review and scoped commit. No shallow static markup tests; controller verifies actual picker interaction in browser.
 
 ## Final verification
 
-- [ ] Independent task reviews, then full tests, lint/typecheck/build, disposable fake-provider browser checks (two keys, selection reset, SSE/JSON, Stop, empty keys and stale revoked key).
-- [ ] Whole-change review and necessary corrections. Keep `codex/playground` as already selected by the user; no merge or PR unless requested.
+- [x] Independent task reviews, then full tests, lint/typecheck/build, disposable fake-provider browser checks (two keys, selection reset, SSE/JSON, Stop, empty keys and stale revoked key).
+- [x] Whole-change review and necessary corrections. Keep `codex/playground` as already selected by the user; no merge or PR unless requested.
+
+## Verification results
+
+Verified 2026-11-04: full suite passes 148 files / 2,041 tests; lint, typecheck, production build and independent reviews pass. Disposable browser checks covered default/alternate key selection, conversation reset, SSE/JSON, selected-key log attribution and payload capture policy, revoked-key refusal before provider execution, no-active-key state and Send gating, and Stop/cancellation. Real signed-session requests also verified anonymous/cross-origin refusal and unchanged public Bearer authentication. Test and browser databases remained on port 5434; upstream calls used a localhost fake provider. Retained codex/playground per the user’s existing integration choice.
