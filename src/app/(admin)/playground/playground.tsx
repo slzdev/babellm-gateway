@@ -43,6 +43,7 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
   const [stats, setStats] = useState<RequestStats | null>(null)
   const active = useRef<ActiveRequest | null>(null)
   const transcript = useRef<HTMLDivElement>(null)
+  const followTranscript = useRef(true)
 
   useEffect(() => () => {
     const request = active.current
@@ -62,10 +63,11 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
 
   useEffect(() => {
     const element = transcript.current
-    if (element) element.scrollTop = element.scrollHeight
+    if (element && followTranscript.current) element.scrollTop = element.scrollHeight
   }, [turns])
 
   function newConversation() {
+    followTranscript.current = true
     const request = active.current
     active.current = null
     request?.controller.abort()
@@ -104,6 +106,7 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
       controller: new AbortController(), turnId: crypto.randomUUID(), startedAt: performance.now(),
     }
     active.current = request
+    followTranscript.current = true
     setBusy(true)
     setError(null)
     setStats({ elapsedMs: 0 })
@@ -258,7 +261,10 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
         </CardHeader>
         <CardContent className="min-w-0 space-y-4">
           {/* shadcn has no conversation primitive; render escaped text without markdown or HTML execution. */}
-          <div ref={transcript} role="log" aria-label="Conversation" aria-busy={busy} className="max-h-[60vh] min-h-48 space-y-5 overflow-y-auto rounded-lg border p-4 [overflow-wrap:anywhere]">
+          <div ref={transcript} onScroll={(event) => {
+            const element = event.currentTarget
+            followTranscript.current = element.scrollHeight - element.clientHeight - element.scrollTop <= 64
+          }} role="log" aria-label="Conversation" aria-busy={busy} className="max-h-[60vh] min-h-48 space-y-5 overflow-y-auto rounded-lg border p-4 [overflow-wrap:anywhere]">
             {turns.length === 0 ? <p className="text-sm text-muted-foreground">Send a message to begin. Completed replies are included in follow-up requests.</p> : null}
             {turns.map((turn) => (
               <div key={turn.id} className="space-y-3">
