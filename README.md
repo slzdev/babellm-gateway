@@ -32,6 +32,14 @@ await client.chat.completions.create({
 
 One line changed. Streaming, tool calls, and reasoning all come through.
 
+To try chat models in the admin dashboard, open **Playground**, select a model,
+and paste a gateway API key from **API keys**. It uses the real gateway with the
+key's normal usage accounting, limits, routing, and request logs. Stream replies,
+stop a response, or send follow-up messages; optional generation settings use
+provider defaults when blank. The key and conversation stay only in page memory
+and disappear when you leave or reload. **New conversation** clears the chat;
+changing the model also starts a new conversation.
+
 `/v1/responses` is served alongside it, the same client, the same virtual
 model:
 

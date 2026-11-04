@@ -16,7 +16,7 @@ interface NavSection {
 
 const NAV: NavSection[] = [
   {
-    items: [{ href: '/dashboard', label: 'Dashboard' }],
+    items: [{ href: '/dashboard', label: 'Dashboard' }, { href: '/playground', label: 'Playground' }],
   },
   {
     items: [
@@ -76,7 +76,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </div>
         </nav>
       </aside>
-      <main className="relative flex-1 overflow-y-auto">
+      <main className="relative min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl px-6 py-8">{children}</div>
       </main>
       <Toaster />
