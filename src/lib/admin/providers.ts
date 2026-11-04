@@ -150,18 +150,10 @@ export async function createProvider(input: ProviderInput): Promise<ProviderRow>
 }
 
 /**
- * bedrock's credential schema is a two-branch union (static keys vs. instance
- * role) rather than one flat shape with optional fields. A field-level merge
- * that blindly overlays new input onto old credentials can silently resurrect
- * the branch an edit is trying to leave: checking "use the instance role"
- * while old access keys are still present via merge lets the static-keys
- * branch keep matching first (zod tries union branches in order), so the
- * checkbox would be silently ignored. When the incoming edit explicitly opts
- * into the instance role, the static-key fields are dropped from the merge
- * base so only the instance-role branch can match. The reverse direction
- * needs no special handling: supplying accessKeyId/secretAccessKey always
- * satisfies the static-keys branch first, and zod's default "strip unknown
- * keys" behavior drops any stale useInstanceRole flag from the parsed result.
+ * Explicit Bedrock mode changes remove the previous mode's stored fields.
+ * Keep incoming fields so validation can reject a contradictory submission.
+ * An omitted mode preserves partial-update semantics; leaving the default
+ * chain for static keys requires an explicit false flag and both keys.
  */
 function mergeCredentials(
   adapter: AdapterType,
@@ -172,6 +164,12 @@ function mergeCredentials(
     const staticKeyFields = new Set(['accessKeyId', 'secretAccessKey', 'sessionToken'])
     const filteredBase = Object.fromEntries(
       Object.entries(base).filter(([key]) => !staticKeyFields.has(key)),
+    )
+    return { ...filteredBase, ...patch }
+  }
+  if (adapter === 'bedrock' && patch.useInstanceRole === false) {
+    const filteredBase = Object.fromEntries(
+      Object.entries(base).filter(([key]) => key !== 'useInstanceRole'),
     )
     return { ...filteredBase, ...patch }
   }

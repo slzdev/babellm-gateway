@@ -2,8 +2,8 @@ import type { DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import type { ApiFlavor } from '@/lib/api-flavors'
 import { decryptJson } from '@/lib/crypto'
 import type { ProviderRow } from '@/lib/db/schema'
-import { UnsupportedOperationError } from '@/lib/gateway/errors'
 import { createAnthropicAdapter } from './anthropic'
+import { createBedrockAdapter } from './bedrock'
 import { createGeminiAdapter } from './gemini'
 import { createOpenAIAdapter } from './openai'
 import { createResponsesAdapter } from './openai/responses'
@@ -63,8 +63,15 @@ export function createAdapter(
         'the Gemini API has no Decisions endpoint',
       )
     case 'bedrock':
-      throw new UnsupportedOperationError(
-        `The "${runtime.adapter}" adapter is not available yet.`,
+      return withDecideUnsupported(
+        withEmbedUnsupported(
+          withTranscribeUnsupported(
+            withRespondViaChat(createBedrockAdapter(runtime), runtime.name),
+            runtime.name, 'Bedrock Converse does not provide audio transcription',
+          ),
+          runtime.name, 'Bedrock Converse does not provide embeddings',
+        ),
+        runtime.name, 'Bedrock has no Decisions endpoint',
       )
   }
 }

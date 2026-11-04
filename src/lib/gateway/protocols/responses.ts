@@ -90,7 +90,7 @@ export const responsesIngress: Ingress<ResponsesRequest, ResponsesResult, Respon
     // A Responses-native candidate expresses everything it is sent; every
     // other one loses whatever responses-to-chat cannot carry, plus whatever
     // the candidate itself cannot express of the result.
-    if (candidate.apiFlavor === 'responses' && candidate.provider.adapter !== 'gemini') return []
+    if (candidate.apiFlavor === 'responses' && (candidate.provider.adapter === 'openai' || candidate.provider.adapter === 'openai_compatible')) return []
     return [...droppedParams(req), ...droppedForChat(candidate, toChatRequest(req))]
   },
   run: (adapter, ctx, req) => adapter.respond(req, ctx),
