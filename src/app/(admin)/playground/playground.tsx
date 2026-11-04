@@ -297,7 +297,14 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs text-muted-foreground">Ctrl/Cmd+Enter to send · Enter for a new line</p>
-            {busy ? <Button type="button" variant="outline" onClick={stop}>Stop</Button> : <Button type="submit" disabled={!model || !draft.trim() || !apiKey.trim()}>Send message</Button>}
+            {busy ? (
+              <Button type="button" variant="outline" onClick={(event) => {
+                // React reuses this button for Send after stop() clears busy.
+                // Cancel activation before its type changes to submit.
+                event.preventDefault()
+                stop()
+              }}>Stop</Button>
+            ) : <Button type="submit" disabled={!model || !draft.trim() || !apiKey.trim()}>Send message</Button>}
           </div>
         </CardContent>
       </Card>
