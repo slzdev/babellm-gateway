@@ -49,6 +49,15 @@ export async function resolveApiKey(token: string | null): Promise<ApiKeyRow> {
     .where(eq(apiKeys.keyHash, hashApiKey(token)))
     .limit(1)
 
+  return validateApiKey(key)
+}
+
+export async function resolveApiKeyById(id: string): Promise<ApiKeyRow> {
+  const [key] = await db.select().from(apiKeys).where(eq(apiKeys.id, id)).limit(1)
+  return validateApiKey(key)
+}
+
+function validateApiKey(key: ApiKeyRow | undefined): ApiKeyRow {
   if (!key) throw unauthorized('Incorrect API key provided.', 'invalid_api_key')
   if (!key.enabled) throw unauthorized('This API key has been disabled.', 'key_disabled')
   if (key.expiresAt && key.expiresAt.getTime() <= Date.now()) {

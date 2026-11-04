@@ -1,7 +1,27 @@
 import 'server-only'
-import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, or } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { catalogModels, providers, routeTargets, virtualModels } from '@/lib/db/schema'
+import { apiKeys, users, catalogModels, providers, routeTargets, virtualModels } from '@/lib/db/schema'
+
+export type PlaygroundApiKeyOption = {
+  id: string
+  name: string
+  keyPrefix: string
+  userName: string | null
+}
+
+export async function listPlaygroundApiKeys(): Promise<PlaygroundApiKeyOption[]> {
+  return db.select({
+    id: apiKeys.id, name: apiKeys.name, keyPrefix: apiKeys.keyPrefix, userName: users.name,
+  })
+    .from(apiKeys)
+    .leftJoin(users, eq(apiKeys.userId, users.id))
+    .where(and(
+      eq(apiKeys.enabled, true),
+      or(isNull(apiKeys.expiresAt), gt(apiKeys.expiresAt, new Date())),
+    ))
+    .orderBy(asc(apiKeys.name), asc(apiKeys.id))
+}
 
 export type PlaygroundModelOption = { value: string; label: string; group: string }
 

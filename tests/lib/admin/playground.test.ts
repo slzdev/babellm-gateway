@@ -1,10 +1,11 @@
-import { beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { db } from '@/lib/db'
-import { catalogModels, providers, routeTargets, virtualModels } from '@/lib/db/schema'
-import { listPlaygroundModels } from '@/lib/admin/playground'
+import { apiKeys, users, catalogModels, providers, routeTargets, virtualModels } from '@/lib/db/schema'
+import { listPlaygroundApiKeys, listPlaygroundModels } from '@/lib/admin/playground'
 import { resetDb } from '../../helpers/db'
 
 beforeEach(resetDb)
+afterEach(() => vi.useRealTimers())
 
 async function provider(name = 'alpha', enabled = true) {
   const [row] = await db.insert(providers).values({
@@ -116,5 +117,42 @@ test('a disabled virtual name does not shadow a direct address', async () => {
   await virtual('alpha/chat', p.id, 'chat', false)
   expect(await listPlaygroundModels()).toEqual([
     { value: 'alpha/chat', label: 'chat', group: 'alpha' },
+  ])
+})
+
+test('key options are empty when no usable keys exist', async () => {
+  expect(await listPlaygroundApiKeys()).toEqual([])
+  await db.insert(apiKeys).values([
+    { name: 'disabled', keyHash: 'disabled-secret-hash', keyPrefix: 'sk-disabled', enabled: false },
+    { name: 'expired', keyHash: 'expired-secret-hash', keyPrefix: 'sk-expired', expiresAt: new Date(Date.now() - 1) },
+  ])
+  expect(await listPlaygroundApiKeys()).toEqual([])
+})
+
+test('key options include only safe fields and stable duplicate-name ordering', async () => {
+  const [user] = await db.insert(users).values({ name: 'Ada', email: 'private@example.test', notes: 'private' }).returning()
+  await db.insert(apiKeys).values([
+    { id: '00000000-0000-4000-8000-000000000003', name: 'Zebra', keyHash: 'secret-z', keyPrefix: 'sk-z' },
+    { id: '00000000-0000-4000-8000-000000000002', name: 'Shared', keyHash: 'secret-b', keyPrefix: 'sk-b', userId: user.id, expiresAt: new Date(Date.now() + 60_000) },
+    { id: '00000000-0000-4000-8000-000000000001', name: 'Shared', keyHash: 'secret-a', keyPrefix: 'sk-a', logPayloads: true, budgetTotalUsd: '12' },
+    { name: 'A disabled', keyHash: 'secret-disabled', keyPrefix: 'sk-d', enabled: false },
+    { name: 'A expired', keyHash: 'secret-expired', keyPrefix: 'sk-e', expiresAt: new Date(Date.now() - 1) },
+  ])
+  expect(await listPlaygroundApiKeys()).toEqual([
+    { id: '00000000-0000-4000-8000-000000000001', name: 'Shared', keyPrefix: 'sk-a', userName: null },
+    { id: '00000000-0000-4000-8000-000000000002', name: 'Shared', keyPrefix: 'sk-b', userName: 'Ada' },
+    { id: '00000000-0000-4000-8000-000000000003', name: 'Zebra', keyPrefix: 'sk-z', userName: null },
+  ])
+})
+
+test('key eligibility excludes expiry exactly now and includes a later expiry', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-11-04T11:00:00Z'))
+  const [usable] = await db.insert(apiKeys).values([
+    { name: 'usable', keyHash: 'future-key-hash', keyPrefix: 'sk-future', expiresAt: new Date('2026-11-04T11:00:00.001Z') },
+    { name: 'expires now', keyHash: 'boundary-key-hash', keyPrefix: 'sk-boundary', expiresAt: new Date('2026-11-04T11:00:00Z') },
+  ]).returning()
+  expect(await listPlaygroundApiKeys()).toEqual([
+    { id: usable.id, name: 'usable', keyPrefix: 'sk-future', userName: null },
   ])
 })

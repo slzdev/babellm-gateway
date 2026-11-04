@@ -3,9 +3,12 @@ import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { apiKeys } from '@/lib/db/schema'
 import {
-  extractBearerToken, generateApiKey, hashApiKey, resolveApiKey, touchApiKey,
+  extractBearerToken, generateApiKey, hashApiKey, resolveApiKey, resolveApiKeyById, touchApiKey,
 } from '@/lib/gateway/auth'
 import { GatewayError } from '@/lib/gateway/errors'
+import { handleChatCompletions } from '@/lib/gateway/chat-handler'
+import { chatRequest, fakeAdapterDeps, seedGateway } from '../../helpers/gateway'
+import { waitForLogs } from '../../helpers/logs'
 import { resetDb } from '../../helpers/db'
 
 beforeEach(resetDb)
@@ -91,4 +94,49 @@ test('touchApiKey records last_used_at', async () => {
   await touchApiKey(row.id)
   const [updated] = await db.select().from(apiKeys).where(eq(apiKeys.id, row.id))
   expect(updated.lastUsedAt).toBeInstanceOf(Date)
+})
+
+test('a server-supplied resolver authenticates the shared lifecycle without a Bearer token', async () => {
+  process.env.ENCRYPTION_KEY = 'd'.repeat(64)
+  const { key } = await seedGateway()
+  const deps = {
+    ...fakeAdapterDeps({
+      async chat() {
+        return {
+          id: 'upstream', object: 'chat.completion', created: 1, model: 'upstream',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'hello', refusal: null }, finish_reason: 'stop', logprobs: null }],
+        }
+      },
+    }),
+    resolveKey: async () => key,
+  }
+  const response = await handleChatCompletions(chatRequest({
+    model: 'house-model', messages: [{ role: 'user', content: 'hi' }],
+  }, null), deps)
+  await waitForLogs()
+  expect(response.status).toBe(200)
+  expect((await response.json()).choices[0].message.content).toBe('hello')
+})
+
+test('resolveApiKeyById returns a usable stored key without knowing its secret', async () => {
+  const { row } = await insertKey()
+  expect((await resolveApiKeyById(row.id)).id).toBe(row.id)
+})
+
+test('resolveApiKeyById rejects an unknown or deleted ID', async () => {
+  await expect(resolveApiKeyById('00000000-0000-4000-8000-000000000001')).rejects.toMatchObject({
+    status: 401, code: 'invalid_api_key',
+  })
+  const { row } = await insertKey()
+  await db.delete(apiKeys).where(eq(apiKeys.id, row.id))
+  await expect(resolveApiKeyById(row.id)).rejects.toMatchObject({ status: 401, code: 'invalid_api_key' })
+})
+
+test('resolveApiKeyById revalidates disabled and expired keys on each lookup', async () => {
+  const { row } = await insertKey({ expiresAt: new Date(Date.now() + 60_000) })
+  expect((await resolveApiKeyById(row.id)).id).toBe(row.id)
+  await db.update(apiKeys).set({ enabled: false }).where(eq(apiKeys.id, row.id))
+  await expect(resolveApiKeyById(row.id)).rejects.toMatchObject({ status: 401, code: 'key_disabled' })
+  await db.update(apiKeys).set({ enabled: true, expiresAt: new Date(Date.now() - 1) }).where(eq(apiKeys.id, row.id))
+  await expect(resolveApiKeyById(row.id)).rejects.toMatchObject({ status: 401, code: 'key_expired' })
 })
