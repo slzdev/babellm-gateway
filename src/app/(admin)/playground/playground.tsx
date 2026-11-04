@@ -181,7 +181,7 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
   }
 
   return (
-    <form className="grid min-w-0 items-start gap-6 xl:grid-cols-[18rem_minmax(0,1fr)]" onSubmit={(event) => {
+    <form className="grid min-w-0 items-start gap-6 xl:grid-cols-[24rem_minmax(0,1fr)]" onSubmit={(event) => {
       event.preventDefault()
       void send()
     }}>
@@ -208,15 +208,15 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
                   setModel(next)
                 }}
               >
-                <ComboboxInput id="playground-model" placeholder="Search models…" disabled={busy} className="w-full" />
-                <ComboboxContent>
+                <ComboboxInput id="playground-model" placeholder="Search models…" disabled={busy} className="w-full" title={model?.label} />
+                <ComboboxContent className="w-[48rem] min-w-0 max-w-[min(var(--available-width),calc(100vw-2rem))]">
                   <ComboboxEmpty>No matching models.</ComboboxEmpty>
-                  <ComboboxList>
+                  <ComboboxList className="max-h-[min(24rem,var(--available-height))]">
                     {(option: PlaygroundModelOption) => (
                       <ComboboxItem key={option.value} value={option}>
                         <div className="min-w-0">
-                          <div className="text-xs text-muted-foreground">{option.group}</div>
-                          <div className="truncate font-mono text-xs" title={option.label}>{option.label}</div>
+                          <div className="text-xs wrap-anywhere text-muted-foreground">{option.group}</div>
+                          <div className="font-mono text-xs whitespace-normal wrap-anywhere" title={option.label}>{option.label}</div>
                         </div>
                       </ComboboxItem>
                     )}

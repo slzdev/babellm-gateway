@@ -10,7 +10,7 @@ export default async function PlaygroundPage() {
   const models = await listPlaygroundModels()
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-page-width="full">
       <PageHeader title="Playground" description="Try your models through the gateway with a text conversation." />
       <Playground models={models} />
     </div>

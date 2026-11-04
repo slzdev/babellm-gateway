@@ -77,7 +77,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </nav>
       </aside>
       <main className="relative min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl px-6 py-8">{children}</div>
+        <div className="mx-auto max-w-6xl px-6 py-8 has-[[data-page-width=full]]:max-w-none">{children}</div>
       </main>
       <Toaster />
     </div>
