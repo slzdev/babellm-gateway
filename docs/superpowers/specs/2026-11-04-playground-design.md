@@ -1,5 +1,9 @@
 # Playground design
 
+The existing-key behavior below is specified in detail by the
+[key-selection design](2026-11-04-playground-key-selection-design.md), which
+supersedes the original pasted-key approach.
+
 ## Intent and scope
 
 Add an admin page named **Playground** at `/playground` for testing configured
@@ -7,7 +11,7 @@ models through the real gateway. The user delegated feature details to the
 implementer and chose subagent-driven execution on a new branch in this checkout.
 
 The implementation choice is a chat playground: select a virtual model or a direct
-catalog model, supply a gateway API key, set an optional system prompt and generation
+catalog model, select an enabled, unexpired gateway API key, set an optional system prompt and generation
 settings, and exchange multiple text turns. Replies stream, can be stopped, and
 show available usage and routing metadata. A new conversation clears history.
 
@@ -15,8 +19,8 @@ show available usage and routing metadata. A new conversation clears history.
 
 - Build in the existing Next.js App Router, React, TypeScript, and shadcn/ui stack.
 - Add `/playground` to the existing admin sidebar and require the admin session on the page.
-- Send requests to the existing `/v1/chat/completions` endpoint with a user-supplied gateway API key; preserve routing, key limits, cost, usage, logging, and error behavior.
-- Keep the API key and conversation only in client component memory; never save them to browser storage, URLs, or a new database table.
+- Send the selected key ID and chat payload to admin-only `POST /playground/chat` under the same-origin admin session. Resolve and revalidate the key server-side; preserve routing, key limits, cost, usage, logging, and error behavior.
+- Expose only key ID, name, display prefix, and optional owner to the browser; never expose a secret or hash. Keep conversation state only in client component memory, never browser storage, URLs, or a new database table.
 - Never run tests or browser checks against Postgres on 5432; use the disposable Postgres on 5434 and `pnpm dev:test-db` on port 3001.
 - Preserve the pre-existing `package.json` change to the `dev` script.
 
@@ -37,12 +41,15 @@ rendering is custom because shadcn has no chat/conversation equivalent. Render m
 text as escaped plain text with whitespace preserved, plus a separate reasoning
 section when provided. Avoid a new markdown dependency.
 
-Controls: searchable model picker, masked API key field with API keys link, optional
+Controls: searchable model picker, existing-key selector showing name, prefix and optional owner with an API keys link, optional
 system prompt, optional temperature (0–2), optional positive integer max completion
 tokens, and streaming toggle (on by default). Leave optional parameters absent until
 explicitly set, since providers vary in supported sampling options. Submit via button
 or Ctrl/Cmd+Enter, preserve regular Enter for newlines, prevent duplicate sends,
 disable configuration changes during requests, support Stop and New conversation.
+Default to the first eligible API key. Model or key changes clear conversation,
+draft, errors and request details. With no eligible keys, preserve model controls,
+disable sending and link to API keys to create or enable a key.
 
 Keep completed assistant turns as subsequent context. On failure or Stop, keep partial
 output visibly marked and exclude it from subsequent context; retain a failed user
@@ -56,11 +63,11 @@ usage/cost stays unknown. Do not execute tools or upload media in this version.
 
 ## Approaches considered
 
-1. **Browser client of the existing gateway (chosen by implementer):** requires
-   pasting a gateway API key, but preserves all gateway behavior and avoids changing
-   trusted authentication boundaries.
-2. **Admin-only execution endpoint:** avoids pasting a key, but would introduce a
-   separate identity and accounting policy or require gateway authentication changes.
+1. **Admin-only execution endpoint (current approach):** resolves the selected
+   existing key server-side and uses the shared gateway lifecycle for accounting,
+   routing and limits. The public API continues to require Bearer credentials.
+2. **Browser client of the public gateway (original approach, superseded):** required
+   pasting a secret. The existing-key selector avoids sending secrets to the browser.
 3. **Multi-endpoint API workbench:** covers embeddings/audio/decisions but requires
    different inputs and response displays; outside this first chat-focused page.
 

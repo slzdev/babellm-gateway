@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildPlaygroundRequest, type PlaygroundTurn } from '@/lib/playground/request'
 
 const settings = {
-  model: 'smart', apiKey: ' sk-bab-test ', systemPrompt: '',
+  model: 'smart', apiKeyId: ' 11111111-1111-4111-8111-111111111111 ', systemPrompt: '',
   temperature: '', maxCompletionTokens: '', stream: true,
 }
 
@@ -13,7 +13,7 @@ const turn = (status: PlaygroundTurn['status'], prompt: string, content: string)
 describe('Playground requests', () => {
   it('omits blank optional settings and requests streamed usage', () => {
     expect(buildPlaygroundRequest(settings, [], 'Hello')).toEqual({
-      apiKey: 'sk-bab-test',
+      apiKeyId: '11111111-1111-4111-8111-111111111111',
       body: {
         model: 'smart', messages: [{ role: 'user', content: 'Hello' }],
         stream: true, stream_options: { include_usage: true },
@@ -68,10 +68,27 @@ describe('Playground requests', () => {
     expect(() => buildPlaygroundRequest({ ...settings, maxCompletionTokens }, [], 'Hello')).toThrow(/tokens/i)
   })
 
-  it.each([
-    { ...settings, apiKey: ' ' }, { ...settings, model: '' },
-  ])('rejects requests missing credentials or a model', (invalid) => {
-    expect(() => buildPlaygroundRequest(invalid, [], 'Hello')).toThrow()
+  it.each(['', '   '])('rejects a missing key selection %j', (apiKeyId) => {
+    expect(() => buildPlaygroundRequest({ ...settings, apiKeyId }, [], 'Hello')).toThrow(/select.*api key/i)
+  })
+
+  it('uses the selected key ID without changing the chat payload', () => {
+    const selected = buildPlaygroundRequest({
+      ...settings, apiKeyId: '22222222-2222-4222-8222-222222222222', stream: false,
+    }, [turn('complete', 'First', 'Answer')], 'Follow up')
+    expect(selected).toEqual({
+      apiKeyId: '22222222-2222-4222-8222-222222222222',
+      body: {
+        model: 'smart', stream: false, messages: [
+          { role: 'user', content: 'First' }, { role: 'assistant', content: 'Answer' },
+          { role: 'user', content: 'Follow up' },
+        ],
+      },
+    })
+  })
+
+  it('rejects a missing model', () => {
+    expect(() => buildPlaygroundRequest({ ...settings, model: '' }, [], 'Hello')).toThrow(/model/i)
   })
 
   it('rejects an empty draft before sending', () => {

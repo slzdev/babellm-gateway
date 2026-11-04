@@ -11,9 +11,10 @@ import {
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import type { PlaygroundModelOption } from '@/lib/admin/playground'
+import type { PlaygroundApiKeyOption, PlaygroundModelOption } from '@/lib/admin/playground'
 import { buildPlaygroundRequest, type PlaygroundTurn } from '@/lib/playground/request'
 import { readChatResponse, type PlaygroundUsage } from '@/lib/playground/stream'
 
@@ -29,9 +30,9 @@ type RequestStats = {
 
 type ActiveRequest = { controller: AbortController; turnId: string; startedAt: number }
 
-export function Playground({ models }: { models: PlaygroundModelOption[] }) {
+export function Playground({ models, apiKeys }: { models: PlaygroundModelOption[]; apiKeys: PlaygroundApiKeyOption[] }) {
   const [model, setModel] = useState<PlaygroundModelOption | null>(models[0] ?? null)
-  const [apiKey, setApiKey] = useState('')
+  const [apiKeyId, setApiKeyId] = useState(apiKeys[0]?.id ?? '')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [temperature, setTemperature] = useState('')
   const [maxCompletionTokens, setMaxCompletionTokens] = useState('')
@@ -95,7 +96,7 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
     let requestBody: ReturnType<typeof buildPlaygroundRequest>
     try {
       requestBody = buildPlaygroundRequest({
-        model: model?.value ?? '', apiKey, systemPrompt, temperature, maxCompletionTokens, stream,
+        model: model?.value ?? '', apiKeyId, systemPrompt, temperature, maxCompletionTokens, stream,
       }, turns, draft)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Check the request settings.')
@@ -119,14 +120,11 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
     })
 
     try {
-      const response = await fetch('/v1/chat/completions', {
+      const response = await fetch('/playground/chat', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${requestBody.apiKey}`,
-          'Content-Type': 'application/json',
-          'x-babellm-tags': 'source=playground',
-        },
-        body: JSON.stringify(requestBody.body),
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...requestBody.body, apiKeyId: requestBody.apiKeyId }),
         signal: request.controller.signal,
       })
       if (active.current !== request) return
@@ -188,7 +186,7 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
       <Card className="min-w-0">
         <CardHeader>
           <CardTitle>Settings</CardTitle>
-          <CardDescription>Requests use your key&apos;s normal limits, routing, and usage tracking.</CardDescription>
+          <CardDescription>Requests use the selected key&apos;s normal limits, routing, and usage tracking.</CardDescription>
         </CardHeader>
         <CardContent>
           <fieldset disabled={busy} className="min-w-0 space-y-5">
@@ -229,8 +227,33 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
                 <Label htmlFor="playground-key">Gateway API key</Label>
                 <Link href="/keys" className="text-xs underline underline-offset-4">API keys</Link>
               </div>
-              <Input id="playground-key" type="password" autoComplete="off" required value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-bab-…" />
-              <p className="text-xs text-muted-foreground">Kept only in this page&apos;s memory.</p>
+              <Select
+                items={apiKeys.map((key) => ({ value: key.id, label: `${key.name} · ${key.keyPrefix}${key.userName ? ` · ${key.userName}` : ''}` }))}
+                value={apiKeyId || null}
+                disabled={busy || apiKeys.length === 0}
+                onValueChange={(next: string | null) => {
+                  if (active.current || next === apiKeyId) return
+                  newConversation()
+                  setApiKeyId(next ?? '')
+                }}
+              >
+                <SelectTrigger id="playground-key" className="w-full min-w-0">
+                  <SelectValue placeholder="Select an API key" className="min-w-0 truncate" />
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false}>
+                  {apiKeys.map((key) => (
+                    <SelectItem key={key.id} value={key.id}>
+                      <span className="min-w-0 whitespace-normal wrap-anywhere">
+                        <span className="block font-medium">{key.name}</span>
+                        <span className="block text-xs text-muted-foreground">{key.keyPrefix}{key.userName ? ` · ${key.userName}` : ''}</span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {apiKeys.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No active API keys. <Link href="/keys" className="underline underline-offset-4">Create or enable an API key</Link> to send a message.</p>
+              ) : <p className="text-xs text-muted-foreground">Only enabled, unexpired keys are available. Key changes start a new conversation.</p>}
             </div>
             <div className="space-y-2">
               <Label htmlFor="playground-system">System prompt <span className="text-muted-foreground">(optional)</span></Label>
@@ -258,7 +281,7 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
             <CardTitle>Conversation</CardTitle>
             <Button type="button" variant="outline" size="sm" onClick={newConversation}>New conversation</Button>
           </div>
-          <CardDescription>Text only. Conversation stays in memory until you leave or reload. Model changes start a new conversation.</CardDescription>
+          <CardDescription>Text only. Conversation stays in memory until you leave or reload. Model or key changes start a new conversation.</CardDescription>
         </CardHeader>
         <CardContent className="min-w-0 space-y-4">
           {/* shadcn has no conversation primitive; render escaped text without markdown or HTML execution. */}
@@ -311,7 +334,7 @@ export function Playground({ models }: { models: PlaygroundModelOption[] }) {
                 event.preventDefault()
                 stop()
               }}>Stop</Button>
-            ) : <Button type="submit" disabled={!model || !draft.trim() || !apiKey.trim()}>Send message</Button>}
+            ) : <Button type="submit" disabled={!model || !draft.trim() || !apiKeyId.trim()}>Send message</Button>}
           </div>
         </CardContent>
       </Card>

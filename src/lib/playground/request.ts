@@ -8,7 +8,7 @@ export type PlaygroundTurn = {
 
 export type PlaygroundSettings = {
   model: string
-  apiKey: string
+  apiKeyId: string
   systemPrompt: string
   temperature: string
   maxCompletionTokens: string
@@ -26,10 +26,10 @@ type ChatRequest = {
 }
 
 export function buildPlaygroundRequest(settings: PlaygroundSettings, history: PlaygroundTurn[], draft: string): {
-  apiKey: string; body: ChatRequest
+  apiKeyId: string; body: ChatRequest
 } {
-  const apiKey = settings.apiKey.trim()
-  if (!apiKey) throw new Error('Enter a gateway API key.')
+  const apiKeyId = settings.apiKeyId.trim()
+  if (!apiKeyId) throw new Error('Select a gateway API key.')
   if (!settings.model.trim()) throw new Error('Select a model.')
   if (!draft.trim()) throw new Error('Enter a message.')
 
@@ -56,5 +56,5 @@ export function buildPlaygroundRequest(settings: PlaygroundSettings, history: Pl
     }
     body.max_completion_tokens = tokens
   }
-  return { apiKey, body }
+  return { apiKeyId, body }
 }
