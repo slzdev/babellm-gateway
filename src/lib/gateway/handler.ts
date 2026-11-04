@@ -4,7 +4,7 @@ import { createAdapter as defaultCreateAdapter } from '@/lib/adapters/registry'
 import type { AttemptContext, ModelPathOverrides, ProviderAdapter } from '@/lib/adapters/types'
 import type { DecisionsApiFlavor } from '@/lib/decisions-api-flavors'
 import type { ApiFlavor } from '@/lib/api-flavors'
-import type { ProviderRow } from '@/lib/db/schema'
+import type { ApiKeyRow, ProviderRow } from '@/lib/db/schema'
 import { logRequest, resolveRequestLogStore } from '@/lib/logs'
 import { capPayload } from '@/lib/logs/payload'
 import type {
@@ -28,6 +28,8 @@ import { sseResponse, startStream, type StreamCapture, type StreamOutcome, type 
 import { tagsFromRequest } from './tags'
 
 export interface GatewayDeps {
+  /** Server-only ingress override; public routes always use Bearer authentication. */
+  resolveKey?: (request: Request) => Promise<ApiKeyRow>
   createAdapter: (
     provider: ProviderRow,
     flavor: ApiFlavor,
@@ -408,7 +410,9 @@ export async function runGatewayRequest<Req, Res, Chunk>(
   }
 
   try {
-    const apiKey = await resolveApiKey(extractBearerToken(request))
+    const apiKey = deps.resolveKey
+      ? await deps.resolveKey(request)
+      : await resolveApiKey(extractBearerToken(request))
     keyId = apiKey.id
     keyName = apiKey.name
     capturePayloads = apiKey.logPayloads

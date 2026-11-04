@@ -32,6 +32,17 @@ await client.chat.completions.create({
 
 One line changed. Streaming, tool calls, and reasoning all come through.
 
+To try chat models in the admin dashboard, open **Playground**, select a model,
+and choose an enabled, unexpired gateway API key. Your admin session authorizes
+execution under the selected key, with its normal usage accounting, limits,
+routing, and request logs. No key secret is sent to the browser. Create or enable
+a key in **API keys** if none are available. Stream replies, stop a response, or
+send follow-up messages; optional generation settings use provider defaults when
+blank. The conversation stays only in page memory and disappears when you leave
+or reload. **New conversation** clears the chat; changing the model or key also
+starts a new conversation. See the [key-selection design](docs/superpowers/specs/2026-11-04-playground-key-selection-design.md)
+for the admin-session request flow.
+
 `/v1/responses` is served alongside it, the same client, the same virtual
 model:
 
