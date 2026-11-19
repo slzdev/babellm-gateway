@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type {
   ContentBlock, ConverseCommandInput, ConverseCommandOutput, ConverseStreamOutput,
-  Message, TokenUsage, ToolChoice, ToolInputSchema,
+  Message, SystemContentBlock, TokenUsage, ToolChoice, ToolInputSchema,
 } from '@aws-sdk/client-bedrock-runtime'
 import type { ChatCompletion, ChatCompletionChunk } from '@/lib/adapters/types'
 import { GatewayError, ProviderError } from '@/lib/gateway/errors'
@@ -78,10 +78,41 @@ function toolsEnabled(req: ChatCompletionRequest): boolean {
   return !!req.tools?.length && req.tool_choice !== 'none'
 }
 
+// Prompt caching is opt-in on Bedrock, and the wrong form for a model is a
+// ValidationException on every request, so both lists are allowlists taken
+// from the Bedrock prompt-caching guide. Automatic mode (a top-level
+// `cache_control`) lets the model move its checkpoint forward as a
+// conversation grows; models without it get explicit `cachePoint` blocks
+// instead. Anything unrecognized, including opaque application inference
+// profile ARNs, is sent without caching.
+const AUTOMATIC_CACHE = new Set([
+  'haiku-4.5', 'sonnet-4.6', 'opus-4.7', 'opus-4.8',
+  'opus-5.0', 'opus-5.5', 'sonnet-5.0', 'sonnet-5.5', 'haiku-5.5',
+])
+const EXPLICIT_CACHE = new Set([
+  'opus-4.5', 'opus-4.6',
+  'fable-5.0', 'fable-5.1', 'fable-5.2', 'mythos-5.0', 'mythos-5.1', 'mythos-5.2',
+])
+
+type CacheMode = 'automatic' | 'explicit' | undefined
+
+function promptCacheMode(upstreamModel: string): CacheMode {
+  // Foundation-model and inference-profile ARNs end in the model ID. The minor
+  // version is one or two digits so a date suffix (`sonnet-4-20250514`) never
+  // reads as a version.
+  const id = upstreamModel.slice(upstreamModel.lastIndexOf('/') + 1)
+  const match = /^(?:[a-z]+\.)?anthropic\.claude-(haiku|sonnet|opus|fable|mythos)-(\d+)(?:-(\d{1,2}))?(?=$|[-:])/.exec(id)
+  if (!match) return undefined
+  const key = `${match[1]}-${match[2]}.${match[3] ?? '0'}`
+  return AUTOMATIC_CACHE.has(key) ? 'automatic' : EXPLICIT_CACHE.has(key) ? 'explicit' : undefined
+}
+
+const CACHE_POINT = { cachePoint: { type: 'default' as const } }
+
 export function toConverseRequest(req: ChatCompletionRequest, upstreamModel: string): ConverseCommandInput {
   const nativeTools = toolsEnabled(req)
   const messages: Message[] = []
-  const system: { text: string }[] = []
+  const system: SystemContentBlock[] = []
   const calls = new Map<string, string>()
   function append(role: 'user' | 'assistant', content: ContentBlock[]) {
     if (!content.length) return
@@ -145,9 +176,18 @@ export function toConverseRequest(req: ChatCompletionRequest, upstreamModel: str
     ...(stop.length ? { stopSequences: stop } : {}),
   }
   const choice = toolChoice(req.tool_choice)
+  const cache = promptCacheMode(upstreamModel)
+  if (cache === 'explicit') {
+    // One checkpoint after the system prompt keeps it reusable when the
+    // conversation diverges; one at the end caches the whole prefix for the
+    // next turn. Below the model's minimum size a checkpoint is a no-op.
+    if (system.length) system.push(CACHE_POINT)
+    messages.at(-1)?.content?.push(CACHE_POINT)
+  }
   return {
     modelId: upstreamModel, messages,
     ...(system.length ? { system } : {}),
+    ...(cache === 'automatic' ? { additionalModelRequestFields: { cache_control: { type: 'ephemeral' } } } : {}),
     ...(Object.keys(inferenceConfig).length ? { inferenceConfig } : {}),
     ...(nativeTools ? { toolConfig: {
       tools: req.tools!.map((tool) => ({ toolSpec: {

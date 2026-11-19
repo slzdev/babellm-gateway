@@ -326,6 +326,17 @@ change how the model interprets history. With tools enabled, history stays
 native. Empty native tool results use JSON `{"output":""}` because Bedrock
 rejects empty text blocks.
 
+Prompt caching is turned on automatically for Claude models that support it on
+Bedrock, using the default 5-minute TTL. Haiku 4.5, Sonnet 4.6, Opus 4.7/4.8 and
+the Opus/Sonnet/Haiku 5.x models use Bedrock's automatic mode, a top-level
+`cache_control`. Opus 4.5/4.6, Fable and Mythos get explicit cache checkpoints
+after the system prompt and at the end of the conversation. Other models,
+including Nova and application inference profile ARNs, whose model can't be
+identified from the ID, are sent without caching. Cache reads appear as
+`usage.prompt_tokens_details.cached_tokens`. Cache writes are counted in
+`prompt_tokens` and priced at the regular input rate, although AWS may charge
+more for them.
+
 Discovery provides model metadata, not AWS billing prices. Catalog pricing uses
 the existing models.dev/seed/override rules; profile ARNs and unrecognized IDs may
 not match registry entries. Set Catalog price overrides where needed before
