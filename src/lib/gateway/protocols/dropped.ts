@@ -17,7 +17,7 @@ import type { Candidate } from '../resolve'
  * gets broken.
  */
 export function droppedForChat(candidate: Candidate, req: ChatCompletionRequest): string[] {
-  if (candidate.provider.adapter === 'bedrock') return bedrockDropped(req)
+  if (candidate.provider.adapter === 'bedrock') return bedrockDropped(req, candidate.upstreamModel)
   if (candidate.provider.adapter === 'gemini') return geminiDropped(req)
   if (candidate.apiFlavor === 'responses') return responsesDropped(req)
   if (candidate.apiFlavor === 'anthropic_messages') return anthropicDropped(req)

@@ -18,7 +18,7 @@ export function createBedrockAdapter(runtime: ProviderRuntime, factory?: Bedrock
   return {
     async chat(req, ctx) {
       try {
-        const output = await client.send(new ConverseCommand(toConverseRequest(req, ctx.upstreamModel)), options(ctx.signal))
+        const output = await client.send(new ConverseCommand(toConverseRequest(req, ctx.upstreamModel, runtime.config)), options(ctx.signal))
         return fromConverse(output, ctx.upstreamModel)
       } catch (err) { throw toProviderError(err) }
     },
@@ -27,7 +27,7 @@ export function createBedrockAdapter(runtime: ProviderRuntime, factory?: Bedrock
         // The total-duration signal stays active while draining the stream;
         // HTTP/2 requestTimeout alone is only an idle timeout.
         const requestOptions = options(ctx.signal)
-        const output = await client.send(new ConverseStreamCommand(toConverseRequest(req, ctx.upstreamModel)), requestOptions)
+        const output = await client.send(new ConverseStreamCommand(toConverseRequest(req, ctx.upstreamModel, runtime.config)), requestOptions)
         if (!output.stream) throw new ProviderError({ status: 502, message: 'Bedrock returned no response stream.', retryable: true })
         const stream = output.stream
         const signal = requestOptions.abortSignal
