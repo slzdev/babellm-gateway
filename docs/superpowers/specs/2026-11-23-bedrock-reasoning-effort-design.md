@@ -18,6 +18,10 @@ changes**.
 - Non-goal: validating effort values per model. An unsupported value (e.g.
   `xhigh` on Haiku 5.5, `none` on GPT-6 Astra) is a 400 from upstream, the
   same "forward verbatim" stance the schema and the Anthropic adapter take.
+- Accepted: thinking combined with `temperature` ≠ 1, `top_p` < 0.95, or a
+  forced `tool_choice` (required/named) is rejected upstream, same as the
+  direct Anthropic adapter. Adaptive Claude tool loops behave as in the
+  direct adapter.
 - Anti-goal: breaking requests for families that never asked for reasoning
   (Meta, Mistral, DeepSeek, opaque application-inference-profile ARNs).
 
@@ -31,12 +35,13 @@ changes**.
 
 ## Design
 
-All of this lives in `src/lib/translate/chat-to-bedrock.ts`.
+The resolver lives in `src/lib/translate/bedrock-reasoning.ts` and is wired
+from `src/lib/translate/chat-to-bedrock.ts`.
 
 ### Family detection
 
 Take the ID after the last `/` (ARNs end in the model ID), strip an
-optional region/geo prefix (`us.`, `eu.`, `apac.`, `global.`, …), then:
+optional region/geo prefix (`us.`, `us-gov.`, `eu.`, `apac.`, `global.`, …), then:
 
 - `anthropic.claude-*` → Claude
 - `openai.*` → OpenAI
@@ -76,6 +81,18 @@ Budget map: `low` 2048, `medium` 8192, `high` 16384; any other value
 to `budget + 4096`; when it did and it is ≤ budget, lower the budget to
 `maxTokens - 1`; if that is below 1024 (Anthropic's minimum), send no
 thinking and report `reasoning_effort` as dropped.
+
+Legacy tool-loop guard: with thinking enabled Anthropic requires the last
+assistant turn containing `tool_use` to start with a signed thinking block,
+which the gateway never replays. So on legacy models only, when the request
+continues a tool loop (the last assistant message has `tool_calls` and every
+later message is a `tool`/`function` result, at least one), no thinking is
+sent and `reasoning_effort` is reported as dropped. This also applies to the
+provider opt-in. Adaptive Claude and OpenAI are unaffected.
+
+On the legacy path `maxTokens = budget + 4096` is set whenever the client
+gave no max, including opt-in-only requests. The `maxTokens - 1` clamp can
+leave little room for the answer with a small client max (follow-up).
 
 Claude 3.0 / 3.5 have no thinking: treat as unsupported (dropped).
 
