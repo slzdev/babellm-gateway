@@ -116,3 +116,16 @@ test('unsupported family', () => {
   expect(r({ reasoning_effort: 'high' }, 'meta.llama4-maverick-17b-instruct-v1:0')).toEqual({ translated: false })
   expect(r({ reasoning_effort: 'high' }, 'arn:aws:bedrock:us-east-1:1:application-inference-profile/abc123')).toEqual({ translated: false })
 })
+
+test('claude 2 and instant unsupported', () => {
+  for (const id of ['anthropic.claude-v2:1', 'anthropic.claude-v2', 'anthropic.claude-instant-v1']) {
+    expect(r({ reasoning_effort: 'high' }, id), id).toEqual({ translated: false })
+  }
+})
+
+test('effort names that collide with Object.prototype are treated as plain strings', () => {
+  const legacy = r({ reasoning_effort: 'constructor' }, 'anthropic.claude-sonnet-4-5-20250929-v1:0')
+  expect(at(legacy.fields).thinking.budget_tokens).toBe(16384)
+  const adaptive = r({ reasoning_effort: 'constructor' }, 'anthropic.claude-sonnet-5-5')
+  expect(at(adaptive.fields).output_config.effort).toBe('constructor')
+})

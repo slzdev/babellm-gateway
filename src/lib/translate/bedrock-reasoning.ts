@@ -12,17 +12,17 @@ export interface BedrockReasoning {
 
 // Same alias the Anthropic adapter applies: Claude has no `minimal` level.
 // Kept local so the two adapters do not grow a dependency on each other.
-const CLAUDE_EFFORT_ALIASES: Record<string, string> = { minimal: 'low' }
+const CLAUDE_EFFORT_ALIASES = new Map([['minimal', 'low']])
 
 // Models that only accept a token budget for thinking. A closed list: no
 // future model will be budget-only, so every other Claude ID is adaptive and
 // new releases need no code change.
 const LEGACY_BUDGET =
   /claude-(?:3-7-|(?:sonnet|opus)-4-\d{8}|opus-4-1-|(?:sonnet|haiku|opus)-4-5-)/
-// Claude generations with no extended thinking at all.
-const NO_THINKING = /claude-(?:3-(?!7)|instant)/
+// Claude generations with no extended thinking at all (3.0/3.5, 2.x, Instant).
+const NO_THINKING = /claude-(?:3-(?!7)|instant|v\d)/
 
-const BUDGETS: Record<string, number> = { low: 2048, medium: 8192, high: 16384 }
+const BUDGETS = new Map([['low', 2048], ['medium', 8192], ['high', 16384]])
 // Anthropic rejects a thinking budget below this.
 const MIN_BUDGET = 1024
 // Headroom for the visible answer when the client gave no max of its own.
@@ -62,7 +62,7 @@ export function bedrockReasoning(
 
   if (!id.startsWith('anthropic.claude-') || NO_THINKING.test(id)) return { translated: false }
 
-  const effort = requested === undefined ? undefined : CLAUDE_EFFORT_ALIASES[requested] ?? requested
+  const effort = requested === undefined ? undefined : CLAUDE_EFFORT_ALIASES.get(requested) ?? requested
 
   if (!LEGACY_BUDGET.test(id)) {
     return {
@@ -73,7 +73,7 @@ export function bedrockReasoning(
 
   // Legacy models: anything beyond `high` (xhigh, max, …) gets high's budget,
   // and the opt-in with no effort gets the middle one.
-  let budget = BUDGETS[effort ?? 'medium'] ?? BUDGETS.high
+  let budget = BUDGETS.get(effort ?? 'medium') ?? 16384
   const clientMax = req.max_completion_tokens ?? req.max_tokens ?? undefined
   let maxTokens: number | undefined
   if (clientMax === undefined) {
