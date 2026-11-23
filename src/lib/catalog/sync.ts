@@ -129,6 +129,7 @@ export function effectiveColumns(effective: EffectiveFields, sources: FieldSourc
     inputPerMtok: money(effective.inputPerMtok),
     outputPerMtok: money(effective.outputPerMtok),
     cachedInputPerMtok: money(effective.cachedInputPerMtok),
+    cacheWritePerMtok: money(effective.cacheWritePerMtok),
     supportsTools: effective.supportsTools,
     supportsStreaming: effective.supportsStreaming,
     modalities: effective.modalities,

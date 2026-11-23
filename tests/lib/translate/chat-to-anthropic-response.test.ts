@@ -99,7 +99,7 @@ test('cache tokens are counted into prompt tokens and reported separately', () =
     prompt_tokens: 130,
     completion_tokens: 5,
     total_tokens: 135,
-    prompt_tokens_details: { cached_tokens: 100 },
+    prompt_tokens_details: { cached_tokens: 100, cache_write_tokens: 20 },
   })
 })
 

@@ -38,7 +38,7 @@ test('reads usage off the terminal event', () => {
     } },
   } as never)
 
-  expect(usage).toEqual({ promptTokens: 10, completionTokens: 4, cachedTokens: 6, reasoningTokens: 2 })
+  expect(usage).toEqual({ promptTokens: 10, completionTokens: 4, cachedTokens: 6, cacheWriteTokens: null, reasoningTokens: 2 })
 })
 
 test('reports no usage on a non-terminal event', () => {

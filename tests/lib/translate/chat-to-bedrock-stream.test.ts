@@ -25,7 +25,7 @@ test('relays text and reasoning and reads usage after messageStop', async () => 
     { role: 'assistant' }, { reasoning_content: 'Think' }, { content: 'Hello' }, {},
   ])
   expect(chunks.at(-2)?.choices[0].finish_reason).toBe('stop')
-  expect(chunks.at(-1)?.usage).toEqual({ prompt_tokens: 15, completion_tokens: 4, total_tokens: 19, prompt_tokens_details: { cached_tokens: 3 } })
+  expect(chunks.at(-1)?.usage).toEqual({ prompt_tokens: 15, completion_tokens: 4, total_tokens: 19, prompt_tokens_details: { cached_tokens: 3, cache_write_tokens: 2 } })
 })
 
 test('tool indices are contiguous across interleaved text and preserve partial JSON', async () => {

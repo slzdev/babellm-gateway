@@ -116,7 +116,7 @@ test('relays a usage-bearing chunk untouched when no costFor is supplied', async
   const body = await res.text()
 
   expect(captured!.usage).toEqual({
-    promptTokens: 10, completionTokens: 5, cachedTokens: null, reasoningTokens: null,
+    promptTokens: 10, completionTokens: 5, cachedTokens: null, cacheWriteTokens: null, reasoningTokens: null,
   })
   expect(captured!.cost).toBeNull()
   expect(body).not.toContain('"cost"')

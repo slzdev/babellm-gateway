@@ -28,6 +28,7 @@ const NUMERIC_LABELS = [
   ['inputPerMtok', 'Input $/Mtok'],
   ['outputPerMtok', 'Output $/Mtok'],
   ['cachedInputPerMtok', 'Cached input $/Mtok'],
+  ['cacheWritePerMtok', 'Cache write $/Mtok'],
 ] as const
 
 /** A field currently has an override when its key is present in item.override. */

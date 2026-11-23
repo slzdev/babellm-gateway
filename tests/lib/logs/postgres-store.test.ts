@@ -286,3 +286,17 @@ test('a value containing SQL syntax is parameterized, not interpolated', async (
   })
   expect(page.rows).toHaveLength(0)
 })
+
+test('cache reads, cache writes and the write rate survive the round trip', async () => {
+  const id = uuidv7()
+  const pricing = { inputPerMtok: '3.000000', cachedInputPerMtok: '0.300000', cacheWritePerMtok: '3.750000', outputPerMtok: '15.000000' }
+  await postgresStore.write(entry({
+    id,
+    usage: { promptTokens: 3000, completionTokens: 10, cachedTokens: 1000, cacheWriteTokens: 1500, reasoningTokens: null },
+    cost: { inputUsd: '0.007125000', cachedUsd: '0.000300000', outputUsd: '0.000150000', totalUsd: '0.007575000', pricing },
+  }))
+
+  expect(await postgresStore.get(id)).toMatchObject({
+    cachedTokens: 1000, cacheWriteTokens: 1500, inputCostUsd: '0.007125000', pricing,
+  })
+})

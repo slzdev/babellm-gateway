@@ -191,7 +191,7 @@ test('maps token-billed usage onto the log shape', () => {
     text: 'hi',
     usage: { type: 'tokens', input_tokens: 12, output_tokens: 4, total_tokens: 16 },
   } as TranscriptionResult)).toEqual({
-    promptTokens: 12, completionTokens: 4, cachedTokens: null, reasoningTokens: null,
+    promptTokens: 12, completionTokens: 4, cachedTokens: null, cacheWriteTokens: null, reasoningTokens: null,
   })
 })
 

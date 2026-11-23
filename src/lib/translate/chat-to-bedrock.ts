@@ -222,7 +222,7 @@ function usageOf(usage: TokenUsage | undefined): ChatCompletion['usage'] {
   const prompt = usage.inputTokens! + cached + written
   const completion = usage.outputTokens!
   return { prompt_tokens: prompt, completion_tokens: completion, total_tokens: prompt + completion,
-    ...(cached > 0 ? { prompt_tokens_details: { cached_tokens: cached } } : {}) }
+    ...(cached > 0 || written > 0 ? { prompt_tokens_details: { cached_tokens: cached, cache_write_tokens: written } } : {}) }
 }
 
 export function fromConverse(result: ConverseCommandOutput, upstreamModel: string): ChatCompletion {

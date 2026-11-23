@@ -19,7 +19,7 @@ export interface ModelsDevModel {
   tool_call?: boolean
   modalities?: { input?: string[]; output?: string[] }
   limit?: { context?: number; output?: number }
-  cost?: { input?: number; output?: number; cache_read?: number }
+  cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number }
 }
 
 function num(value: unknown): number | null {
@@ -75,6 +75,7 @@ export function projectModelsDev(doc: unknown): RegistryIndex {
         inputPerMtok: num(model.cost?.input),
         outputPerMtok: num(model.cost?.output),
         cachedInputPerMtok: num(model.cost?.cache_read),
+        cacheWritePerMtok: num(model.cost?.cache_write),
         supportsTools: bool(model.tool_call),
         // models.dev does not report streaming support.
         supportsStreaming: null,

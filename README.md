@@ -333,9 +333,8 @@ the Opus/Sonnet/Haiku 5.x models use Bedrock's automatic mode, a top-level
 after the system prompt and at the end of the conversation. Other models,
 including Nova and application inference profile ARNs, whose model can't be
 identified from the ID, are sent without caching. Cache reads appear as
-`usage.prompt_tokens_details.cached_tokens`. Cache writes are counted in
-`prompt_tokens` and priced at the regular input rate, although AWS may charge
-more for them.
+`usage.prompt_tokens_details.cached_tokens` and writes as `cache_write_tokens`.
+Writes are billed at the catalog's cache-write rate (see [Costs on the response](#costs-on-the-response)).
 
 Discovery provides model metadata, not AWS billing prices. Catalog pricing uses
 the existing models.dev/seed/override rules; profile ARNs and unrecognized IDs may
@@ -423,7 +422,12 @@ Amounts are strings at nine decimal places — a client summing thousands of
 requests should not inherit float error from the wire format. Cached tokens are
 removed from the input count and billed on their own line — at the catalog's
 cached rate where the model publishes one, otherwise at the same rate as a
-regular input token — so a cache hit is never charged twice.
+regular input token — so a cache hit is never charged twice. Tokens written to
+the cache (`prompt_tokens_details.cache_write_tokens`, reported for Anthropic,
+Bedrock and providers such as OpenRouter that send it) are billed at the
+catalog's cache-write rate, falling back to the input rate, and are included in
+`input` rather than in a line of their own. The request log keeps the
+write count, and the rate it used, beside each request.
 
 `"cost": null` means the request could not be priced: the model has no catalog
 entry, or only half of one. It is never `0` — a zero would be indistinguishable

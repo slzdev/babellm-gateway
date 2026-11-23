@@ -33,6 +33,7 @@ export async function priceFor(
     .select({
       inputPerMtok: catalogModels.inputPerMtok,
       cachedInputPerMtok: catalogModels.cachedInputPerMtok,
+      cacheWritePerMtok: catalogModels.cacheWritePerMtok,
       outputPerMtok: catalogModels.outputPerMtok,
     })
     .from(catalogModels)
@@ -46,6 +47,7 @@ export async function priceFor(
     ? {
         inputPerMtok: row.inputPerMtok,
         cachedInputPerMtok: row.cachedInputPerMtok,
+        cacheWritePerMtok: row.cacheWritePerMtok,
         outputPerMtok: row.outputPerMtok,
       }
     : null
@@ -68,18 +70,32 @@ function usd(tokens: number, perMtok: string): string {
 }
 
 /**
- * Splits a prompt count into the slice billed at the cached rate and the slice
- * billed at the full one.
+ * Splits a prompt count into the slices billed at the cache-read, cache-write
+ * and full input rates.
  *
  * Providers occasionally report more cached tokens than prompt tokens when a
- * cache hit spans a prefix. Cached is documented as a SUBSET of prompt, so
- * billing more tokens than were reported would contradict the invariant this
- * encodes — and charging both slices in full would double-count every cached
- * request. Shared by both pricing functions so the invariant has one home.
+ * cache hit spans a prefix. Reads and writes are documented as SUBSETS of
+ * prompt, so billing more tokens than were reported would contradict the
+ * invariant this encodes — and charging a slice at both its own rate and the
+ * full one would double-count every cached request. Reads are taken first,
+ * then writes from what remains. Shared by both pricing functions so the
+ * invariant has one home.
  */
-function splitPrompt(promptTokens: number, cachedTokens: number | null) {
-  const cached = Math.min(cachedTokens ?? 0, promptTokens)
-  return { cached, billablePrompt: Math.max(promptTokens - cached, 0) }
+function splitPrompt(promptTokens: number, usage: LogUsage) {
+  const cached = Math.min(usage.cachedTokens ?? 0, promptTokens)
+  const written = Math.min(usage.cacheWriteTokens ?? 0, promptTokens - cached)
+  return { cached, written, regular: promptTokens - cached - written }
+}
+
+/**
+ * The full-rate share of a request: regular prompt tokens at the input rate,
+ * plus cache writes at the write rate. Writes are reported under input rather
+ * than as a line of their own, so the cost breakdown, the request log's cost
+ * columns and the usage rollups keep their shape. Without a write rate in the
+ * catalog, or in a snapshot logged before there was one, writes bill as input.
+ */
+function inputCharge(inputRate: string, writeRate: string | null | undefined, regular: number, written: number): string {
+  return (Number(usd(regular, inputRate)) + Number(usd(written, writeRate ?? inputRate))).toFixed(SCALE)
 }
 
 /**
@@ -100,10 +116,10 @@ export function computeCost(
   // request. A measured 0 is still a legitimate value and still prices.
   if (usage.promptTokens === null || usage.completionTokens === null) return null
 
-  const { cached, billablePrompt } = splitPrompt(usage.promptTokens, usage.cachedTokens)
+  const { cached, written, regular } = splitPrompt(usage.promptTokens, usage)
   const cachedRate = prices.cachedInputPerMtok ?? prices.inputPerMtok
 
-  const inputUsd = usd(billablePrompt, prices.inputPerMtok)
+  const inputUsd = inputCharge(prices.inputPerMtok, prices.cacheWritePerMtok, regular, written)
   // A priceable request always gets a real cached figure, even when no
   // tokens were cached — `usd(0, rate)` is a legitimate zero. `null` stays
   // reserved for "the catalog could not price this" (the branches above),
@@ -137,10 +153,10 @@ export function computeInputOnlyCost(
   if (prices.inputPerMtok === null) return null
   if (usage.promptTokens === null) return null
 
-  const { cached, billablePrompt } = splitPrompt(usage.promptTokens, usage.cachedTokens)
+  const { cached, written, regular } = splitPrompt(usage.promptTokens, usage)
   const cachedRate = prices.cachedInputPerMtok ?? prices.inputPerMtok
 
-  const inputUsd = usd(billablePrompt, prices.inputPerMtok)
+  const inputUsd = inputCharge(prices.inputPerMtok, prices.cacheWritePerMtok, regular, written)
   const cachedUsd = usd(cached, cachedRate)
   const totalUsd = (Number(inputUsd) + Number(cachedUsd)).toFixed(SCALE)
 

@@ -189,3 +189,14 @@ test('cancelling before the first chunk is processed still closes the upstream g
 
   expect(closed).toBe(true)
 })
+
+test('streamed cache reads and writes reach response.completed', async () => {
+  const withUsage = {
+    id: 'chatcmpl-1', object: 'chat.completion.chunk', created: 1, model: 'up', choices: [],
+    usage: { prompt_tokens: 30, completion_tokens: 2, total_tokens: 32,
+      prompt_tokens_details: { cached_tokens: 10, cache_write_tokens: 15 } },
+  }
+  const events = await collect([chunk({ content: 'hi' }, 'stop'), withUsage])
+
+  expect(events.at(-1)!.response.usage).toMatchObject({ input_tokens_details: { cached_tokens: 10, cache_write_tokens: 15 } })
+})

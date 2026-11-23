@@ -37,6 +37,7 @@ test('projection maps limits, costs and tool support', () => {
     inputPerMtok: 2.5,
     outputPerMtok: 10,
     cachedInputPerMtok: 1.25,
+    cacheWritePerMtok: 3.125,
     supportsTools: true,
     supportsStreaming: null,
     modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
@@ -45,6 +46,8 @@ test('projection maps limits, costs and tool support', () => {
 
 test('a missing cache_read becomes null rather than undefined', () => {
   expect(projectModelsDev(fixture)['amazon-bedrock/us.deepseek.r1-v1:0'].cachedInputPerMtok)
+    .toBeNull()
+  expect(projectModelsDev(fixture)['amazon-bedrock/us.deepseek.r1-v1:0'].cacheWritePerMtok)
     .toBeNull()
 })
 

@@ -8,10 +8,14 @@ export interface LoggedAttempt {
 }
 export interface LogUsage {
   promptTokens: number | null; completionTokens: number | null
-  cachedTokens: number | null; reasoningTokens: number | null
+  cachedTokens: number | null; cacheWriteTokens: number | null
+  reasoningTokens: number | null
 }
 export interface PricingSnapshot {
   inputPerMtok: string | null; cachedInputPerMtok: string | null; outputPerMtok: string | null
+  /** Optional because snapshots logged before cache writes had a rate lack it.
+   *  Absent or null bills writes at the input rate. */
+  cacheWritePerMtok?: string | null
 }
 export interface CostBreakdown {
   inputUsd: string | null; cachedUsd: string | null
@@ -141,6 +145,7 @@ export interface LogDetail extends LogRow {
   attempts: LoggedAttempt[]
   finalTargetId: string | null
   cachedTokens: number | null
+  cacheWriteTokens: number | null
   reasoningTokens: number | null
   inputCostUsd: string | null
   cachedCostUsd: string | null

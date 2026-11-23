@@ -147,6 +147,7 @@ export const catalogModels = pgTable(
     inputPerMtok: numeric('input_per_mtok', { precision: 12, scale: 6 }),
     outputPerMtok: numeric('output_per_mtok', { precision: 12, scale: 6 }),
     cachedInputPerMtok: numeric('cached_input_per_mtok', { precision: 12, scale: 6 }),
+    cacheWritePerMtok: numeric('cache_write_per_mtok', { precision: 12, scale: 6 }),
     supportsTools: boolean('supports_tools'),
     supportsStreaming: boolean('supports_streaming'),
     modalities: jsonb('modalities').$type<{ input: string[]; output: string[] } | null>(),
@@ -212,6 +213,8 @@ type LoggedAttempt = {
 type LoggedPricing = {
   inputPerMtok: string | null
   cachedInputPerMtok: string | null
+  // Absent on rows priced before cache writes had their own rate.
+  cacheWritePerMtok?: string | null
   outputPerMtok: string | null
 }
 
@@ -255,6 +258,7 @@ export const requestLogs = pgTable(
     promptTokens: integer('prompt_tokens'),
     completionTokens: integer('completion_tokens'),
     cachedTokens: integer('cached_tokens'),
+    cacheWriteTokens: integer('cache_write_tokens'),
     reasoningTokens: integer('reasoning_tokens'),
 
     // scale 9, not 6: a small request can cost less than a micro-dollar, and

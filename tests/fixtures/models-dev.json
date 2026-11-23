@@ -10,7 +10,7 @@
         "tool_call": true,
         "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
         "limit": { "context": 128000, "output": 16384 },
-        "cost": { "input": 2.5, "output": 10, "cache_read": 1.25 }
+        "cost": { "input": 2.5, "output": 10, "cache_read": 1.25, "cache_write": 3.125 }
       },
       "text-embedding-3-small": {
         "id": "text-embedding-3-small",
