@@ -303,6 +303,15 @@ test('usage is restated in the Responses spelling', () => {
   expect(res.usage).toMatchObject({ input_tokens: 3, output_tokens: 2, total_tokens: 5 })
 })
 
+test('cache reads and writes carry into the Responses usage', () => {
+  const res = fromCompletion({ ...(completion({ content: 'hi' }) as object), usage: {
+    prompt_tokens: 30, completion_tokens: 2, total_tokens: 32,
+    prompt_tokens_details: { cached_tokens: 10, cache_write_tokens: 15 },
+  } } as never, req, 'resp_1')
+
+  expect(res.usage?.input_tokens_details).toEqual({ cached_tokens: 10, cache_write_tokens: 15 })
+})
+
 test('the request parameters are echoed back', () => {
   // The real API returns them on the response object, and the request is in
   // hand, so mirroring it costs nothing and improves client fidelity.

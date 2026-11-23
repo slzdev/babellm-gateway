@@ -14,7 +14,7 @@ beforeEach(async () => {
 
 const usage = (over: Partial<LogUsage> = {}): LogUsage => ({
   promptTokens: 1_000_000, completionTokens: 1_000_000,
-  cachedTokens: null, reasoningTokens: null, ...over,
+  cachedTokens: null, cacheWriteTokens: null, reasoningTokens: null, ...over,
 })
 
 test('prices a request at the catalog rates', () => {
@@ -127,11 +127,11 @@ test('priceFor reads the catalog by provider and upstream model', async () => {
 
   await db.insert(catalogModels).values({
     providerId: provider.id, modelId: 'gpt-4o-mini',
-    inputPerMtok: '0.150000', outputPerMtok: '0.600000',
+    inputPerMtok: '0.150000', outputPerMtok: '0.600000', cacheWritePerMtok: '0.187500',
   })
 
   expect(await priceFor(provider.id, 'gpt-4o-mini')).toEqual({
-    inputPerMtok: '0.150000', cachedInputPerMtok: null, outputPerMtok: '0.600000',
+    inputPerMtok: '0.150000', cachedInputPerMtok: null, cacheWritePerMtok: '0.187500', outputPerMtok: '0.600000',
   })
   expect(await priceFor(provider.id, 'not-in-catalog')).toBeNull()
 })
@@ -223,4 +223,49 @@ test('an unmeasured completion count does not stop an input-only request pricing
 test('the input-only snapshot records the rates actually used', () => {
   const prices = { inputPerMtok: '0.020000', cachedInputPerMtok: '0.005000', outputPerMtok: null }
   expect(computeInputOnlyCost(prices, usage({ completionTokens: 0 }))?.pricing).toEqual(prices)
+})
+
+test('cache-write tokens are billed at the write rate inside the input charge', () => {
+  const cost = computeCost(
+    { inputPerMtok: '1.000000', cachedInputPerMtok: '0.100000', cacheWritePerMtok: '1.250000', outputPerMtok: '0' },
+    usage({ promptTokens: 1_000_000, cachedTokens: 200_000, cacheWriteTokens: 400_000, completionTokens: 0 }),
+  )
+  // 400k regular at 1.00 + 400k written at 1.25 = 0.90; 200k read at 0.10 = 0.02.
+  expect(cost?.inputUsd).toBe('0.900000000')
+  expect(cost?.cachedUsd).toBe('0.020000000')
+  expect(cost?.totalUsd).toBe('0.920000000')
+})
+
+test('cache-write tokens fall back to the input rate when the catalog has no write price', () => {
+  const cost = computeCost(
+    { inputPerMtok: '2.000000', cachedInputPerMtok: null, cacheWritePerMtok: null, outputPerMtok: '0' },
+    usage({ promptTokens: 1_000_000, cacheWriteTokens: 500_000, completionTokens: 0 }),
+  )
+  expect(cost?.inputUsd).toBe('2.000000000')
+})
+
+test('a snapshot without a write rate, as older log rows carry, prices writes as input', () => {
+  const cost = computeCost(
+    { inputPerMtok: '2.000000', cachedInputPerMtok: null, outputPerMtok: '0' },
+    usage({ promptTokens: 1_000_000, cacheWriteTokens: 500_000, completionTokens: 0 }),
+  )
+  expect(cost?.inputUsd).toBe('2.000000000')
+})
+
+test('reads and writes beyond the reported prompt count are clamped, reads first', () => {
+  const cost = computeCost(
+    { inputPerMtok: '1.000000', cachedInputPerMtok: '0.100000', cacheWritePerMtok: '2.000000', outputPerMtok: '0' },
+    usage({ promptTokens: 1_000_000, cachedTokens: 600_000, cacheWriteTokens: 600_000, completionTokens: 0 }),
+  )
+  // Only 400k remain for writes once 600k reads are taken; nothing is regular.
+  expect(cost?.cachedUsd).toBe('0.060000000')
+  expect(cost?.inputUsd).toBe('0.800000000')
+})
+
+test('input-only pricing bills cache writes at the write rate too', () => {
+  const cost = computeInputOnlyCost(
+    { inputPerMtok: '1.000000', cachedInputPerMtok: null, cacheWritePerMtok: '1.250000', outputPerMtok: null },
+    usage({ promptTokens: 1_000_000, cacheWriteTokens: 1_000_000, completionTokens: null }),
+  )
+  expect(cost?.inputUsd).toBe('1.250000000')
 })

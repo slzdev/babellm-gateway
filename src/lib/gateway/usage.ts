@@ -3,7 +3,7 @@ import type { LogUsage } from '@/lib/logs/types'
 interface RawUsage {
   prompt_tokens?: number | null
   completion_tokens?: number | null
-  prompt_tokens_details?: { cached_tokens?: number | null } | null
+  prompt_tokens_details?: { cached_tokens?: number | null; cache_write_tokens?: number | null } | null
   completion_tokens_details?: { reasoning_tokens?: number | null } | null
 }
 
@@ -28,6 +28,7 @@ export function usageFrom(raw: RawUsage | null | undefined): LogUsage | null {
     promptTokens: count(raw.prompt_tokens),
     completionTokens: count(raw.completion_tokens),
     cachedTokens: count(raw.prompt_tokens_details?.cached_tokens),
+    cacheWriteTokens: count(raw.prompt_tokens_details?.cache_write_tokens),
     reasoningTokens: count(raw.completion_tokens_details?.reasoning_tokens),
   }
 }
@@ -35,7 +36,7 @@ export function usageFrom(raw: RawUsage | null | undefined): LogUsage | null {
 interface RawResponsesUsage {
   input_tokens?: number | null
   output_tokens?: number | null
-  input_tokens_details?: { cached_tokens?: number | null } | null
+  input_tokens_details?: { cached_tokens?: number | null; cache_write_tokens?: number | null } | null
   output_tokens_details?: { reasoning_tokens?: number | null } | null
 }
 
@@ -50,6 +51,7 @@ export function usageFromResponses(raw: RawResponsesUsage | null | undefined): L
     promptTokens: count(raw.input_tokens),
     completionTokens: count(raw.output_tokens),
     cachedTokens: count(raw.input_tokens_details?.cached_tokens),
+    cacheWriteTokens: count(raw.input_tokens_details?.cache_write_tokens),
     reasoningTokens: count(raw.output_tokens_details?.reasoning_tokens),
   }
 }
@@ -73,7 +75,7 @@ export function usageFromResponses(raw: RawResponsesUsage | null | undefined): L
  * count: a duration in a token column would corrupt every rollup that sums
  * tokens.
  *
- * Neither variant reports cached or reasoning tokens — the dialect has no such
+ * Neither variant reports cache or reasoning tokens — the dialect has no such
  * fields — so both stay null: not measured, rather than measured as 0.
  */
 export function usageFromTranscription(raw: unknown): LogUsage | null {
@@ -84,6 +86,7 @@ export function usageFromTranscription(raw: unknown): LogUsage | null {
     promptTokens: count(usage.input_tokens),
     completionTokens: count(usage.output_tokens),
     cachedTokens: null,
+    cacheWriteTokens: null,
     reasoningTokens: null,
   }
 }
@@ -114,6 +117,7 @@ export function usageFromEmbeddings(raw: RawEmbeddingsUsage | null | undefined):
     promptTokens: count(raw.prompt_tokens),
     completionTokens: 0,
     cachedTokens: null,
+    cacheWriteTokens: null,
     reasoningTokens: null,
   }
 }

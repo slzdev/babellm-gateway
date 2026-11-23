@@ -19,7 +19,7 @@ export interface ModelsDevModel {
   tool_call?: boolean
   modalities?: { input?: string[]; output?: string[] }
   limit?: { context?: number; output?: number }
-  cost?: { input?: number; output?: number; cache_read?: number }
+  cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number }
 }
 
 function num(value: unknown): number | null {
@@ -75,6 +75,11 @@ export function projectModelsDev(doc: unknown): RegistryIndex {
         inputPerMtok: num(model.cost?.input),
         outputPerMtok: num(model.cost?.output),
         cachedInputPerMtok: num(model.cost?.cache_read),
+        // models.dev fills cache_write with 0 for many models that report no
+        // write price at all. Taken literally, that would make cache writes
+        // free; as unknown, they fall back to the input rate. An operator
+        // override can still set a real zero.
+        cacheWritePerMtok: num(model.cost?.cache_write) || null,
         supportsTools: bool(model.tool_call),
         // models.dev does not report streaming support.
         supportsStreaming: null,

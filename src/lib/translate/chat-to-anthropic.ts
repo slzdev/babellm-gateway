@@ -278,14 +278,17 @@ interface AnthropicUsage {
  */
 function toUsage(usage: AnthropicUsage) {
   const cached = usage.cache_read_input_tokens ?? 0
-  const promptTokens = (usage.input_tokens ?? 0) + cached + (usage.cache_creation_input_tokens ?? 0)
+  const written = usage.cache_creation_input_tokens ?? 0
+  const promptTokens = (usage.input_tokens ?? 0) + cached + written
   const completionTokens = usage.output_tokens ?? 0
 
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: promptTokens + completionTokens,
-    ...(cached > 0 ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
+    // `cache_write_tokens` is OpenRouter's spelling; it lets the write premium
+    // be priced instead of billing writes as plain input.
+    ...(cached > 0 || written > 0 ? { prompt_tokens_details: { cached_tokens: cached, cache_write_tokens: written } } : {}),
   }
 }
 

@@ -186,7 +186,7 @@ test('injects nothing per target, so no tier reaches the upstream body', () => {
 
 test('measures zero completion tokens, and nothing at all without upstream usage', () => {
   expect(ingress.usageOf({ usage: { prompt_tokens: 8, total_tokens: 8 } } as EmbeddingsResult))
-    .toEqual({ promptTokens: 8, completionTokens: 0, cachedTokens: null, reasoningTokens: null })
+    .toEqual({ promptTokens: 8, completionTokens: 0, cachedTokens: null, cacheWriteTokens: null, reasoningTokens: null })
   // Gemini's embedContent measures nothing, so the request is unpriced rather
   // than priced at zero.
   expect(ingress.usageOf({} as EmbeddingsResult)).toBeNull()
@@ -198,7 +198,7 @@ test('prices on input alone, so a catalog row with no output rate still bills', 
   // output to charge for.
   const cost = ingress.cost(
     { inputPerMtok: '0.020000000', cachedInputPerMtok: null, outputPerMtok: null },
-    { promptTokens: 1_000_000, completionTokens: 0, cachedTokens: null, reasoningTokens: null },
+    { promptTokens: 1_000_000, completionTokens: 0, cachedTokens: null, cacheWriteTokens: null, reasoningTokens: null },
   )
 
   expect(cost?.totalUsd).toBe('0.020000000')

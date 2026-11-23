@@ -33,6 +33,7 @@ export interface RegistryRefreshResult {
 const NUMERIC_FIELDS = [
   'contextWindow', 'maxOutputTokens', 'inputPerMtok', 'outputPerMtok',
   'cachedInputPerMtok',
+  'cacheWritePerMtok',
 ] as const satisfies readonly (keyof CatalogFields)[]
 
 function overrideFrom(formData: FormData): Partial<CatalogFields> {

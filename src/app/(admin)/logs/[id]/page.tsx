@@ -124,6 +124,7 @@ export default async function LogDetailPage({
               ? 'not reported'
               : `${log.promptTokens ?? '—'} in / ${log.completionTokens ?? '—'} out` +
                 (log.cachedTokens ? ` · ${log.cachedTokens} cached` : '') +
+                (log.cacheWriteTokens ? ` · ${log.cacheWriteTokens} written to cache` : '') +
                 (log.reasoningTokens ? ` · ${log.reasoningTokens} reasoning` : '')
           }
         />
@@ -175,7 +176,7 @@ export default async function LogDetailPage({
       <section className="space-y-2">
         <h2 className="text-sm font-semibold">Cost breakdown</h2>
         <div className="grid grid-cols-2 gap-4 rounded-md border p-4 md:grid-cols-4">
-          <Field label="Input" value={money(log.inputCostUsd)} />
+          <Field label={log.cacheWriteTokens ? 'Input (incl. cache writes)' : 'Input'} value={money(log.inputCostUsd)} />
           <Field label="Cached input" value={money(log.cachedCostUsd)} />
           <Field label="Output" value={money(log.outputCostUsd)} />
           <Field label="Total" value={money(log.costUsd)} />
@@ -183,7 +184,8 @@ export default async function LogDetailPage({
         {log.pricing ? (
           <p className="text-xs text-muted-foreground">
             Rates used, per million tokens: input {log.pricing.inputPerMtok ?? '—'}, cached{' '}
-            {log.pricing.cachedInputPerMtok ?? 'same as input'}, output{' '}
+            {log.pricing.cachedInputPerMtok ?? 'same as input'}, cache write{' '}
+            {log.pricing.cacheWritePerMtok ?? 'same as input'}, output{' '}
             {log.pricing.outputPerMtok ?? '—'}. Snapshotted at request time, so later
             catalog edits do not change this row.
           </p>

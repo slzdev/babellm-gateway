@@ -37,6 +37,7 @@ test('projection maps limits, costs and tool support', () => {
     inputPerMtok: 2.5,
     outputPerMtok: 10,
     cachedInputPerMtok: 1.25,
+    cacheWritePerMtok: 3.125,
     supportsTools: true,
     supportsStreaming: null,
     modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
@@ -45,6 +46,8 @@ test('projection maps limits, costs and tool support', () => {
 
 test('a missing cache_read becomes null rather than undefined', () => {
   expect(projectModelsDev(fixture)['amazon-bedrock/us.deepseek.r1-v1:0'].cachedInputPerMtok)
+    .toBeNull()
+  expect(projectModelsDev(fixture)['amazon-bedrock/us.deepseek.r1-v1:0'].cacheWritePerMtok)
     .toBeNull()
 })
 
@@ -205,4 +208,11 @@ test('the configured URL is what gets fetched and cached', async () => {
     'https://mirror.internal/api.json',
     expect.objectContaining({ headers: { accept: 'application/json' } }),
   )
+})
+
+test('a zero cache_write is unknown rather than free', () => {
+  const index = projectModelsDev({ zhipuai: { models: { 'glm-5': {
+    id: 'glm-5', cost: { input: 1, output: 3, cache_read: 0.2, cache_write: 0 },
+  } } } })
+  expect(index['zhipuai/glm-5'].cacheWritePerMtok).toBeNull()
 })

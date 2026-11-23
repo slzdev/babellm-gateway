@@ -8,7 +8,7 @@ const LAYER_ORDER: readonly LayerName[] = ['override', 'discovered', 'registry',
 
 const VALUE_FIELDS = [
   'contextWindow', 'maxOutputTokens', 'inputPerMtok', 'outputPerMtok',
-  'cachedInputPerMtok', 'supportsTools', 'supportsStreaming', 'modalities',
+  'cachedInputPerMtok', 'cacheWritePerMtok', 'supportsTools', 'supportsStreaming', 'modalities',
 ] as const satisfies readonly Exclude<keyof EffectiveFields, 'kind'>[]
 
 /**

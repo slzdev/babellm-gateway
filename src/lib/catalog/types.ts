@@ -16,6 +16,7 @@ export interface CatalogFields {
   inputPerMtok?: number | null
   outputPerMtok?: number | null
   cachedInputPerMtok?: number | null
+  cacheWritePerMtok?: number | null
   supportsTools?: boolean | null
   supportsStreaming?: boolean | null
   modalities?: Modalities | null
@@ -28,6 +29,7 @@ export interface EffectiveFields {
   inputPerMtok: number | null
   outputPerMtok: number | null
   cachedInputPerMtok: number | null
+  cacheWritePerMtok: number | null
   supportsTools: boolean | null
   supportsStreaming: boolean | null
   modalities: Modalities | null

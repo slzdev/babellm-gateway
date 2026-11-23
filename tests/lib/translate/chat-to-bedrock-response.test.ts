@@ -19,7 +19,7 @@ test('translates text, reasoning and tool calls with cache-aware usage', () => {
     message: { role: 'assistant', content: 'Hello world', reasoning_content: 'Thinking',
       tool_calls: [{ id: 'a', type: 'function', function: { name: 'weather', arguments: '{"city":"Paris"}' } }],
     }, finish_reason: 'tool_calls',
-  }], usage: { prompt_tokens: 15, completion_tokens: 4, total_tokens: 19, prompt_tokens_details: { cached_tokens: 3 } } })
+  }], usage: { prompt_tokens: 15, completion_tokens: 4, total_tokens: 19, prompt_tokens_details: { cached_tokens: 3, cache_write_tokens: 2 } } })
   expect(result.usage?.completion_tokens_details).toBeUndefined()
 })
 
@@ -67,4 +67,15 @@ test.each([null, {}, { text: 12 }, { toolUse: { toolUseId: 'a', name: 'f', input
 test.each([[], [{ text: 'No call provided' }]].map((content) => [content]))('rejects tool_use without a tool call (%#)', (content) => {
   expect(() => fromConverse({ ...fixture, output: { message: { role: 'assistant', content } } }, 'm'))
     .toThrow(expect.objectContaining({ name: 'ProviderError', status: 502, retryable: true }))
+})
+
+test('reports a cache write even when nothing was read from the cache', () => {
+  const result = fromConverse({ ...fixture, usage: { inputTokens: 10, cacheWriteInputTokens: 2000, outputTokens: 4, totalTokens: 2014 } }, 'm')
+  expect(result.usage).toEqual({ prompt_tokens: 2010, completion_tokens: 4, total_tokens: 2014,
+    prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 2000 } })
+})
+
+test('omits cache details when the response reports no caching', () => {
+  const result = fromConverse({ ...fixture, usage: { inputTokens: 10, outputTokens: 4, totalTokens: 14 } }, 'm')
+  expect(result.usage?.prompt_tokens_details).toBeUndefined()
 })

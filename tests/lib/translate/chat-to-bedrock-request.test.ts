@@ -162,3 +162,66 @@ test.each(['', null, undefined])('preserves empty native tool output %j as expli
   ])
   expect(droppedParams(req)).toEqual([])
 })
+
+const AUTO = { cache_control: { type: 'ephemeral' } }
+
+test.each([
+  'anthropic.claude-haiku-4-5-20251001-v1:0',
+  'us.anthropic.claude-sonnet-4-6',
+  'global.anthropic.claude-opus-4-7',
+  'eu.anthropic.claude-opus-4-8',
+  'anthropic.claude-opus-5',
+  'us.anthropic.claude-opus-5-5',
+  'jp.anthropic.claude-sonnet-5',
+  'us.anthropic.claude-sonnet-5-5',
+  'anthropic.claude-haiku-5-5',
+  'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6',
+  'arn:aws:bedrock:us-east-1:123:inference-profile/us.anthropic.claude-opus-5',
+])('enables automatic prompt caching for %s', (model) => {
+  const result = toConverseRequest({ ...base, messages: [{ role: 'system', content: 'Rules' }, { role: 'user', content: 'Hi' }] }, model)
+  expect(result.additionalModelRequestFields).toEqual(AUTO)
+  // Automatic mode places its own checkpoint; explicit ones would compete for the 4 slots.
+  expect(JSON.stringify(result)).not.toContain('cachePoint')
+})
+
+test.each([
+  'anthropic.claude-opus-4-5-20251101-v1:0',
+  'us.anthropic.claude-opus-4-6-v1',
+  'global.anthropic.claude-fable-5',
+  'anthropic.claude-fable-5-2',
+  'anthropic.claude-mythos-5-1',
+])('places explicit cache checkpoints for %s, which lacks automatic mode', (model) => {
+  const result = toConverseRequest({ ...base, messages: [
+    { role: 'system', content: 'Rules' }, { role: 'user', content: 'Hi' },
+    { role: 'assistant', content: 'Hello' }, { role: 'user', content: 'Again' },
+  ] }, model)
+  expect(result.additionalModelRequestFields).toBeUndefined()
+  expect(result.system).toEqual([{ text: 'Rules' }, { cachePoint: { type: 'default' } }])
+  expect(result.messages).toEqual([
+    { role: 'user', content: [{ text: 'Hi' }] },
+    { role: 'assistant', content: [{ text: 'Hello' }] },
+    { role: 'user', content: [{ text: 'Again' }, { cachePoint: { type: 'default' } }] },
+  ])
+})
+
+test('explicit checkpoints skip an absent system prompt', () => {
+  const result = toConverseRequest(base, 'anthropic.claude-fable-5')
+  expect(result.system).toBeUndefined()
+  expect(result.messages).toEqual([{ role: 'user', content: [{ text: 'hi' }, { cachePoint: { type: 'default' } }] }])
+})
+
+test.each([
+  'model',
+  'amazon.nova-pro-v1:0',
+  'meta.llama3-70b-instruct-v1:0',
+  'anthropic.claude-3-5-sonnet-20240620-v1:0',
+  'us.anthropic.claude-sonnet-4-20250514-v1:0',
+  'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+  'anthropic.claude-opus-4-1-20250805-v1:0',
+  'anthropic.claude-opus-4-20250514-v1:0',
+  'arn:aws:bedrock:eu-west-1:123:application-inference-profile/abc123',
+])('leaves prompt caching off for %s', (model) => {
+  const result = toConverseRequest({ ...base, messages: [{ role: 'system', content: 'Rules' }, { role: 'user', content: 'Hi' }] }, model)
+  expect(result.additionalModelRequestFields).toBeUndefined()
+  expect(JSON.stringify(result)).not.toContain('cachePoint')
+})

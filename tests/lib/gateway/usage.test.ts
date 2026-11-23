@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import {
-  usageFromEmbeddings, usageFromResponses, usageFromTranscription,
+  usageFrom, usageFromEmbeddings, usageFromResponses, usageFromTranscription,
 } from '@/lib/gateway/usage'
 
 test('normalizes Responses usage onto the same LogUsage shape', () => {
@@ -8,12 +8,12 @@ test('normalizes Responses usage onto the same LogUsage shape', () => {
     input_tokens: 7, output_tokens: 3,
     input_tokens_details: { cached_tokens: 2 },
     output_tokens_details: { reasoning_tokens: 1 },
-  })).toEqual({ promptTokens: 7, completionTokens: 3, cachedTokens: 2, reasoningTokens: 1 })
+  })).toEqual({ promptTokens: 7, completionTokens: 3, cachedTokens: 2, cacheWriteTokens: null, reasoningTokens: 1 })
 })
 
 test('leaves unmeasured Responses counts null rather than zero', () => {
   expect(usageFromResponses({ input_tokens: 7, output_tokens: 3 }))
-    .toEqual({ promptTokens: 7, completionTokens: 3, cachedTokens: null, reasoningTokens: null })
+    .toEqual({ promptTokens: 7, completionTokens: 3, cachedTokens: null, cacheWriteTokens: null, reasoningTokens: null })
 })
 
 test('returns null when the provider reported no usage at all', () => {
@@ -24,7 +24,7 @@ test('normalizes token-billed transcription usage', () => {
   expect(usageFromTranscription({
     type: 'tokens', input_tokens: 14, output_tokens: 6, total_tokens: 20,
     input_token_details: { audio_tokens: 10, text_tokens: 4 },
-  })).toEqual({ promptTokens: 14, completionTokens: 6, cachedTokens: null, reasoningTokens: null })
+  })).toEqual({ promptTokens: 14, completionTokens: 6, cachedTokens: null, cacheWriteTokens: null, reasoningTokens: null })
 })
 
 test('reports no usage for duration-billed transcription, rather than zero tokens', () => {
@@ -48,12 +48,12 @@ test('embeddings usage measures zero output tokens rather than leaving them null
   // The one place a normalizer invents a number: null would say "unmeasured",
   // which would make an otherwise fully-measured request unpriceable.
   expect(usageFromEmbeddings({ prompt_tokens: 4, total_tokens: 4 }))
-    .toEqual({ promptTokens: 4, completionTokens: 0, cachedTokens: null, reasoningTokens: null })
+    .toEqual({ promptTokens: 4, completionTokens: 0, cachedTokens: null, cacheWriteTokens: null, reasoningTokens: null })
 })
 
 test('embeddings usage leaves an absent prompt count unmeasured', () => {
   expect(usageFromEmbeddings({ total_tokens: 4 }))
-    .toEqual({ promptTokens: null, completionTokens: 0, cachedTokens: null, reasoningTokens: null })
+    .toEqual({ promptTokens: null, completionTokens: 0, cachedTokens: null, cacheWriteTokens: null, reasoningTokens: null })
 })
 
 test('returns null when the provider reported no embeddings usage at all', () => {
@@ -61,4 +61,20 @@ test('returns null when the provider reported no embeddings usage at all', () =>
   // object — unpriced, not free.
   expect(usageFromEmbeddings(null)).toBeNull()
   expect(usageFromEmbeddings(undefined)).toBeNull()
+})
+
+test('reads cache-write tokens from the chat spelling', () => {
+  // `cache_write_tokens` is OpenRouter's name, and the one the Bedrock and
+  // Anthropic translators emit, so the write premium can be priced.
+  expect(usageFrom({
+    prompt_tokens: 30, completion_tokens: 5,
+    prompt_tokens_details: { cached_tokens: 10, cache_write_tokens: 15 },
+  })).toEqual({ promptTokens: 30, completionTokens: 5, cachedTokens: 10, cacheWriteTokens: 15, reasoningTokens: null })
+})
+
+test('reads cache-write tokens from the Responses spelling', () => {
+  expect(usageFromResponses({
+    input_tokens: 30, output_tokens: 5,
+    input_tokens_details: { cached_tokens: 0, cache_write_tokens: 15 },
+  })).toEqual({ promptTokens: 30, completionTokens: 5, cachedTokens: 0, cacheWriteTokens: 15, reasoningTokens: null })
 })

@@ -35,6 +35,7 @@ export interface CatalogListItem {
   inputPerMtok: number | null
   outputPerMtok: number | null
   cachedInputPerMtok: number | null
+  cacheWritePerMtok: number | null
   supportsTools: boolean | null
   supportsStreaming: boolean | null
   modalities: Modalities | null
@@ -106,6 +107,7 @@ function toItem(
     inputPerMtok: toNumber(row.inputPerMtok),
     outputPerMtok: toNumber(row.outputPerMtok),
     cachedInputPerMtok: toNumber(row.cachedInputPerMtok),
+    cacheWritePerMtok: toNumber(row.cacheWritePerMtok),
     supportsTools: row.supportsTools,
     supportsStreaming: row.supportsStreaming,
     modalities: row.modalities ?? null,

@@ -411,6 +411,13 @@ function toOutput(message: ChatMessageWithReasoning, itemStatus: 'completed' | '
   return output
 }
 
+/** Cache writes ride along in `cache_write_tokens`, the spelling the Decisions
+ * API and OpenRouter use, so a Responses client and the cost computed from the
+ * translated usage both see them. Omitted, not zeroed, when unmeasured. */
+function cacheWrite(tokens: number | null | undefined) {
+  return typeof tokens === 'number' ? { cache_write_tokens: tokens } : {}
+}
+
 /**
  * The inverse of `usageFromResponses` (gateway/usage.ts): Chat's
  * `prompt_tokens`/`completion_tokens` restated under the Responses spelling
@@ -425,7 +432,10 @@ function toUsage(usage: ChatCompletion['usage']): ResponsesResult['usage'] | und
     output_tokens: usage.completion_tokens,
     total_tokens: usage.total_tokens,
     ...(usage.prompt_tokens_details
-      ? { input_tokens_details: { cached_tokens: usage.prompt_tokens_details.cached_tokens } }
+      ? { input_tokens_details: {
+          cached_tokens: usage.prompt_tokens_details.cached_tokens,
+          ...cacheWrite((usage.prompt_tokens_details as { cache_write_tokens?: number | null }).cache_write_tokens),
+        } }
       : {}),
     ...(usage.completion_tokens_details
       ? { output_tokens_details: { reasoning_tokens: usage.completion_tokens_details.reasoning_tokens } }
@@ -575,12 +585,12 @@ function buildResponse(
  */
 function toResponseUsage(usage: LogUsage | null): ResponsesResult['usage'] | undefined {
   if (!usage) return undefined
-  const { promptTokens, completionTokens, cachedTokens, reasoningTokens } = usage
+  const { promptTokens, completionTokens, cachedTokens, cacheWriteTokens, reasoningTokens } = usage
   return {
     input_tokens: promptTokens,
     output_tokens: completionTokens,
     total_tokens: promptTokens != null && completionTokens != null ? promptTokens + completionTokens : null,
-    ...(cachedTokens != null ? { input_tokens_details: { cached_tokens: cachedTokens } } : {}),
+    ...(cachedTokens != null ? { input_tokens_details: { cached_tokens: cachedTokens, ...cacheWrite(cacheWriteTokens) } } : {}),
     ...(reasoningTokens != null ? { output_tokens_details: { reasoning_tokens: reasoningTokens } } : {}),
   } as unknown as ResponsesResult['usage']
 }

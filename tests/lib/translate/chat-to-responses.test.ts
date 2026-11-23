@@ -513,7 +513,7 @@ test('usage maps across, including reasoning and cached tokens', () => {
     completion_tokens: 12,
     total_tokens: 52,
     completion_tokens_details: { reasoning_tokens: 6 },
-    prompt_tokens_details: { cached_tokens: 8 },
+    prompt_tokens_details: { cached_tokens: 8, cache_write_tokens: 0 },
   })
 })
 
