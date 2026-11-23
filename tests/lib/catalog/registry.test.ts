@@ -209,3 +209,10 @@ test('the configured URL is what gets fetched and cached', async () => {
     expect.objectContaining({ headers: { accept: 'application/json' } }),
   )
 })
+
+test('a zero cache_write is unknown rather than free', () => {
+  const index = projectModelsDev({ zhipuai: { models: { 'glm-5': {
+    id: 'glm-5', cost: { input: 1, output: 3, cache_read: 0.2, cache_write: 0 },
+  } } } })
+  expect(index['zhipuai/glm-5'].cacheWritePerMtok).toBeNull()
+})

@@ -297,6 +297,8 @@ function finishReason(
 }
 
 function toUsage(usage: ResponseUsage) {
+  // Carried so cache writes are priced at their own rate downstream.
+  const written = (usage.input_tokens_details as { cache_write_tokens?: unknown } | undefined)?.cache_write_tokens
   return {
     prompt_tokens: usage.input_tokens,
     completion_tokens: usage.output_tokens,
@@ -313,7 +315,10 @@ function toUsage(usage: ResponseUsage) {
         }
       : {}),
     ...(usage.input_tokens_details
-      ? { prompt_tokens_details: { cached_tokens: usage.input_tokens_details.cached_tokens } }
+      ? { prompt_tokens_details: {
+          cached_tokens: usage.input_tokens_details.cached_tokens,
+          ...(typeof written === 'number' ? { cache_write_tokens: written } : {}),
+        } }
       : {}),
   }
 }
