@@ -90,7 +90,7 @@ test('drops remote and unsupported media while retaining text and reporting degr
     { type: 'video_url', video_url: { url: 'https://example.com/video.mp4' } },
   ] }] }
   expect(toConverseRequest(req, 'm').messages).toEqual([{ role: 'user', content: [{ text: 'Describe' }] }])
-  expect(droppedParams(req)).toContain('unsupported_content_part')
+  expect(droppedParams(req, 'm')).toContain('unsupported_content_part')
 })
 
 test('reports unsupported known and unknown fields and unsigned reasoning replay', () => {
@@ -100,7 +100,7 @@ test('reports unsupported known and unknown fields and unsigned reasoning replay
     messages: [{ role: 'assistant', content: 'Hello', reasoning_content: 'Unsigned thought' },
       { role: 'developer', content: 'Late rules' }, { role: 'tool', tool_call_id: 'missing', content: 'Result' }],
   }
-  expect(droppedParams(req)).toEqual(expect.arrayContaining([
+  expect(droppedParams(req, 'm')).toEqual(expect.arrayContaining([
     'reasoning_effort', 'response_format', 'seed', 'parallel_tool_calls', 'user', 'service_tier',
     'custom_vendor_option', 'strict_tool_schema', 'reasoning_content', 'system_message_hoisted', 'unmatched_tool_call_id',
   ]))
@@ -111,7 +111,7 @@ test('reports unsupported known and unknown fields and unsigned reasoning replay
 })
 
 test('does not report omitted or inert defaults as dropped', () => {
-  expect(droppedParams({ ...base, n: 1, logprobs: false, seed: null, custom: {}, extra: [] })).toEqual([])
+  expect(droppedParams({ ...base, n: 1, logprobs: false, seed: null, custom: {}, extra: [] }, 'm')).toEqual([])
 })
 
 // These cases catch native history being sent without the toolConfig required
@@ -144,7 +144,7 @@ test.each(['none', 'omitted', 'empty'] as const)('lowers completed multi-call hi
       { text: 'Summarize the results' },
     ] },
   ])
-  expect(droppedParams(req)).toEqual(['tool_history'])
+  expect(droppedParams(req, 'm')).toEqual(['tool_history'])
 })
 
 test.each(['', null, undefined])('preserves empty native tool output %j as explicit JSON', (content) => {
@@ -160,7 +160,7 @@ test.each(['', null, undefined])('preserves empty native tool output %j as expli
     { role: 'assistant', content: [{ toolUse: { toolUseId: 'a', name: 'weather', input: {} } }] },
     { role: 'user', content: [{ toolResult: { toolUseId: 'a', content: [{ json: { output: '' } }] } }] },
   ])
-  expect(droppedParams(req)).toEqual([])
+  expect(droppedParams(req, 'm')).toEqual([])
 })
 
 const AUTO = { cache_control: { type: 'ephemeral' } }
@@ -224,4 +224,56 @@ test.each([
   const result = toConverseRequest({ ...base, messages: [{ role: 'system', content: 'Rules' }, { role: 'user', content: 'Hi' }] }, model)
   expect(result.additionalModelRequestFields).toBeUndefined()
   expect(JSON.stringify(result)).not.toContain('cachePoint')
+})
+
+test('reasoning effort merges with automatic cache', () => {
+  const result = toConverseRequest({ ...base, reasoning_effort: 'high' }, 'anthropic.claude-sonnet-5-5')
+  expect(result.additionalModelRequestFields).toEqual({
+    cache_control: { type: 'ephemeral' },
+    thinking: { type: 'adaptive', display: 'summarized' },
+    output_config: { effort: 'high' },
+  })
+})
+
+test('legacy budget supplies maxTokens when the client sent none', () => {
+  const result = toConverseRequest({ ...base, reasoning_effort: 'low' }, 'anthropic.claude-sonnet-4-5-20250929-v1:0')
+  expect(result.inferenceConfig?.maxTokens).toBe(6144)
+})
+
+test('a client max wins over the reasoning-derived max', () => {
+  const result = toConverseRequest({ ...base, reasoning_effort: 'low', max_tokens: 5000 }, 'anthropic.claude-sonnet-4-5-20250929-v1:0')
+  expect(result.inferenceConfig?.maxTokens).toBe(5000)
+})
+
+test('openai models receive reasoning effort', () => {
+  const result = toConverseRequest({ ...base, reasoning_effort: 'low' }, 'global.openai.gpt-6.1-terra')
+  expect(result.additionalModelRequestFields).toEqual({ reasoning: { effort: 'low', summary: 'auto' } })
+})
+
+test('provider opt-in requests a reasoning summary without an effort', () => {
+  const result = toConverseRequest(base, 'global.openai.gpt-6.1-terra', { requestReasoningSummary: true })
+  expect(result.additionalModelRequestFields).toEqual({ reasoning: { summary: 'auto' } })
+})
+
+test('an unsupported family ignores reasoning_effort', () => {
+  const model = 'meta.llama4-maverick-17b-instruct-v1:0'
+  expect(toConverseRequest({ ...base, reasoning_effort: 'high' }, model)).toEqual(toConverseRequest(base, model))
+})
+
+test('droppedParams reports reasoning_effort only when it was not translated', () => {
+  const req = { ...base, reasoning_effort: 'high' as const }
+  expect(droppedParams(req, 'anthropic.claude-sonnet-5-5')).not.toContain('reasoning_effort')
+  expect(droppedParams(req, 'global.openai.gpt-6.1-terra')).not.toContain('reasoning_effort')
+  expect(droppedParams(req, 'meta.llama4-maverick-17b-instruct-v1:0')).toContain('reasoning_effort')
+  expect(droppedParams({ ...req, max_tokens: 1000 }, 'anthropic.claude-sonnet-4-5-20250929-v1:0')).toContain('reasoning_effort')
+})
+
+test('droppedParams reports reasoning_effort for legacy thinking in a tool loop', () => {
+  const call = { id: 'c1', type: 'function' as const, function: { name: 'weather', arguments: '{}' } }
+  const req: ChatCompletionRequest = { ...base, reasoning_effort: 'high', tools: [tool], messages: [
+    { role: 'user', content: 'hi' }, { role: 'assistant', content: null, tool_calls: [call] },
+    { role: 'tool', tool_call_id: 'c1', content: 'sunny' },
+  ] }
+  expect(droppedParams(req, 'anthropic.claude-sonnet-4-5-20250929-v1:0')).toContain('reasoning_effort')
+  expect(droppedParams(req, 'anthropic.claude-sonnet-5-5')).not.toContain('reasoning_effort')
 })

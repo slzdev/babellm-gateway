@@ -3,9 +3,10 @@ import type {
   ContentBlock, ConverseCommandInput, ConverseCommandOutput, ConverseStreamOutput,
   Message, SystemContentBlock, TokenUsage, ToolChoice, ToolInputSchema,
 } from '@aws-sdk/client-bedrock-runtime'
-import type { ChatCompletion, ChatCompletionChunk } from '@/lib/adapters/types'
+import type { ChatCompletion, ChatCompletionChunk, ProviderConfig } from '@/lib/adapters/types'
 import { GatewayError, ProviderError } from '@/lib/gateway/errors'
 import type { ChatCompletionRequest, ChatMessage } from '@/lib/schemas/chat'
+import { bedrockReasoning } from './bedrock-reasoning'
 
 type JsonDocument = NonNullable<ToolInputSchema['json']>
 
@@ -109,7 +110,7 @@ function promptCacheMode(upstreamModel: string): CacheMode {
 
 const CACHE_POINT = { cachePoint: { type: 'default' as const } }
 
-export function toConverseRequest(req: ChatCompletionRequest, upstreamModel: string): ConverseCommandInput {
+export function toConverseRequest(req: ChatCompletionRequest, upstreamModel: string, config?: ProviderConfig): ConverseCommandInput {
   const nativeTools = toolsEnabled(req)
   const messages: Message[] = []
   const system: SystemContentBlock[] = []
@@ -167,7 +168,10 @@ export function toConverseRequest(req: ChatCompletionRequest, upstreamModel: str
     append(message.role, blocks)
   })
 
-  const maxTokens = req.max_completion_tokens ?? req.max_tokens
+  const reasoning = bedrockReasoning(req, upstreamModel, config)
+  // A legacy thinking budget needs room beside the answer, so the reasoning
+  // path supplies a max only when the client gave none.
+  const maxTokens = req.max_completion_tokens ?? req.max_tokens ?? reasoning.maxTokens
   const stop = (Array.isArray(req.stop) ? req.stop : req.stop == null ? [] : [req.stop]).filter(Boolean)
   const inferenceConfig = {
     ...(maxTokens == null ? {} : { maxTokens }),
@@ -184,10 +188,14 @@ export function toConverseRequest(req: ChatCompletionRequest, upstreamModel: str
     if (system.length) system.push(CACHE_POINT)
     messages.at(-1)?.content?.push(CACHE_POINT)
   }
+  const additionalFields = {
+    ...(cache === 'automatic' ? { cache_control: { type: 'ephemeral' } } : {}),
+    ...reasoning.fields,
+  }
   return {
     modelId: upstreamModel, messages,
     ...(system.length ? { system } : {}),
-    ...(cache === 'automatic' ? { additionalModelRequestFields: { cache_control: { type: 'ephemeral' } } } : {}),
+    ...(Object.keys(additionalFields).length ? { additionalModelRequestFields: additionalFields } : {}),
     ...(Object.keys(inferenceConfig).length ? { inferenceConfig } : {}),
     ...(nativeTools ? { toolConfig: {
       tools: req.tools!.map((tool) => ({ toolSpec: {
@@ -357,9 +365,12 @@ function inert(name: string, value: unknown): boolean {
     || (Array.isArray(value) && value.length === 0) || (object(value) && Object.keys(value).length === 0)
 }
 
-export function droppedParams(req: ChatCompletionRequest): string[] {
+export function droppedParams(req: ChatCompletionRequest, upstreamModel: string): string[] {
   const dropped = new Set<string>()
+  // No config: `translated` never depends on the provider opt-in.
+  const reasoningSent = bedrockReasoning(req, upstreamModel).translated
   for (const [name, value] of Object.entries(req)) {
+    if (name === 'reasoning_effort' && reasoningSent) continue
     if (!MAPPED.has(name) && !inert(name, value)) dropped.add(name)
   }
   const calls = new Map<string, string>()
