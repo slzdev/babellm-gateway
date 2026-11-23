@@ -267,3 +267,13 @@ test('droppedParams reports reasoning_effort only when it was not translated', (
   expect(droppedParams(req, 'meta.llama4-maverick-17b-instruct-v1:0')).toContain('reasoning_effort')
   expect(droppedParams({ ...req, max_tokens: 1000 }, 'anthropic.claude-sonnet-4-5-20250929-v1:0')).toContain('reasoning_effort')
 })
+
+test('droppedParams reports reasoning_effort for legacy thinking in a tool loop', () => {
+  const call = { id: 'c1', type: 'function' as const, function: { name: 'weather', arguments: '{}' } }
+  const req: ChatCompletionRequest = { ...base, reasoning_effort: 'high', tools: [tool], messages: [
+    { role: 'user', content: 'hi' }, { role: 'assistant', content: null, tool_calls: [call] },
+    { role: 'tool', tool_call_id: 'c1', content: 'sunny' },
+  ] }
+  expect(droppedParams(req, 'anthropic.claude-sonnet-4-5-20250929-v1:0')).toContain('reasoning_effort')
+  expect(droppedParams(req, 'anthropic.claude-sonnet-5-5')).not.toContain('reasoning_effort')
+})

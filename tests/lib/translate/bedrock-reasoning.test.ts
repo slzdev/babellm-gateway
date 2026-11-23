@@ -129,3 +129,41 @@ test('effort names that collide with Object.prototype are treated as plain strin
   const adaptive = r({ reasoning_effort: 'constructor' }, 'anthropic.claude-sonnet-5-5')
   expect(at(adaptive.fields).output_config.effort).toBe('constructor')
 })
+
+const LEGACY = 'anthropic.claude-sonnet-4-5-20250929-v1:0'
+const call = { id: 'c1', type: 'function' as const, function: { name: 'weather', arguments: '{}' } }
+const loop: ChatCompletionRequest['messages'] = [
+  { role: 'user', content: 'hi' },
+  { role: 'assistant', content: null, tool_calls: [call] },
+  { role: 'tool', tool_call_id: 'c1', content: 'sunny' },
+]
+
+test('legacy budget thinking is skipped while a tool loop is in flight', () => {
+  expect(r({ reasoning_effort: 'high', messages: loop }, LEGACY)).toEqual({ translated: false })
+  // The provider opt-in path is guarded the same way.
+  expect(r({ messages: loop }, LEGACY, { requestReasoningSummary: true })).toEqual({ translated: false })
+})
+
+test('legacy budget thinking is sent once a new user turn follows the tool result', () => {
+  const messages = [...loop, { role: 'user' as const, content: 'thanks' }]
+  expect(at(r({ reasoning_effort: 'high', messages }, LEGACY).fields).thinking.budget_tokens).toBe(16384)
+})
+
+test('adaptive claude is unchanged in a tool loop', () => {
+  expect(r({ reasoning_effort: 'high', messages: loop }, 'anthropic.claude-sonnet-5-5')).toEqual({
+    fields: { ...ADAPTIVE, output_config: { effort: 'high' } },
+    translated: true,
+  })
+})
+
+test('hyphenated geo prefixes are stripped', () => {
+  expect(at(r({ reasoning_effort: 'low' }, 'us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0').fields).thinking.type).toBe('enabled')
+  expect(r({ reasoning_effort: 'low' }, 'us-gov.openai.gpt-6.2-sol').fields)
+    .toEqual({ reasoning: { effort: 'low', summary: 'auto' } })
+})
+
+test('legacy max_tokens equal to the budget leaves one token of room', () => {
+  const out = r({ reasoning_effort: 'medium', max_tokens: 8192 }, LEGACY)
+  expect(at(out.fields).thinking.budget_tokens).toBe(8191)
+  expect(out.maxTokens).toBeUndefined()
+})

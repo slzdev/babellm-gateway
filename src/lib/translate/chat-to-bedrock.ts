@@ -367,6 +367,7 @@ function inert(name: string, value: unknown): boolean {
 
 export function droppedParams(req: ChatCompletionRequest, upstreamModel: string): string[] {
   const dropped = new Set<string>()
+  // No config: `translated` never depends on the provider opt-in.
   const reasoningSent = bedrockReasoning(req, upstreamModel).translated
   for (const [name, value] of Object.entries(req)) {
     if (name === 'reasoning_effort' && reasoningSent) continue

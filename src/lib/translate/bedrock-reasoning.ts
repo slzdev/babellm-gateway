@@ -23,19 +23,30 @@ const LEGACY_BUDGET =
 const NO_THINKING = /claude-(?:3-(?!7)|instant|v\d)/
 
 const BUDGETS = new Map([['low', 2048], ['medium', 8192], ['high', 16384]])
+const HIGH_BUDGET = BUDGETS.get('high')!
 // Anthropic rejects a thinking budget below this.
 const MIN_BUDGET = 1024
 // Headroom for the visible answer when the client gave no max of its own.
 const ANSWER_HEADROOM = 4096
 
+// Anthropic requires the last assistant turn that holds tool_use to start with
+// a signed thinking block when thinking is enabled. The gateway never replays
+// those blocks, so a budget-thinking request mid tool loop would be rejected.
+function continuesToolLoop(messages: ChatCompletionRequest['messages']): boolean {
+  const last = messages.findLastIndex((m) => m.role === 'assistant')
+  if (last === -1 || !messages[last].tool_calls?.length) return false
+  const after = messages.slice(last + 1)
+  return after.length > 0 && after.every((m) => m.role === 'tool' || m.role === 'function')
+}
+
 const ADAPTIVE = { type: 'adaptive', display: 'summarized' }
 
 function modelId(upstreamModel: string): string {
   // Foundation-model and inference-profile ARNs end in the model ID. A geo
-  // prefix (`us.`, `eu.`, `global.`, …) is stripped only in front of a family
+  // prefix (`us.`, `us-gov.`, `eu.`, `global.`, …) is stripped only in front of a family
   // we recognize, so an opaque ID is never mistaken for one.
   const id = upstreamModel.slice(upstreamModel.lastIndexOf('/') + 1)
-  return id.replace(/^[a-z]+\.(?=(?:anthropic|openai)\.)/, '')
+  return id.replace(/^[a-z-]+\.(?=(?:anthropic|openai)\.)/, '')
 }
 
 export function bedrockReasoning(
@@ -71,9 +82,12 @@ export function bedrockReasoning(
     }
   }
 
+  // Legacy thinking cannot resume a tool loop; drop it and report the effort.
+  if (continuesToolLoop(req.messages)) return { translated: false }
+
   // Legacy models: anything beyond `high` (xhigh, max, …) gets high's budget,
   // and the opt-in with no effort gets the middle one.
-  let budget = BUDGETS.get(effort ?? 'medium') ?? 16384
+  let budget = BUDGETS.get(effort ?? 'medium') ?? HIGH_BUDGET
   const clientMax = req.max_completion_tokens ?? req.max_tokens ?? undefined
   let maxTokens: number | undefined
   if (clientMax === undefined) {
